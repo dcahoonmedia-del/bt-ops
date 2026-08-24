@@ -1,6 +1,8 @@
 # B&T Pest Control marketing audit — file index
 
-Read **`FINAL-MARKETING-AUDIT.md` first.** Everything else is evidence and working papers.
+Read **`FINAL-MARKETING-AUDIT.md` first** (public-web pass). Then **`ACCOUNT-DATA-EXECUTIVE-SUMMARY.md`** and **`ACCOUNT-DATA-AUDIT.md`** (authenticated Google / Coalmarch / Gmail pass, 23–24 Aug 2026). Working papers for that pass: `account-data/00`–`16`.
+
+Phase 1 files:
 
 | File | Contents |
 | --- | --- |

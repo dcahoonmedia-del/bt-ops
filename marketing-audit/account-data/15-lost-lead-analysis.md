@@ -1,0 +1,39 @@
+# 15 — Lost-lead analysis
+
+Marketing can create a lead the office never turns into work.
+
+---
+
+## Evidence-backed leaks
+
+| Leak | Evidence | Magnitude |
+| --- | --- | --- |
+| WDIR form down | Daniel 18 May 2026: site not accepting WDIR; Coalmarch to patch | **Real.** Duration until fix unknown. WDIR is ~30% of sampled forms — **high $ per lost week** |
+| Homepage/city CVR drop | 1 May 2026 recap | **Real direction, unquantified jobs** |
+| Message volume spike | +92% / 30d | **Risk** if slow replies (LSA scoring + lost deals). Count of unworked messages: **unknown** |
+| After-hours / missed | CTM locked; hours 8–5; LSA 24/7-ish | **Plausible, unquantified** |
+| LSA pause from billing | Decline notices | **If paused, 100% of that day’s paid** |
+| Capacity | Tech out Aug; crawl understaffed | **Booked work refused or delayed** — not a media problem |
+| Long form / no SMS | Phase 1 + still true on site | **Plausible** mobile drop |
+| Video gallery empty | Former employee 2025 | Trust, not a daily lead hose |
+| GBP junk | Lawn care / fake services | **Wrong-intent** calls possible |
+
+---
+
+## Not evidenced as “lost marketing”
+
+- Wilmington non-ranking — **intentionally not targeted**.  
+- Mosquito GSC absence — may be **never typed**, not lost rankings.  
+- GA4 key-event drop — **tracking**, not necessarily lost customers.
+
+---
+
+## Rough sizing (honest)
+
+Cannot say “X jobs/week lost.” Can say:
+
+- Last 30d **99 platform leads**. If messages (25) are half-unanswered, that is **order-of-magnitude 10 missed conversations**, not a precise forecast.  
+- If WDIR was down for even **one busy week**, that is several realtor jobs at inspection-ticket value (price unpublished).  
+- GBP **764 calls / 6 months** — if even 10% missed, tens of calls; **unknown**.
+
+**Do not present a fake “$ lost” to Toby.** Instrument CTM missed + form errors + message SLA, then size it.
