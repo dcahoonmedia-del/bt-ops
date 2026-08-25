@@ -2,7 +2,7 @@
 
 **Question:** Are we paying for bad leads?
 
-**Answer:** **Probably paying too much per platform lead, and we cannot prove quality.** YTD CPL **+104%** with leads **+8%** is the waste signal. LSA is the spend vehicle. Search CID 367-996-4323 has **173 paused campaigns** (JAX/Wilmington/Rocky Point mill) — **not currently burning cash**. Quality (spam, existing, wrong geo, DIY) is **unmeasured** without CTM + disputes + close rates. Do **not** re-enable the Wilmington Search set as a “test” without search-term history.
+**Answer:** **Paying too much per platform lead relative to new accounts, and channel quality is still unproven.** YTD CPL **+104%** with leads **+8%** remains the waste signal. Fieldwork adds: **741** Coalmarch leads vs **311** new accounts YTD (1 Jan–22 Aug) — **42% yield of accounts per platform lead, not a close rate.** LSA is still the spend vehicle. Search CID 367-996-4323 has **173 paused campaigns** — **not currently burning cash**. Source fields on 2026 estimates are **unused** (0 August estimates), so Fieldwork **cannot** yet say which accounts came from LSA vs GBP vs site vs existing. Do **not** re-enable Wilmington Search without search-term history. Do **not** treat blank or generic “Google” as LSA/GBP/organic/Ads.
 
 ---
 
@@ -13,9 +13,9 @@
 | Cost per **platform conversion** | $54.49 blended / $61 paid | $56.60 | Coalmarch “lead” |
 | Cost per **likely legitimate** lead | Unavailable | Unavailable | No spam filter export |
 | Cost per **qualified** lead | Unavailable | Unavailable | |
-| Cost per **booked customer** | Unavailable | Unavailable | |
+| Cost per **booked customer** | **Not computed as CAC** | $41,940 / 311 = **$134.86** marketing $ per new Fieldwork account YTD | Unattributed; includes non-paid accounts. 30d 53/99 **invalid** (date mismatch) |
 
-Agency target max CPL **~$70–75** (2025). Mar 2026 LSA plan **$91**. Last 30d paid **$61** is inside the cap; **YTD efficiency still collapsed vs last year.**
+Agency target max CPL **~$70–75** (2025). Mar 2026 LSA plan **$91**. Last 30d paid **$61** is inside the cap; **YTD efficiency still collapsed vs last year.** True CAC needs source-tagged new accounts, not 311 unlabeled Date Added rows.
 
 ---
 
@@ -23,7 +23,7 @@ Agency target max CPL **~$70–75** (2025). Mar 2026 LSA plan **$91**. Last 30d 
 
 | Pattern | Finding |
 | --- | --- |
-| Paid calls from existing customers | Unknown (CTM) |
+| Paid calls from existing customers | Unknown (CTM). Fieldwork source unused on 2026 estimates |
 | Spam | Unknown |
 | Sales / job seekers | Unknown |
 | Wrong geo | LSA areas not exported; JAX is in-geo |
@@ -59,4 +59,4 @@ Agency target max CPL **~$70–75** (2025). Mar 2026 LSA plan **$91**. Last 30d 
 
 ## What to pull next (still read-only)
 
-LSA lead list **aggregated** (charged, disputed, category). CTM duration buckets. Office: % existing / not sold. Then recompute “cost per booked.”
+LSA lead list **aggregated** (charged, disputed, category). CTM duration buckets. Fieldwork: Date Added **24 Jul–22 Aug** (exact), source-value frequency including blanks, completed production **by service type** for the same windows. Then recompute channel CAC.

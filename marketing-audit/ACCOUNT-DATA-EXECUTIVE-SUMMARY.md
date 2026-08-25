@@ -1,8 +1,8 @@
 # B&T Pest Control — Account-data executive summary
 
-**Prepared:** 23–24 August 2026  
+**Prepared:** 23–25 August 2026  
 **Company:** B&T Pest Control (family-owned). **Owner:** Toby Cahoon. **Marketing/ops contact on these accounts:** Daniel Cahoon (`daniel@btpestcontrol.com`).  
-**Scope:** Read-only inspection of authenticated Google, Coalmarch, Gmail, and related sessions. No ads, GBP, GA4, GSC, GTM, LSA, Coalmarch, or call-tracking settings were changed. No call recordings were played. No customer names, full phones, or emails are stored in this file.
+**Scope:** Read-only inspection of authenticated Google, Coalmarch, Gmail, Fieldwork, and related sessions. No ads, GBP, GA4, GSC, GTM, LSA, Coalmarch, Fieldwork, or call-tracking settings were changed. No call recordings were played. No customer names, full phones, emails, street addresses, account numbers, or card data are stored in this file.
 
 This is the management layer on top of the public-web audit in `FINAL-MARKETING-AUDIT.md`. It does **not** redo that audit. It tests those hypotheses against first-party data.
 
@@ -24,7 +24,7 @@ This is the management layer on top of the public-web audit in `FINAL-MARKETING-
 | Coalmarch Performance Insights | **Yes** | `performanceinsights.coalmarch.com` (TapClicks). Primary lead/spend rollup |
 | CallTrackingMetrics | **Blocked** | 2FA codes emailed; login **not** completed per rules |
 | Meta / Facebook Ads Manager | **Not in this Google session** | October 2025 recap: in-house Meta video (~20 clicks/day) existed |
-| CRM / booked jobs / revenue | **No** | Cannot compute CAC, close rate, or LTV from marketing systems alone |
+| Fieldwork CRM | **Yes (25 Aug 2026)** | User `Grok`. Date Added, Executive Summary, service volume, estimates/agreements reports. **No** 2026 source tags |
 
 ---
 
@@ -34,7 +34,8 @@ This is the management layer on top of the public-web audit in `FINAL-MARKETING-
 - **Coalmarch:** YTD and last-30-day spend/leads/CPL, monthly 2026 table, paid vs SEO retainer split, inbound-ad lead types.
 - **Call tracking:** Only what Coalmarch rolls up (call vs form vs message). Raw CTM dispositions, duration, spam, and unique callers are **unavailable**.
 - **Gmail (aggregated):** Paid-budget history, LSA lead-notification volume, website form **types** (estimate vs WDIR vs contact), GBP hygiene thread with Toby, WDIR form-outage thread, contract/budget decisions.
-- **Not used as customer evidence:** individual form bodies, LSA caller identity, CTM recordings.
+- **Fieldwork (25 Aug 2026):** new accounts by Date Added (53 / 156 / 311 — see date caveats), Executive Summary production/invoicing for 30d / 90d / YTD, August service-volume mix, empty August estimates/agreements. Customer-level rows were **not** stored.
+- **Not used as customer evidence:** individual form bodies, LSA caller identity, CTM recordings, Fieldwork customer lists, route-email bodies.
 
 ---
 
@@ -49,6 +50,8 @@ This is the management layer on top of the public-web audit in `FINAL-MARKETING-
 4. **WDIR/real-estate forms are a live channel, not a theory.** In a 50-thread sample of `noreply@coalmarchleads.com`, **17/54 subject lines were Wood Destroying Insect Report** vs **35 Free Estimate** and **2 Contact**. The WDIR form **did break in May 2026**; mail resumed afterward. Coalmarch **paid** webforms show **zero for 13 months** because paid is **LSA calls/messages**, not because the site form has been dead since 2025.
 
 5. **GBP is operationally dirty in ways Phase 1 could only guess.** Owner-side description still includes **lawn care**. Toby (owner) independently flagged fake/keyword services (home construction, honeybee removal, snake, Jacksonville-only fleas, etc.) and asked Coalmarch for a professional read **before editing**. That hygiene work is higher leverage than a site redesign.
+
+6. **Fieldwork is a $700k YTD route business, not a 741-lead sales funnel.** Date Added **311** new accounts YTD vs Coalmarch **741** leads. Completed work is **7,901** WOs at **~$88** average — PestGuard Regular is the volume engine. August **Estimates = 0**, so 2026 marketing is **not** tagged in CRM. **311/741 = 42%** is new accounts per platform lead, **not** a close rate. **$41,940 / 311 = $134.86** is marketing dollars per new account, **not CAC**.
 
 ---
 
@@ -68,7 +71,7 @@ Last 30 days (24 Jul–22 Aug 2026): **99 leads** at **$54.49** blended CPL.
 
 GBP Mar–Aug 2026: **764 calls**, **456 website clicks**, **370 direction requests** from the listing. GSC is **branded + possum-blog** more than service-intent SEO.
 
-**Cannot yet say:** which of those 741 YTD “leads” became PestGuard accounts, one-time jobs, WDIR tickets, or spam.
+**Cannot yet say:** which of those 741 YTD “leads” became which of the **311** Fieldwork accounts, or which accounts are LSA vs GBP vs site vs realtor vs existing. Fieldwork Lead Source exists on Estimates and was **empty for August 2026**.
 
 ---
 
@@ -124,7 +127,7 @@ No system in the stack currently answers the full path:
 
 `search/ad → page/GBP → call/form → qualified → booked → recurring revenue`
 
-Missing: CRM feedback, unique new vs existing callers, spam filters, service/city on the lead, booked-job $ , CAC, LTV. Coalmarch “lead” ≠ customer. GA4 “key events” fell **−28.6%** in 28 days while sessions rose — event tracking is not a business P&L.
+Missing: **person-level** CRM feedback, unique new vs existing callers, spam filters, source on 2026 Fieldwork accounts, CAC by channel, LTV. Coalmarch “lead” ≠ Fieldwork “Date Added” (**741 ≠ 311**). Fieldwork production (**$700.07k** YTD) is mostly **existing PestGuard routes**, not new-customer revenue. GA4 “key events” fell **−28.6%** in 28 days while sessions rose — event tracking is not a business P&L.
 
 ---
 
@@ -152,7 +155,7 @@ See `account-data/11-original-audit-validation.md` for the full table. Short ver
 7. **Export Ads + LSA + CTM** (Daniel or Coalmarch) so search-term waste and missed calls are measurable.  
 8. **Ignore Wilmington city-page build** until JAX/Onslow is saturated (agency instruction, now first-party aligned).  
 9. **Stop paying for link-building theater** (already cancelled) — hold SEO to leads/rankings.  
-10. **Connect booked jobs** (even a monthly spreadsheet of new PestGuard vs one-time vs WDIR) or marketing CPL will keep lying.
+10. **Require Fieldwork source** on every new account (LSA, GBP, website/organic, Google Ads, realtor/WDIR, referral, existing, other). Until then, **$134.86** per new account is the only spend/account math, and it is **not** channel CAC.  
 
 ---
 
@@ -173,8 +176,54 @@ See `account-data/11-original-audit-validation.md` for the full table. Short ver
 | Wasted spend | CPL doubled YoY; LSA declines; cancelled link package |
 | Lost leads | May WDIR outage; possible unanswered messages; no missed-call data |
 | Incorrect business info | GBP lawn care + junk services; aggregator 9–6 vs site/GBP 8–5 |
-| Broken tracking | CTM locked; Ads UI incomplete; no CRM loop; GA4 key events unexplained drop |
+| Broken tracking | CTM locked; Ads UI incomplete; Fieldwork 2026 estimates unused; GA4 key events unexplained drop |
 | Bad optimization | Unknown whether LSA is charging for existing customers/spam |
-| Attribution | Coalmarch lead ≠ job |
+| Attribution | Coalmarch lead ≠ Fieldwork Date Added (**741 vs 311** YTD) |
 
-Full papers: `ACCOUNT-DATA-AUDIT.md` and `account-data/00`–`16`.
+---
+
+## 14. What Fieldwork changed (25 Aug 2026)
+
+Fieldwork did **not** change Coalmarch spend/leads/CPL, LSA-first paid, GBP Jacksonville demand, or the August $2k cap. It **did** replace “no CRM” with:
+
+- **311** new accounts YTD vs **741** platform leads  
+- **$700.07k** production / **7,901** WOs at **~$88** — a route shop  
+- PestGuard Regular as the volume service type (Aug service-volume)  
+- **No** 2026 estimate/source tags, so channel CAC is still impossible  
+
+### Reconciliation
+
+| Period | Marketing leads | Fieldwork new accounts | Fieldwork production | Booking rate |
+| --- | ---: | ---: | ---: | --- |
+| ~30d | 99 (24 Jul–22 Aug) | 53 on **26 Jul–25 Aug** preset | $93.73k / 1,064 WOs (24 Jul–22 Aug) | **None comparable** |
+| 90d | No native PI total | 156 (24 May–22 Aug) | $271.78k / 3,131 WOs | **None** (no 90d leads) |
+| YTD | 741 / $41,940 | 311 | $700.07k / 7,901 WOs | **Not a close rate.** 311/741 = 42% accounts per lead |
+
+### CAC / LTV
+
+`$41,940 / 311 = $134.86` marketing dollars per new Fieldwork account YTD. **Not CAC** (unattributed mix). LTV **not computed**.
+
+### Budget actions (priority)
+
+1. Do not raise paid.  
+2. Fix LSA billing.  
+3. Require Fieldwork source list (LSA, GBP, website/organic, Google Ads, realtor/WDIR, referral, existing, other).  
+4. Sell PestGuard accounts, not raw CPL.  
+5. Find where WDIR lives in Fieldwork (not a named type on the Aug service-volume first pass).  
+6. Do not turn on 173 paused Search campaigns.  
+7. Keep August-style capacity cap.  
+8. Finish CTM 2FA for missed calls.
+
+### Data-quality plan
+
+Required source values above; 0 blanks on new Date Added; monthly count next to Coalmarch 30d/YTD; never map `Google` to a channel.
+
+### Unresolved gaps
+
+Exact 24 Jul–22 Aug Date Added count; source frequency; production by service type for marketing windows; WDIR type name; city/ZIP counts; LTV.
+
+### Inventory
+
+Canonical paper: `account-data/17-fieldwork-crm.md`. Updated: this file, `ACCOUNT-DATA-AUDIT.md`, `00`, `09`, `10`, `12`–`16`, `exports/fieldwork-*.csv`, screenshots README. **No Fieldwork records or settings were changed.**
+
+Full papers: `ACCOUNT-DATA-AUDIT.md` and `account-data/00`–`17`.

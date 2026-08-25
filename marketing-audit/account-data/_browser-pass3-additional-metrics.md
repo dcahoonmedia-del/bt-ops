@@ -60,7 +60,7 @@ This document supplements the previous audit passes with additional data collect
 - **E-booking Sales:** 0 (all periods)
 
 ### Key Observations:
-1. **Webform leads have been zero** across all recorded months (Jul 2025 - Jul 2026), confirming the May 2026 website form breakage noted in client emails.
+1. **Paid-module webform leads have been zero** Jul 2025–Jul 2026. That is LSA/call/message attribution, **not** proof the website form has been dead for 13 months. Gmail still shows estimate + WDIR submissions via coalmarchleads.com. May 2026 WDIR outage was real and separate.
 2. **Message leads increased dramatically** in recent months:
    - Jul 2025: 9 message leads
    - Jul 2026: 21 message leads

@@ -1,8 +1,8 @@
 # 16 — Sources and export log
 
-**Audit window:** 23–24 August 2026  
+**Audit window:** 23–25 August 2026  
 **Identity:** daniel@btpestcontrol.com  
-**Rule:** no customer PII, passwords, recordings, or live edits.
+**Rule:** no customer PII, passwords, recordings, or live edits. Fieldwork was opened **read-only** on 25 Aug 2026 (user `Grok`). No Fieldwork records or settings were saved.
 
 | Platform | Report | Property | Date range | Filters | Export file | Screenshot | Accessed | Limitations |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -20,6 +20,15 @@
 | CTM | — | Coalmarch | — | — | — | — | 2026-08-23 | **2FA not completed** |
 | GTM / Looker / YT Studio | — | — | — | — | — | — | — | **Not completed** |
 | Drive | search | daniel@ | — | pest/Coalmarch | Empty | — | 2026-08-23 | |
+| Fieldwork web | Login wall (pre-auth) | app.fieldworkhq.com | Point in time | None | None | `fw-session-check-2026-08-25.webp`; `fw-chrome-history.webp` | 2026-08-24 / early 2026-08-25 | **Superseded.** Empty email/password at that time |
+| Fieldwork | Executive Summary | B&T Pest Control | 24 Jul–22 Aug; 24 May–22 Aug; 1 Jan–22 Aug 2026 | All branches | `exports/fieldwork-reconciliation.csv` | `fw-exec-30d.webp`, `fw-exec-90d.webp`, `fw-executive-summary-ytd.webp` | 2026-08-25 | Production vs invoice clocks differ; ~$88 avg WO is route work |
+| Fieldwork | Customer List · Date Added | same | 26 Jul–25 Aug (Last 30d **preset**); 24 May–22 Aug; 1 Jan–22 Aug | Date Added | counts only in reconciliation CSV | Customer-list shots **deleted** (account/card columns) | 2026-08-25 | 53 is **not** 24 Jul–22 Aug. Footer counts 53 / 156 / 311 |
+| Fieldwork | Sales By Agreement Type | same | 1–31 Aug 2026 | Default | — | `fw-sales-by-agreement-type.webp` | 2026-08-25 | **0** agreements. Recurring is service types, not this module |
+| Fieldwork | Estimates | same | 1–31 Aug 2026 | Estimate Date | — | `fw-estimates.webp` | 2026-08-25 | **0** rows; Lead Source column present |
+| Fieldwork | Service Volume By Location Type | same | 1–31 Aug 2026 | Default | `exports/fieldwork-service-volume-aug2026.csv` | `fw-service-volume-by-location-type.webp` | 2026-08-25 | Location Type blank; grouped by service type; Aug calendar ≠ 30d marketing |
+| Fieldwork | Reports index | same | Point in time | — | — | `fw-reports-menu.webp` | 2026-08-25 | 79 reports |
+| Gmail | Fieldwork operational mail | from:fieldworkhq.com | ~365d; last 30d | Subjects only | None (counts only) | — | 2026-08-25 | Route #3 daily sheets; bodies **not** opened |
+| Public | Customer portal | btpestcontrol.serviceworkportal.com | Point in time | — | — | Phase 1 | Phase 1 | Existing-customer portal |
 
 ## Gmail threads used as **management** evidence (not customer leads)
 
@@ -39,8 +48,15 @@
 
 First results page of `from:noreply@coalmarchleads.com`: **17 WDIR / 35 Free Estimate / 2 Contact** (54 subject hits). **Do not reopen to mine names.**
 
+## Sanitized exports added 25 Aug 2026
+
+- `exports/fieldwork-reconciliation.csv` — marketing vs Fieldwork by window  
+- `exports/fieldwork-required-sources.csv` — recommended required source list (not observed as 2026 values)  
+- `exports/fieldwork-service-volume-aug2026.csv` — Aug 2026 service-volume footer + top types  
+
 ## Reproducibility gaps
 
 1. Copy GSC zip + PI screenshots into `account-data/exports/` and `screenshots/` on a machine where Downloads is this repo.  
 2. Coalmarch: ranking PDF, Ads, LSA invoice.  
-3. CTM aggregate CSV with PII stripped.
+3. CTM aggregate CSV with PII stripped.  
+4. Fieldwork: Date Added **24 Jul–22 Aug**; source-value frequency; production by service type for 24 Jul–22 Aug and YTD (PII stripped).

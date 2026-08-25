@@ -1,6 +1,6 @@
 # 12 — Management scorecard
 
-**As-of:** 23 Aug 2026. **Never invent.** `Unavailable` = cannot compute from accessed systems.
+**As-of:** 25 Aug 2026 (Fieldwork access check). Metrics otherwise 23 Aug 2026. **Never invent.** `Unavailable` = cannot compute from accessed systems.
 
 ## Visibility
 
@@ -32,7 +32,21 @@
 
 ## Sales outcomes
 
-Appointments, booked jobs, new customers, recurring sold: **Unavailable** (no CRM join). Sep 2025 recap mentioned 20 new recurring in Jul 2025 — anecdotal, not 2026 YTD.
+| KPI | Value | Window | Source |
+| --- | --- | --- | --- |
+| New customers (Date Added) | **53** | 26 Jul–25 Aug 2026 (Last 30 days **preset**, not 24 Jul–22 Aug) | Fieldwork Customer List |
+| New customers (Date Added) | **156** | 24 May–22 Aug 2026 | Fieldwork Customer List |
+| New customers (Date Added) | **311** | 1 Jan–22 Aug 2026 | Fieldwork Customer List |
+| Active customers | **2,818** | Point in time 25 Aug 2026 | Fieldwork sidebar |
+| Completed work orders | 1,064 / 3,131 / 7,901 | 30d / 90d / YTD as Exec Summary | Fieldwork Executive Summary |
+| Production | $93.73k / $271.78k / $700.07k | same | Fieldwork Executive Summary |
+| Invoiced | $87.49k / $281.40k / $699.71k | same | Fieldwork Executive Summary |
+| Avg production / WO | $88.10 / $86.80 / $88.60 | same | Recurring-visit economics, **not** new-job value |
+| Recurring vs one-time $ | Unavailable as Agreements | Aug 2026 Agreements report = **0** | Recurring lives in **service types** (PestGuard Regular 551 qty on Aug service-volume) |
+| New vs existing mix on jobs | Unavailable | — | Production is mostly existing routes |
+| Lead-source hygiene | **Unused on 2026 estimates** | Aug 2026 Estimates = **0** rows; Lead Source column exists | Cannot distinguish LSA/GBP/organic/Ads |
+
+Sep 2025 recap “20 new recurring in Jul 2025” remains anecdotal mail. Detail: `17-fieldwork-crm.md`.
 
 ## Financial efficiency
 
@@ -42,8 +56,8 @@ Appointments, booked jobs, new customers, recurring sold: **Unavailable** (no CR
 | Cost per raw (platform) lead | $54.49 / $56.60 | 30d / YTD |
 | Cost per unique lead | Unavailable | |
 | Cost per qualified lead | Unavailable | |
-| Cost per booked job / CAC | Unavailable | |
-| Revenue / recurring / ROAS | Unavailable | |
+| Cost per booked job / CAC | **Not CAC.** YTD $41,940 / 311 new accounts = **$134.86** marketing $ per new account | Formula and limits in `17-fieldwork-crm.md`. Unattributed mix. |
+| Revenue / recurring / ROAS | YTD production **$700.07k** (7,901 WOs) is **not** marketing ROAS | Existing-route work. PestGuard Regular + PLUS = 56% of Aug service-volume qty, 71% of that report’s annual $ |
 
 ## Reputation
 
@@ -66,14 +80,15 @@ Answer rate, missed-call rate, speed-to-lead, by hour: **Unavailable** (CTM).
 5. Named Onslow towns (agency plan)  
 6. Wilmington — **deprioritized**
 
-## Services (ranked by inquiry evidence)
+## Services (ranked by inquiry evidence, then Fieldwork volume)
 
-1. General pest estimate  
-2. WDIR  
-3. Bed bugs (priority, volume down)  
-4. German roaches (page clicks)  
-5. Fleas  
-6. Mosquito/fire ant — **offer**, not GSC head  
-7. Wildlife content — **traffic**, not quotes  
+1. **PestGuard Regular** — largest Aug service-volume type (551 qty)  
+2. General pest estimate (form mail majority)  
+3. **PestGuardPLUS** + quarterly/commercial routes (Fieldwork service types)  
+4. WDIR — **marketing forms** (~30% of sampled subjects); **not** a named Fieldwork type on the Aug service-volume first pass  
+5. Bed bugs (agency: volume down; Fieldwork has heat/inspection types, low qty on first page)  
+6. German roaches / fleas / termite bait monitoring (present as types)  
+7. Mosquito/fire ant — **offer**, not GSC head  
+8. Wildlife content — **traffic**, not quotes  
 
-YTD spend +120% / leads +8% / CPL +104% is the **efficiency** scorecard.
+YTD spend +120% / leads +8% / CPL +104% is the **efficiency** scorecard. Fieldwork **311** new accounts vs **741** leads is the **yield** scorecard.

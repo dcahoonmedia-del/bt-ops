@@ -1,8 +1,10 @@
 # B&T Pest Control Marketing Audit - Deliverables Index
 
-**Audit Date:** August 23, 2026  
+**Audit Date:** August 23–25, 2026  
 **Client:** B&T Pest Control, Holly Ridge NC  
 **Website:** btpestcontrol.com  
+
+**Canonical account-data write-ups:** `../ACCOUNT-DATA-EXECUTIVE-SUMMARY.md` and `17-fieldwork-crm.md` (Fieldwork authenticated 25 Aug). `AUDIT_SUMMARY_REPORT.md` is an earlier Coalmarch/GBP snapshot; its “platforms not accessed” list is stale.  
 
 ---
 
@@ -20,7 +22,7 @@ Comprehensive executive summary with:
 **Key Findings:**
 - $41,940 YTD spend, 741 leads, $56.60 CPL
 - CPL efficiency declining (up 104% YoY)
-- Website form broken since May 2026
+- Paid inbound **webforms = 0** for 13 months because paid is LSA calls/messages — site estimate/WDIR mail still arrives; May 2026 WDIR outage was real but not a year-long dead form
 - GBP description incorrectly mentions "lawn care"
 
 ### 2. **_browser-pass2-metrics.md**
@@ -69,7 +71,7 @@ Detailed data collection log with exact metrics, date ranges, and screenshot ref
 
 ## 🚨 Critical Action Items
 
-1. **IMMEDIATE:** Fix broken website contact form (btpestcontrol.com)
+1. **IMMEDIATE:** WDIR form uptime (May outage was real). Paid-webform zeros ≠ year-dead site form
 2. **HIGH:** Update GBP description - remove "lawn care" mention
 3. **HIGH:** Audit Google Ads campaigns - CPL up 104% YoY
 4. **MEDIUM:** Clean GBP services list - remove "Home Construction" etc.

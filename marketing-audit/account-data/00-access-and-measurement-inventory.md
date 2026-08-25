@@ -1,6 +1,6 @@
 # 00 — Access and measurement inventory
 
-**Accessed:** 23 August 2026  
+**Accessed:** 23 August 2026 (Google/Coalmarch). Fieldwork session check **24–25 August 2026**.  
 **Google identity:** `daniel@btpestcontrol.com` (Daniel Cahoon)  
 **Owner of the company (confirmed by Daniel):** Toby Cahoon · `toby@btpestcontrol.com`  
 **Website connected:** `https://www.btpestcontrol.com/`  
@@ -25,20 +25,22 @@
 | Coalmarch leads mail | noreply@coalmarchleads.com | Forms on site | ~56 threads / 365d estimate | High for form *type* | Yes | — | Yes | GA4 forms |
 | CTM | app.calltrackingmetrics.com (Coalmarch tenant) | DNI 910-356-9966 vs office 910-329-1337 | 2FA wall | **None this pass** | Yes (codes firing) | — | Yes | Coalmarch calls, GBP, Ads |
 | Meta Ads | Not in Google profile | — | Oct 2025 recap only | Low | Was active 2025 | — | Yes | Branded search |
-| Birdeye / directories | Public only | — | — | Phase 1 | — | — | NAP conflicts | GBP |
+| Birdeye / directories | Public only | — | — | Phase 1 | — | — | — | NAP conflicts | GBP |
+| Fieldwork CRM | app.fieldworkhq.com · user `Grok` this session | ServiceWork portal `btpestcontrol.serviceworkportal.com` | Date Added 2026; Exec Summary; service volume Aug 2026 | **High** for counts/$; **Low** for source | **Yes** | Other routes may email other inboxes | Yes | Coalmarch leads have **no person join** |
 
 ---
 
 ## Tracking limitations (inventory level)
 
-1. Coalmarch **lead** = call + form + message as they define it. No booked-job join.  
+1. Coalmarch **lead** = call + form + message. Fieldwork **new account** = Date Added (**311** YTD vs **741** leads). No person-level join. 2026 Lead Source unused.  
 2. Organic CPL uses **retainer dollars / attributed organic leads** — accounting CPL, not media CPL.  
 3. Paid webform **zero in July inbound module** vs **39 webforms in the monthly company total** — different filters.  
 4. LSA “new call” email ≠ charged lead ≠ unique prospect.  
 5. GSC clicks ≠ leads. Possum blog inflates clicks.  
 6. GBP calls ≠ CTM unique new callers.  
 7. GA4 US-vs-Singapore split on a 28-day view is a **bot/quality flag**, not a market.  
-8. Credentials: a Coalmarch welcome mail contained a default password. **Not stored in-repo. Rotate it.**
+8. Credentials: a Coalmarch welcome mail contained a default password. **Not stored in-repo. Rotate it.**  
+9. Fieldwork is authenticated as of 25 Aug 2026. **Date Added ≠ lead created.** 2026 Estimates/Lead Source unused. Blank/generic “Google” is still not LSA/GBP/organic/Ads. Agreements module ≠ PestGuard recurring.
 
 ---
 

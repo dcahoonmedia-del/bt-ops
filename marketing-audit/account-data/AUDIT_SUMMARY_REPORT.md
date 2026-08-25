@@ -27,7 +27,7 @@ B&T Pest Control has invested $41,940 in digital marketing YTD 2026 (Jan 1 - Aug
 3. **Budget Cut Impact:** August 2026 paid budget was reduced from $4,600 to $2,000 due to a technician being out.
 
 4. **Critical Issues:**
-   - Website form broken since May 2026 (zero webform leads in Jul 2026)
+   - May 2026 WDIR form outage (later submissions resumed). Paid dashboard webforms stay at 0 because LSA is calls/messages, not because the site form has been dead since 2025
    - GBP description mentions "lawn care services" (not core service)
    - Lead efficiency declining (CPL up 104% YoY despite 120% spend increase)
    - Message leads surging (+92%) while call leads declining (-22%)
@@ -243,18 +243,18 @@ Due to time/token constraints and prioritization of Coalmarch & GBP data, the fo
 
 ### 🚨 HIGH PRIORITY ISSUES
 
-#### 1. Website Form Broken (Since May 2026)
+#### 1. Form uptime (May 2026 WDIR outage) vs paid-webform zeros
 **Evidence:**
-- Zero webform leads from btpestcontrol.com in July 2026 (Coalmarch data)
-- Client email confirmed "WDIR website form broke in May 2026"
-- Forms still arriving from coalmarchleads.com (alternate landing page)
+- WDIR form broke in May 2026 (client email); later `coalmarchleads.com` WDIR and estimate mail still arrived
+- Coalmarch **paid/inbound** webforms are 0 for every month Jul 2025–Jul 2026 because that module is LSA **calls + messages**
+- July 2026 company-wide webforms in the monthly table were **not** zero (organic/site forms)
 
-**Impact:** Loss of direct website conversions; visitors hitting broken form may bounce
+**Impact:** A silent WDIR outage loses realtor jobs. Misreading paid-webform zeros as “the site is dead” wastes the wrong fix.
 
 **Recommendation:**
-- **Immediate:** Test & fix btpestcontrol.com contact form
-- Verify form submissions are reaching correct email/CRM
-- Implement form monitoring/alerts to detect future breakage
+- Uptime monitor / weekly WDIR count
+- Do not rebuild the whole form stack on the 13-month paid-zero row
+- Confirm thank-you / routing still hits the office
 
 #### 2. CPL Efficiency Declining
 **Evidence:**
@@ -405,3 +405,11 @@ This audit was conducted in full compliance with the client's READ-ONLY requirem
 ---
 
 **END OF AUDIT SUMMARY REPORT**
+
+---
+
+## Addendum — 25 August 2026 (Fieldwork)
+
+This 23 Aug file is **not** the access inventory. Use `ACCOUNT-DATA-EXECUTIVE-SUMMARY.md` and `17-fieldwork-crm.md`.
+
+Authenticated Fieldwork (user `Grok`): **311** new accounts YTD (Date Added, 1 Jan–22 Aug) vs **741** Coalmarch leads; **$700.07k** production / **7,901** WOs; PestGuard Regular is the volume service type; August estimates = 0 (Lead Source unused). No Fieldwork records or settings were changed.

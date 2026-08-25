@@ -21,7 +21,7 @@ Windows differ. **Do not average them into one fake number.**
 | Platform conversions | Ads unknown; LSA emails ≠ charges | 52 key events | 99 leads | — | **99 Coalmarch leads** | Medium as KPI / Low as jobs |
 | Unique leads | — | — | ≤99 | — | **Unknown unique humans** | Low |
 | Qualified | — | — | — | — | **Unavailable** | — |
-| Booked | — | — | — | — | **Unavailable** | — |
+| Booked | — | — | — | Fieldwork Date Added | **53 new accounts** in UI **Last 30 days** (26 Jul–25 Aug — **not** 24 Jul–22 Aug) | Medium as count / Low as “from these 99 leads” |
 
 ## YTD 2026 (1 Jan–22 Aug)
 
@@ -29,6 +29,7 @@ Windows differ. **Do not average them into one fake number.**
 | --- | --- | --- | --- | --- | --- | --- |
 | Spend | LSA declines; no Ads export | — | **$41,940** | — | **$41,940 marketing (PI)** | High |
 | Leads | LSA ~201 emails/365d (not YTD-cut) | — | **741** | — | **741 platform leads** | High as PI / Low as customers |
+| New Fieldwork accounts | — | — | — | Fieldwork Date Added | **311** (1 Jan–22 Aug) | High as CRM count |
 | CPL | — | — | **$56.60** | — | Platform CPL | High |
 | GSC clicks | 4,670 / ~16mo | — | — | — | Not leads | High |
 | GBP calls | 764 / Mar–Aug | — | — | — | Listing calls | High |
@@ -45,7 +46,26 @@ Windows differ. **Do not average them into one fake number.**
 **Most trustworthy for money in:** Coalmarch spend.  
 **Most trustworthy for “did marketing make the phone/form move”:** Coalmarch leads + GBP actions, **qualified by office**.  
 **Most trustworthy for SEO queries:** GSC.  
-**Least:** GA4 conversions; Ads UI this session.
+**Least:** GA4 conversions; Ads UI this session.  
+**Jobs / new customers / revenue:** Fieldwork Date Added and Executive Summary (see `17-fieldwork-crm.md`). Production (~$88/WO) is mostly **recurring routes**, not new-account sales.
+
+---
+
+## Fieldwork vs marketing leads (25 Aug 2026)
+
+Windows and **date definitions** differ. Coalmarch = lead created (call/form/message). Fieldwork new customers = **Date Added**. Fieldwork production = **completed work orders** (mostly existing PestGuard routes).
+
+| Period | Marketing leads (Coalmarch) | Fieldwork new customers | Fieldwork completed WOs / production | Comparable booking rate |
+| --- | ---: | ---: | ---: | --- |
+| Last 30d marketing · 24 Jul–22 Aug 2026 | **99** ($5,390) | **Not counted on these dates.** UI Last-30-days preset = **53** accounts **26 Jul–25 Aug** | **1,064** WOs / **$93.73k** prod / **$87.49k** invoiced (24 Jul–22 Aug) | **None.** 53/99 would mix two calendars and two populations. |
+| 90d · 24 May–22 Aug 2026 | **No native PI export** (do not use May–Aug monthly sum 479) | **156** Date Added | **3,131** WOs / **$271.78k** prod / **$281.40k** invoiced | **None** (no 90d lead total). |
+| YTD · 1 Jan–22 Aug 2026 | **741** ($41,940) | **311** Date Added | **7,901** WOs / **$700.07k** prod / **$699.71k** invoiced | **Not a close rate.** **311/741 = 42%** is only new accounts per platform lead. |
+
+GBP **764 listing calls** (Mar–Aug) and GSC **1,174 clicks** (22 May–21 Aug) are **not** Fieldwork denominators.
+
+**What still prevents a person-level match:** no shared ID; 2026 Estimates report is empty (Lead Source column unused); production is recurring ~$88 tickets, not “this month’s 99 leads.” Do **not** treat blank or generic “Google” as LSA/GBP/organic/Ads if that value appears later.
+
+Detail and formulas: `17-fieldwork-crm.md`. Export: `exports/fieldwork-reconciliation.csv`.
 
 ---
 
@@ -53,10 +73,10 @@ Windows differ. **Do not average them into one fake number.**
 
 | Channel | Visibility | Calls | Forms/msg | Unique leads | Qualified | Booked |
 | --- | --- | --- | --- | --- | --- | --- |
-| GBP | High (3,966 views / 6mo) | 764 / 6mo | Messages mixed into PI | Unknown | Unknown | Unknown |
-| Organic | GSC 1,174 clicks / 3mo, mostly brand+possum | In the 44 organic leads / 30d | Yes (estimate+WDIR) | Unknown | Unknown | Unknown |
+| GBP | High (3,966 views / 6mo) | 764 / 6mo | Messages mixed into PI | Unknown | Unknown | Unknown (no source tags in FW) |
+| Organic | GSC 1,174 clicks / 3mo, mostly brand+possum | In the 44 organic leads / 30d | Yes (estimate+WDIR) | Unknown | Unknown | Unknown (no source tags in FW) |
 | Search Ads | Not evidenced live | Unknown | Unknown | Unknown | — | — |
-| LSA | Active | Majority of paid calls | Messages possible | Unknown | Unknown | Unknown |
+| LSA | Active | Majority of paid calls | Messages possible | Unknown | Unknown | Unknown (no source tags in FW) |
 | Direct | 188 GA4 sessions / 28d | DNI/brand | Yes | Unknown | — | — |
 | Referral | Unmeasured | — | — | — | — | — |
 | Social | Meta assist 2025 | Not in PI | — | Low | — | — |

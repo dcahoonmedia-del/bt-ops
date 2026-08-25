@@ -1,10 +1,10 @@
 # B&T Pest Control — Account-data audit (full)
 
-**Date:** 23–24 August 2026  
+**Date:** 23–25 August 2026  
 **Mode:** Research / export / recommend only. No account mutations.  
 **Owner:** Toby Cahoon. **Working the Google/Coalmarch logins:** Daniel Cahoon.
 
-Companion files: `ACCOUNT-DATA-EXECUTIVE-SUMMARY.md`, `account-data/00`–`16`, Phase 1 `FINAL-MARKETING-AUDIT.md`.
+Companion files: `ACCOUNT-DATA-EXECUTIVE-SUMMARY.md`, `account-data/00`–`17`, Phase 1 `FINAL-MARKETING-AUDIT.md`.
 
 ---
 
@@ -30,10 +30,13 @@ Google (Maps/Search/LSA) + some organic site
         → CTM numbers / site forms / LSA / messages
         → Coalmarch “lead”
         → office (Allison + contactus + Daniel on forms)
-        → [BOOKED JOB: UNKNOWN]
+        → Fieldwork customer Date Added (311 YTD) / completed WOs (~$88 avg, mostly existing routes)
+        → [CHANNEL SOURCE ON 2026 RECORDS: UNUSED]
 ```
 
 **Volume (Coalmarch, 1 Jan–22 Aug 2026):** 741 leads.  
+**Fieldwork new accounts (Date Added, same end date):** 311.  
+**Fieldwork production (same window):** $700.07k on 7,901 completed WOs.  
 **GBP calls Mar–Aug 2026:** 764 (different window, includes existing customers and repeats).  
 **GSC clicks 3 months:** 1,174 (mostly not “leads”).
 
@@ -121,8 +124,8 @@ Fire-ant page, mosquito-vs-franchise table, PCS/WDIR **landing page** (forms exi
 
 ## K. What to do next
 
-Immediate: GBP cleanup (controlled), LSA billing, WDIR uptime, CRO, do not restimulate paid above ops.  
-Then: JAX proof, WDIR/PCS page, CTM+Ads exports, PestGuard offer test.  
+Immediate: GBP cleanup (controlled), LSA billing, WDIR uptime, CRO, do not restimulate paid above ops, **require Fieldwork source tags**.  
+Then: JAX proof, WDIR/PCS page, CTM+Ads exports, PestGuard offer test, Date Added on **24 Jul–22 Aug**.  
 Defer: Wilmington mill, more city templates, link packages, redesign.
 
-Detail: `account-data/13-revised-action-plan.md`.
+Detail: `account-data/13-revised-action-plan.md` and `account-data/17-fieldwork-crm.md`.

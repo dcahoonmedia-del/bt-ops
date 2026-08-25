@@ -16,8 +16,10 @@ Every item: evidence → business effect → impact/effort/confidence → owner 
 | I4 | Align PI August budget with $2,000 ops cap | **DO NOW** | Dashboard still showed ~$4,240 | Don’t overspend labor | 4/1/H | Coalmarch ads | Daniel | Paid spend | $1,850 mid-Aug vs $2k cap | Stay ≤ cap | PI | Weekly |
 | I5 | Citation hours/city (Birdeye etc.) to 8–5 Holly Ridge | **DO NOW** | Phase 1 vs GBP 8am | Fewer “are they open?” | 3/2/H | Login to directories | Daniel | NAP match | 9–6 / Surf City remnants | Match GBP | Spot check | 14 days |
 | I6 | Request Coalmarch: Ads+LSA+CTM **aggregate** exports | **DO NOW** | Access gaps | Enable quality math | 5/2/H | Agency | Daniel | Files in exports/ | Missing | 90d + 12mo CSVs | Inbox | 14 days |
+| I7 | Custom Date Added **24 Jul–22 Aug** plus PII-stripped source-frequency export | **DO NOW** | Last-30-days preset is 26 Jul–25 Aug (**53**); YTD **311** already counted | Aligns new accounts to Coalmarch 99-lead window | 4/1/H | Session exists | Daniel | Count on exact 30d | 53 on wrong window | Same dates as PI | Customer List | 7 days |
+| I8 | Lock Fieldwork source **required**: LSA / GBP / website/organic / Google Ads / realtor/WDIR / referral / existing customer / other | **DO NOW** | 2026 Estimates = 0; Lead Source column unused; Marketing campaigns are 2017–19 blasts | Stops fake channel CAC | 5/2/H | Office habit | Office + Daniel | % blank on new accounts | Unknown (no 2026 values seen) | 0 blank | Monthly source counts | After first 30 tagged accounts |
 
-**Not doing:** editing live ads, pausing LSA blindly, mass-deleting GBP services without a list.
+**Not doing:** editing live ads, pausing LSA blindly, mass-deleting GBP services without a list, logging into Fieldwork with the Feb 2026 reset mail, mining route-email bodies for customer names.
 
 ---
 
@@ -28,7 +30,7 @@ Every item: evidence → business effect → impact/effort/confidence → owner 
 | H1 | Homepage CRO: $45 inclusion above fold, exclusions, short form, click-to-text | **DO NEXT** | CVR drop May 2026; Phase 1 offer | More estimates from existing traffic | Daniel + Coalmarch | Form+call from home | Unknown CVR | Agency to pull pre/post | GSC home + PI forms |
 | H2 | WDIR / realtor / PCS landing page (VA/FHA, turnaround, not 40 cities) | **DO NEXT** | Form mix | Capture already-incoming WDIR | Daniel + Coalmarch | WDIR forms | 17/54 sample | + measurable page CVR | 45 days |
 | H3 | Jacksonville review + photo + post cadence (no fake pin) | **DO NEXT** | GBP JAX #1 query | Pack, not a new URL mill | Office | JAX reviews/mo | Unknown | Set after 30d count | GBP |
-| H4 | LSA quality process: office tags spam/existing (spreadsheet if no CRM) | **DO NEXT** | 201 emails/yr; no quality | Cut CPL shock | Office + Daniel | % bad LSA | Unknown | Tag 100% of charged | 30 days |
+| H4 | Tag every new Fieldwork account at intake (required source list). Spreadsheet only as backup | **DO NEXT** | 741 YTD leads vs **311** new accounts; Estimates unused | Channel CAC becomes possible | Office + Daniel | % of new accounts with non-blank source | ~0 observed on Aug estimates | 100% of new Date Added | 30 days |
 | H5 | Hold paid at ops capacity | **WATCH** | Aug tech out | Avoid junk booked work | Daniel | Spend vs jobs runnable | $2k Aug | Match techs | Weekly |
 
 ---
@@ -63,7 +65,7 @@ Hypothesis: $10–$50 is invisible. Still unverified. Budget: payouts. Success: 
 | City pages | **WAIT** on ILM; **DO NEXT** on listed Onslow towns only |
 | Video | **DO NEXT** when new footage exists (old YT burned) |
 | JAX suite | **WATCH** | Sep 2025 plan; proximity play |
-| Measurement | **DO NEXT** | Jobs spreadsheet × monthly PI |
+| Measurement | **DO NEXT** | Fieldwork Date Added + Exec Summary × monthly PI. Source tags still missing (`17-fieldwork-crm.md`) |
 | Crawl as advertised | **WAIT** | Toby: understaffed |
 | Wilmington | **WAIT** | Agency 2026 |
 

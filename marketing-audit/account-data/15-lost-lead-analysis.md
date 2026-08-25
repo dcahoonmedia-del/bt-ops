@@ -13,7 +13,7 @@ Marketing can create a lead the office never turns into work.
 | Message volume spike | +92% / 30d | **Risk** if slow replies (LSA scoring + lost deals). Count of unworked messages: **unknown** |
 | After-hours / missed | CTM locked; hours 8–5; LSA 24/7-ish | **Plausible, unquantified** |
 | LSA pause from billing | Decline notices | **If paused, 100% of that day’s paid** |
-| Capacity | Tech out Aug; crawl understaffed | **Booked work refused or delayed** — not a media problem |
+| Capacity | Tech out Aug; crawl understaffed | **Booked work refused or delayed** — not a media problem. Fieldwork cancellations YTD **28 / 8,121** (0.34%) are tiny; they do **not** size “marketing leads we could not run.” |
 | Long form / no SMS | Phase 1 + still true on site | **Plausible** mobile drop |
 | Video gallery empty | Former employee 2025 | Trust, not a daily lead hose |
 | GBP junk | Lawn care / fake services | **Wrong-intent** calls possible |
@@ -32,8 +32,10 @@ Marketing can create a lead the office never turns into work.
 
 Cannot say “X jobs/week lost.” Can say:
 
-- Last 30d **99 platform leads**. If messages (25) are half-unanswered, that is **order-of-magnitude 10 missed conversations**, not a precise forecast.  
-- If WDIR was down for even **one busy week**, that is several realtor jobs at inspection-ticket value (price unpublished).  
+- Last 30d **99 platform leads** vs Fieldwork **53** new accounts on a **different** 30d preset (26 Jul–25 Aug). That gap is **not** “46 lost jobs.”  
+- YTD **741 leads** vs **311** new accounts. Some of the 430 are existing callers, spam, WDIR/one-time, or never booked — **unsplit**.  
+- If messages (25) are half-unanswered, that is **order-of-magnitude 10 missed conversations**, not a precise forecast.  
+- If WDIR was down for even **one busy week**, that is several realtor jobs at inspection-ticket value (price unpublished). WDIR is **not** a named Fieldwork service type on the Aug service-volume first pass.  
 - GBP **764 calls / 6 months** — if even 10% missed, tens of calls; **unknown**.
 
-**Do not present a fake “$ lost” to Toby.** Instrument CTM missed + form errors + message SLA, then size it.
+**Do not present a fake “$ lost” to Toby.** Instrument CTM missed + form errors + message SLA + Fieldwork source tags, then size it. Route #3 daily mail is **not** a lost-lead report. YTD $700k production is existing-route work, not proof marketing is fine.
