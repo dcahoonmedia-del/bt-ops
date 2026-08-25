@@ -412,4 +412,4 @@ This audit was conducted in full compliance with the client's READ-ONLY requirem
 
 This 23 Aug file is **not** the access inventory. Use `ACCOUNT-DATA-EXECUTIVE-SUMMARY.md` and `17-fieldwork-crm.md`.
 
-Authenticated Fieldwork (user `Grok`): **311** new accounts YTD (Date Added, 1 Jan–22 Aug) vs **741** Coalmarch leads; **$700.07k** production / **7,901** WOs; PestGuard Regular is the volume service type; August estimates = 0 (Lead Source unused). No Fieldwork records or settings were changed.
+Authenticated Fieldwork (user `Grok`): **311** new accounts YTD (Date Added, 1 Jan–22 Aug) vs **741** Coalmarch leads; **$700.07k** production / **7,901** WOs; PestGuard Regular is the volume service type. Empty Estimates *module* ≠ no estimating (onsite estimates are inspection-estimate work orders). No Fieldwork records or settings were changed.

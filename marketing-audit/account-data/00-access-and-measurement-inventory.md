@@ -32,7 +32,7 @@
 
 ## Tracking limitations (inventory level)
 
-1. Coalmarch **lead** = call + form + message. Fieldwork **new account** = Date Added (**311** YTD vs **741** leads). No person-level join. 2026 Lead Source unused.  
+1. Coalmarch **lead** = call + form + message. Fieldwork **new account** = Date Added (**311** YTD vs **741** leads). No person-level join. Estimates *module* unused; onsite estimates are inspection-estimate **work orders**.  
 2. Organic CPL uses **retainer dollars / attributed organic leads** — accounting CPL, not media CPL.  
 3. Paid webform **zero in July inbound module** vs **39 webforms in the monthly company total** — different filters.  
 4. LSA “new call” email ≠ charged lead ≠ unique prospect.  
@@ -40,7 +40,7 @@
 6. GBP calls ≠ CTM unique new callers.  
 7. GA4 US-vs-Singapore split on a 28-day view is a **bot/quality flag**, not a market.  
 8. Credentials: a Coalmarch welcome mail contained a default password. **Not stored in-repo. Rotate it.**  
-9. Fieldwork is authenticated as of 25 Aug 2026. **Date Added ≠ lead created.** 2026 Estimates/Lead Source unused. Blank/generic “Google” is still not LSA/GBP/organic/Ads. Agreements module ≠ PestGuard recurring.
+9. Fieldwork is authenticated as of 25 Aug 2026. **Date Added ≠ lead created.** Empty Estimates *module* ≠ no estimating (inspection-estimate WOs). Blank/generic “Google” is still not LSA/GBP/organic/Ads. Agreements module ≠ PestGuard recurring.
 
 ---
 

@@ -44,7 +44,7 @@
 | Avg production / WO | $88.10 / $86.80 / $88.60 | same | Recurring-visit economics, **not** new-job value |
 | Recurring vs one-time $ | Unavailable as Agreements | Aug 2026 Agreements report = **0** | Recurring lives in **service types** (PestGuard Regular 551 qty on Aug service-volume) |
 | New vs existing mix on jobs | Unavailable | — | Production is mostly existing routes |
-| Lead-source hygiene | **Unused on 2026 estimates** | Aug 2026 Estimates = **0** rows; Lead Source column exists | Cannot distinguish LSA/GBP/organic/Ads |
+| Lead-source hygiene | **Unused on 2026 records** | Estimates *module* empty; onsite estimates are inspection WOs | Cannot distinguish LSA/GBP/organic/Ads |
 
 Sep 2025 recap “20 new recurring in Jul 2025” remains anecdotal mail. Detail: `17-fieldwork-crm.md`.
 

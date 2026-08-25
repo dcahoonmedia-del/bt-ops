@@ -2,7 +2,7 @@
 
 **Question:** Are we paying for bad leads?
 
-**Answer:** **Paying too much per platform lead relative to new accounts, and channel quality is still unproven.** YTD CPL **+104%** with leads **+8%** remains the waste signal. Fieldwork adds: **741** Coalmarch leads vs **311** new accounts YTD (1 Jan–22 Aug) — **42% yield of accounts per platform lead, not a close rate.** LSA is still the spend vehicle. Search CID 367-996-4323 has **173 paused campaigns** — **not currently burning cash**. Source fields on 2026 estimates are **unused** (0 August estimates), so Fieldwork **cannot** yet say which accounts came from LSA vs GBP vs site vs existing. Do **not** re-enable Wilmington Search without search-term history. Do **not** treat blank or generic “Google” as LSA/GBP/organic/Ads.
+**Answer:** **Paying too much per platform lead relative to new accounts, and channel quality is still unproven.** YTD CPL **+104%** with leads **+8%** remains the waste signal. Fieldwork adds: **741** Coalmarch leads vs **311** new accounts YTD (1 Jan–22 Aug) — **42% yield of accounts per platform lead, not a close rate.** LSA is still the spend vehicle. Search CID 367-996-4323 has **173 paused campaigns** — **not currently burning cash**. Source fields on 2026 **customers / inspection-estimate work orders** are unused. The empty Estimates *module* is **not** “no estimating.” Fieldwork **cannot** yet say which accounts came from LSA vs GBP vs site vs existing. Do **not** re-enable Wilmington Search without search-term history. Do **not** treat blank or generic “Google” as LSA/GBP/organic/Ads.
 
 ---
 

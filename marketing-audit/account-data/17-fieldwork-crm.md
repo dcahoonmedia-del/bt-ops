@@ -76,17 +76,22 @@ First page (A–G alphabetically) included commercial monthly/weekly, bed-bug he
 
 No service type named **WDIR** / Wood Destroying Insect Report was seen on the visible list. **Termite – Bait Monitoring** and inspection/estimate types **were** present. **Pest Inspection / Estimate** and **Inspection/Estimate** exist as types.
 
-### Estimates / leads pipeline
+### Estimates module vs onsite inspection-estimate work orders
 
-**Reports → Estimates**, Estimate Date **Aug 1–31 2026:** **0** rows. Column **Lead Source** exists (empty because the table is empty). Screenshot: `fw-estimates.webp`.
+**Correction:** An empty Fieldwork **Estimates** module is **not** evidence that B&T does no estimating. The office records **onsite estimates as inspection-estimate work orders** (service types such as **Pest Inspection / Estimate** and **Inspection/Estimate**), not as Sales → Estimates rows.
 
-**Sales → Estimates** list: historical estimates (years **2018–2025** visible), many **Expired**, some **Accepted**, sidebar **Archived 112**. Pagination 1 of 2. No 2026 volume in the August report filter.
+**Estimates *module* (unused product feature):**
 
-Customers sidebar **Leads: 0**.
+- **Reports → Estimates**, Estimate Date **1–31 Aug 2026:** **0** rows. Column **Lead Source** exists (empty because the table is empty). Screenshot: `fw-estimates.webp`.
+- **Sales → Estimates** list: historical estimates (years **2018–2025** visible), many **Expired**, some **Accepted**, sidebar **Archived 112**.
+- Customers sidebar **Leads: 0**.
+
+Do **not** treat those zeros as “no quotes in August.” Period-matched inspection-estimate **work-order** counts are the right metric and were not pulled in the first authenticated pass. A completed inspection is **not** automatically a sale.
 
 ### Marketing / source fields
 
-- Estimates have a **Lead Source** column. **No 2026 August values to count.** Distinct picklist values were **not** observed (empty table; Customize not used, to avoid Save).
+- The unused Estimates module has a **Lead Source** column. **No 2026 August *module* values to count.** That does **not** mean 2026 jobs have no estimating activity.
+- Distinct picklist values were **not** observed (empty Estimates table; Customize not used, to avoid Save).
 - Customer List default columns did **not** show Marketing Campaign / Source.
 - **Marketing → Campaigns** showed **historical email/ad campaigns** (examples: 2018–2019 hurricane/phone emails; **Google Adwords – Mosquito** May 2017, $250 cost, 0 customers). Those are **old blast campaigns**, not 2026 intake sources. They must not be read as LSA/GBP/Ads attribution.
 
@@ -118,7 +123,7 @@ Formulas use only the facts above. Populations are **not** the same people.
 | PestGuard Regular + PLUS share of annual $ | ($261,516+$67,302) / $463,201 | **71.0%** | Annualized value on the Aug service-volume report, not YTD invoiced $699.71k. |
 | Avg ticket vs new-account value | $88.60 YTD production / WO | Recurring-visit economics | **Not** the price of a new PestGuard setup. |
 
-**Booking/conversion rate with a comparable numerator and denominator:** **none.** Fieldwork does not show which of the 741 Coalmarch leads became which of the 311 accounts. Estimates for Aug 2026 are zero, so estimate→job conversion is **unavailable**.
+**Booking/conversion rate with a comparable numerator and denominator:** **none.** Fieldwork does not show which of the 741 Coalmarch leads became which of the 311 accounts. The empty **Estimates module** is the wrong denominator; inspection-estimate **work-order** counts were not yet period-matched. A completed inspection is not automatically a sale.
 
 **LTV:** **not computed.** Need average agreement price × tenure. Agreements report was empty for August; PestGuard annual values exist on the service-volume report but are not tenure.
 
@@ -129,7 +134,7 @@ Formulas use only the facts above. Populations are **not** the same people.
 ## Reasonable inferences
 
 1. Fieldwork is the **live ops/billing system** (2,818 active customers; thousands of 2026 work orders; daily Route #3 mail).
-2. **Intake is “create a customer,” not a 2026 estimate pipeline.** August estimates = 0 while 53 accounts were added in the Last-30-days preset. Lead Source on Estimates cannot attribute 2026 marketing until estimates (or a customer source field) are actually used.
+2. **The Estimates *module* is unused for 2026; estimating still happens as inspection-estimate work orders.** Empty August Estimates rows do **not** mean no quotes. Lead Source on that module still cannot attribute 2026 marketing. Source would need to live on the customer or on the inspection-estimate WO.
 3. **Recurring general pest is the production engine.** ~$88 average WO and PestGuard Regular as the largest service-volume type match a bi-monthly/quarterly route shop, not a one-time-treatment shop.
 4. **Coalmarch “lead” is much larger than Fieldwork “new account.”** YTD 741 vs 311. The gap is some mix of existing customers, spam, no-shows, WDIR/one-time that may not create a lasting account, duplicates, and timing — **not measured**.
 5. **A blank or generic “Google” source, if it appears later, still would not prove LSA vs GBP vs organic vs Google Ads.** No 2026 source values were seen to test this.
@@ -142,7 +147,7 @@ Formulas use only the facts above. Populations are **not** the same people.
 | --- | --- | --- |
 | New accounts in **24 Jul–22 Aug** (exact Coalmarch 30d) | UI used Last-30-days preset (26 Jul–25 Aug) = **53** | Customer List · Date Added · custom **24 Jul–22 Aug 2026** |
 | Which new accounts came from LSA / GBP / site / Ads / realtor / referral / existing | Lead Source empty for Aug estimates; customer source column not in default view | Customer List with **Marketing Campaign or Lead Source** column; value frequency including **blank**; **do not Save** a Customize unless the owner wants a saved view |
-| Estimate → scheduled/completed | 0 estimates in Aug 2026 report | Estimates report · Estimate Date = YTD; status counts (Accepted / Expired / etc.) |
+| Inspection-estimate WO volume (period-matched) | Not counted in first pass (module emptiness was misread) | Work orders / Service Volume filtered to **Pest Inspection / Estimate**, **Inspection/Estimate**, plus any WDIR/termite-letter types; 24 Jul–22 Aug, 24 May–22 Aug, 1 Jan–22 Aug |
 | New vs existing mix **on jobs** | Exec Summary is all WOs | Jobs/WOs with customer Date Added vs WO date (export, PII stripped) |
 | Recurring vs one-time **$** | Agreements module 0 in Aug; service-volume is not completed-WO revenue | Completed production by service type for 24 Jul–22 Aug and YTD |
 | WDIR volume in Fieldwork | No type named WDIR on the visible service list | Service-volume / WO search for WDIR, WDI, wood-destroying, termite letter |
@@ -164,7 +169,7 @@ Coalmarch **lead** = tracked call + form + message. Fieldwork **new customer** =
 
 GBP **764 listing calls** (Mar–Aug) and GSC **1,174 clicks** (22 May–21 Aug) are still **not** Fieldwork denominators.
 
-**What prevents a person-level match:** no shared ID between Coalmarch/CTM/LSA and Fieldwork; unused 2026 estimate/source fields; Date Added ≠ lead timestamp; production is recurring routes, not “this month’s leads.”
+**What prevents a person-level match:** no shared ID between Coalmarch/CTM/LSA and Fieldwork in the repo; unused Estimates-*module* source field (onsite estimates are WOs, not that module); Date Added ≠ lead timestamp; production is recurring routes, not “this month’s leads.”
 
 ---
 
@@ -174,7 +179,7 @@ Lock as **required** on new customers (and on estimates if the office starts usi
 
 `LSA` · `GBP` · `website/organic` · `Google Ads` · `realtor/WDIR` · `referral` · `existing customer` · `other` (note required)
 
-Never store blank or `Google`. Fieldwork **can** store a source (Lead Source on Estimates; Marketing Campaign exists in the product). It **cannot** distinguish those channels until values are used on 2026 records.
+Never store blank or `Google`. Fieldwork **can** store a source (Lead Source on the unused Estimates module; Marketing Campaign exists in the product). Put the required list on **new customers and inspection-estimate work orders**, not on a module the office does not use. It **cannot** distinguish those channels until values are used on 2026 records.
 
 ---
 
@@ -199,7 +204,7 @@ Never store blank or `Google`. Fieldwork **can** store a source (Lead Source on 
 | `fw-exec-30d.webp` | Exec Summary 24 Jul–22 Aug 2026 |
 | `fw-exec-90d.webp` | Exec Summary 24 May–22 Aug 2026 |
 | `fw-sales-by-agreement-type.webp` | 0 agreements, Aug 2026 |
-| `fw-estimates.webp` | 0 estimates, Aug 2026; Lead Source column |
+| `fw-estimates.webp` | Empty **Estimates module** for Aug 2026 (not proof of no onsite estimates) |
 | `fw-service-volume-by-location-type.webp` | Aug 2026 service types; footer 1,167 / $463,201 / $68,455 |
 | `fw-chrome-history.webp` | Pre-login: history only Sign In |
 | `fw-session-check-2026-08-25.webp` | Pre-login wall (superseded) |

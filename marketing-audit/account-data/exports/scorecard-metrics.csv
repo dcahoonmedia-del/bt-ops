@@ -53,6 +53,6 @@ unavailable,unique_new_callers,, ,CTM,2FA not completed
 2026-01-01_to_2026-08-22,new_accounts_per_platform_lead,0.420,ratio,calculated 311/741,NOT a close rate
 point_in_time_2026-08-25,fieldwork_active_customers,2818,count,Fieldwork sidebar,
 2026-08-01_to_2026-08-31,pestguard_regular_qty,551,count,Fieldwork service volume,Aug calendar; not 30d marketing window
-unavailable,qualified_leads,, ,CRM source tags,2026 estimates unused
+unavailable,qualified_leads,, ,CRM source tags,Estimates module unused; inspection-estimate WOs not yet counted
 unavailable,cac_or_roas,, ,finance,do not use 134.86 as CAC
 

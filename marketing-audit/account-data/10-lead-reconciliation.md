@@ -63,7 +63,7 @@ Windows and **date definitions** differ. Coalmarch = lead created (call/form/mes
 
 GBP **764 listing calls** (Mar–Aug) and GSC **1,174 clicks** (22 May–21 Aug) are **not** Fieldwork denominators.
 
-**What still prevents a person-level match:** no shared ID; 2026 Estimates report is empty (Lead Source column unused); production is recurring ~$88 tickets, not “this month’s 99 leads.” Do **not** treat blank or generic “Google” as LSA/GBP/organic/Ads if that value appears later.
+**What still prevents a person-level match:** no shared ID in the repo; Estimates *module* unused (onsite estimates are inspection WOs); production is recurring ~$88 tickets, not “this month’s 99 leads.” Do **not** treat blank or generic “Google” as LSA/GBP/organic/Ads if that value appears later.
 
 Detail and formulas: `17-fieldwork-crm.md`. Export: `exports/fieldwork-reconciliation.csv`.
 

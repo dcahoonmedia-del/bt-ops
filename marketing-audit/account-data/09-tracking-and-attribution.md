@@ -7,7 +7,7 @@ Ideal:
 
 | Question | Can they? | How |
 | --- | --- | --- |
-| Which channel created the lead? | **Partially in PI; no in Fieldwork 2026** | Coalmarch paid vs organic. Fieldwork Lead Source unused (0 Aug estimates) |
+| Which channel created the lead? | **Partially in PI; no in Fieldwork 2026** | Coalmarch paid vs organic. Estimates-*module* Lead Source unused; onsite estimates are inspection WOs |
 | Which search? | **Rarely** | GSC for organic queries (not leads); Ads terms **missing**; LSA has no keyword |
 | Which campaign? | **No** (this pass) | Ads UI not exported |
 | Which service? | **Forms + Fieldwork types** | Site: estimate vs WDIR vs contact. Fieldwork: PestGuard/termite/etc. on WOs — **not joined** to the lead |

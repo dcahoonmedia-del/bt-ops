@@ -51,7 +51,7 @@ This is the management layer on top of the public-web audit in `FINAL-MARKETING-
 
 5. **GBP is operationally dirty in ways Phase 1 could only guess.** Owner-side description still includes **lawn care**. Toby (owner) independently flagged fake/keyword services (home construction, honeybee removal, snake, Jacksonville-only fleas, etc.) and asked Coalmarch for a professional read **before editing**. That hygiene work is higher leverage than a site redesign.
 
-6. **Fieldwork is a $700k YTD route business, not a 741-lead sales funnel.** Date Added **311** new accounts YTD vs Coalmarch **741** leads. Completed work is **7,901** WOs at **~$88** average — PestGuard Regular is the volume engine. August **Estimates = 0**, so 2026 marketing is **not** tagged in CRM. **311/741 = 42%** is new accounts per platform lead, **not** a close rate. **$41,940 / 311 = $134.86** is marketing dollars per new account, **not CAC**.
+6. **Fieldwork is a $700k YTD route business, not a 741-lead sales funnel.** Date Added **311** new accounts YTD vs Coalmarch **741** leads. Completed work is **7,901** WOs at **~$88** average — PestGuard Regular is the volume engine. The **Estimates module** is empty for 2026; that is **not** “no estimating.” B&T records onsite estimates as **inspection-estimate work orders**. Marketing still is **not** tagged on those WOs. **311/741 = 42%** is new accounts per platform lead, **not** a close rate. **$41,940 / 311 = $134.86** is marketing dollars per new account, **not CAC**.
 
 ---
 
@@ -176,7 +176,7 @@ See `account-data/11-original-audit-validation.md` for the full table. Short ver
 | Wasted spend | CPL doubled YoY; LSA declines; cancelled link package |
 | Lost leads | May WDIR outage; possible unanswered messages; no missed-call data |
 | Incorrect business info | GBP lawn care + junk services; aggregator 9–6 vs site/GBP 8–5 |
-| Broken tracking | CTM locked; Ads UI incomplete; Fieldwork 2026 estimates unused; GA4 key events unexplained drop |
+| Broken tracking | CTM locked; Ads UI incomplete; Fieldwork Estimates *module* unused (onsite estimates are WOs); GA4 key events unexplained drop |
 | Bad optimization | Unknown whether LSA is charging for existing customers/spam |
 | Attribution | Coalmarch lead ≠ Fieldwork Date Added (**741 vs 311** YTD) |
 
@@ -189,7 +189,7 @@ Fieldwork did **not** change Coalmarch spend/leads/CPL, LSA-first paid, GBP Jack
 - **311** new accounts YTD vs **741** platform leads  
 - **$700.07k** production / **7,901** WOs at **~$88** — a route shop  
 - PestGuard Regular as the volume service type (Aug service-volume)  
-- **No** 2026 estimate/source tags, so channel CAC is still impossible  
+- The **Estimates module** is unused for 2026; onsite estimates are **inspection-estimate work orders**. Channel source tags still missing, so channel CAC is still impossible.  
 
 ### Reconciliation
 
@@ -209,10 +209,10 @@ Fieldwork did **not** change Coalmarch spend/leads/CPL, LSA-first paid, GBP Jack
 2. Fix LSA billing.  
 3. Require Fieldwork source list (LSA, GBP, website/organic, Google Ads, realtor/WDIR, referral, existing, other).  
 4. Sell PestGuard accounts, not raw CPL.  
-5. Find where WDIR lives in Fieldwork (not a named type on the Aug service-volume first pass).  
+5. Find where WDIR lives in Fieldwork; count inspection-estimate **work orders** (not the Estimates module).  
 6. Do not turn on 173 paused Search campaigns.  
 7. Keep August-style capacity cap.  
-8. Finish CTM 2FA for missed calls.
+8. Complete CTM aggregates (missed / unique / after-hours).
 
 ### Data-quality plan
 

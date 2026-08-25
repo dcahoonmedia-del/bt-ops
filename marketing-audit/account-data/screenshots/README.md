@@ -13,7 +13,7 @@ Coalmarch/GBP files (`01_coalmarch_*.webp`, `08_gbp_*.webp`, etc.) lived on the 
 | `fw-exec-30d.webp` | 25 Aug 2026 | Exec Summary 24 Jul–22 Aug 2026 | Aggregates only |
 | `fw-exec-90d.webp` | 25 Aug 2026 | Exec Summary 24 May–22 Aug 2026 | Aggregates only |
 | `fw-sales-by-agreement-type.webp` | 25 Aug 2026 | 0 agreements, Aug 2026 | None |
-| `fw-estimates.webp` | 25 Aug 2026 | 0 estimates, Aug 2026; Lead Source column | Empty table |
+| `fw-estimates.webp` | 25 Aug 2026 | Empty Estimates *module* (Aug 2026). Not proof of no onsite estimates | Empty table |
 | `fw-service-volume-by-location-type.webp` | 25 Aug 2026 | Aug 2026 service types + footer totals | Service names, no customers |
 | `fw-chrome-history.webp` | 24 Aug 2026 | Pre-login: history only Sign In | None |
 | `fw-session-check-2026-08-25.webp` | 25 Aug 2026 ~1:55 AM | Pre-login wall (superseded by authenticated pass) | Login form only |
