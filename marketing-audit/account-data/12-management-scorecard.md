@@ -85,7 +85,7 @@ Answer rate, missed-call rate, speed-to-lead, by hour: **Unavailable** (CTM).
 1. **PestGuard Regular** — largest Aug service-volume type (551 qty)  
 2. General pest estimate (form mail majority)  
 3. **PestGuardPLUS** + quarterly/commercial routes (Fieldwork service types)  
-4. WDIR — **marketing forms** (~30% of sampled subjects); **not** a named Fieldwork type on the Aug service-volume first pass  
+4. **WDIR** — site forms (~30% of sampled subjects) **and** Fieldwork type `WDIR-100` (service-volume qty 49 YTD; not completed-WO count; not proven realtor-only)  
 5. Bed bugs (agency: volume down; Fieldwork has heat/inspection types, low qty on first page)  
 6. German roaches / fleas / termite bait monitoring (present as types)  
 7. Mosquito/fire ant — **offer**, not GSC head  

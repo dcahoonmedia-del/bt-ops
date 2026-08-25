@@ -22,7 +22,7 @@ This is the management layer on top of the public-web audit in `FINAL-MARKETING-
 | Looker Studio | **Not completed** | |
 | YouTube Studio | **Not completed** | Public/site evidence: videos previously pulled after a former employee issue |
 | Coalmarch Performance Insights | **Yes** | `performanceinsights.coalmarch.com` (TapClicks). Primary lead/spend rollup |
-| CallTrackingMetrics | **Blocked** | 2FA codes emailed; login **not** completed per rules |
+| CallTrackingMetrics | **Blocked 25 Aug 2026** | Session expired to login. 2FA setup **not** clicked. No call aggregates. |
 | Meta / Facebook Ads Manager | **Not in this Google session** | October 2025 recap: in-house Meta video (~20 clicks/day) existed |
 | Fieldwork CRM | **Yes (25 Aug 2026)** | User `Grok`. Date Added, Executive Summary, service volume, estimates/agreements reports. **No** 2026 source tags |
 
@@ -115,7 +115,7 @@ GBP Mar–Aug 2026: **764 calls**, **456 website clicks**, **370 direction reque
 - **WDIR form outage (May 2026)** — documented lost real-estate work until fixed.
 - **Homepage/city conversion-rate drop** (May 2026 agency recap) — CRO, not more towns.
 - **LSA message leads** were discussed and not blindly enabled (May 2026). Message volume is now up 92% in the last 30 days — need CTM to see if those are answered.
-- **CTM 2FA** blocked missed-call, after-hours, and unique-caller analysis.
+- **CTM** session expired 25 Aug 2026 before Reports totals; 2FA setup was **not** clicked. Missed/unique/after-hours still unknown.
 - **YouTube** previously stripped (former employee) — not a current lead engine.
 - Capacity: owner/GM side is **labor-constrained** (crawl advertised but understaffed; August tech out; seasonal vs annual contract confusion). Marketing that books work you cannot run is waste.
 
@@ -220,7 +220,7 @@ Required source values above; 0 blanks on new Date Added; monthly count next to 
 
 ### Unresolved gaps
 
-Exact 24 Jul–22 Aug Date Added count; source frequency; production by service type for marketing windows; WDIR type name; city/ZIP counts; LTV.
+Exact 24 Jul–22 Aug Date Added count; CTM aggregates; Completed Work Orders by inspection type; source frequency; LTV.
 
 ### Inventory
 

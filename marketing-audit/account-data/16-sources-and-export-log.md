@@ -17,7 +17,7 @@
 | Coalmarch PI | Overview, monthly, paid vs SEO | B&T | 24 Jul–22 Aug 2026; YTD to 22 Aug; months 2026 | Default | None in repo | `01`–`07` coalmarch webp **filenames logged; files may live only on agent VM** | 2026-08-23 | Lead definition opaque |
 | Gmail | Agency recaps / budgets | daniel@ | 2025-07 – 2026-08 | coalmarch.com | None | — | 2026-08-23 | Recaps are secondary |
 | Gmail | Form subjects | coalmarchleads.com | ~365d; 50-thread sample coded | subject only | — | — | 2026-08-23 | **No bodies stored** |
-| CTM | — | Coalmarch | — | — | — | — | 2026-08-23 | **2FA not completed** |
+| CTM | Reports/Analytics | Coalmarch tenant / B&T | Intended 24 Jul–22 Aug; 24 May–22 Aug; 1 Jan–22 Aug | — | None | `ctm-access-blocker.webp` (login only) | 2026-08-25 | **Blocked.** Session expired. Set up 2FA **not** clicked. No call-list shots |
 | GTM / Looker / YT Studio | — | — | — | — | — | — | — | **Not completed** |
 | Drive | search | daniel@ | — | pest/Coalmarch | Empty | — | 2026-08-23 | |
 | Fieldwork web | Login wall (pre-auth) | app.fieldworkhq.com | Point in time | None | None | `fw-session-check-2026-08-25.webp`; `fw-chrome-history.webp` | 2026-08-24 / early 2026-08-25 | **Superseded.** Empty email/password at that time |
@@ -59,4 +59,5 @@ First results page of `from:noreply@coalmarchleads.com`: **17 WDIR / 35 Free Est
 1. Copy GSC zip + PI screenshots into `account-data/exports/` and `screenshots/` on a machine where Downloads is this repo.  
 2. Coalmarch: ranking PDF, Ads, LSA invoice.  
 3. CTM aggregate CSV with PII stripped.  
-4. Fieldwork: Date Added **24 Jul–22 Aug**; source-value frequency; production by service type for 24 Jul–22 Aug and YTD (PII stripped).
+4. Fieldwork: Completed Work Orders by inspection/estimate type for 24 Jul–22 Aug, 24 May–22 Aug, 1 Jan–22 Aug; Date Added custom 24 Jul–22 Aug.  
+5. CTM Reports aggregates for those same dates (no CDRs). See `18-continuation-handoff.md`.

@@ -64,7 +64,7 @@ Google (Maps/Search/LSA) + some organic site
 Ranked by **evidence of inquiries**, not margin:
 
 1. General pest / “free estimate” (majority of form mail sample).  
-2. **WDIR / real-estate inspections** (~30% of sampled form subjects; realtor/lender names in mail — not copied here).  
+2. **WDIR / real-estate inspections** (form-mail sample ~30%; Fieldwork type `WDIR-100` service-volume qty 49 YTD — not completed WOs).  
 3. Bed bugs — **agency says volume down**, still strategically important.  
 4. German roaches — service URL in GSC top pages.  
 5. Fleas — GBP search term (Surf City).  

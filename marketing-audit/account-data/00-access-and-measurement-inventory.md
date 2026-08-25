@@ -23,7 +23,7 @@
 | YouTube | Public `@BTPest` / site gallery | — | Studio not pulled | Low | Dormant/stripped (former employee, Jul 2025 mail) | — | Yes | Social |
 | Coalmarch PI | performanceinsights.coalmarch.com · daniel@ | B&T client | YTD 2026 + monthly | High for their KPIs | Yes | Welcome mail also said performanceinsights.coalmarch.com | Yes | All Google + CTM |
 | Coalmarch leads mail | noreply@coalmarchleads.com | Forms on site | ~56 threads / 365d estimate | High for form *type* | Yes | — | Yes | GA4 forms |
-| CTM | app.calltrackingmetrics.com (Coalmarch tenant) | DNI 910-356-9966 vs office 910-329-1337 | 2FA wall | **None this pass** | Yes (codes firing) | — | Yes | Coalmarch calls, GBP, Ads |
+| CTM | app.calltrackingmetrics.com (Coalmarch tenant) | DNI 910-356-9966 vs office 910-329-1337 | Login wall 25 Aug 2026 after brief session | **None this pass** (aggregates) | Yes (DNI live) | — | Yes | Coalmarch calls, GBP, Ads |
 | Meta Ads | Not in Google profile | — | Oct 2025 recap only | Low | Was active 2025 | — | Yes | Branded search |
 | Birdeye / directories | Public only | — | — | Phase 1 | — | — | — | NAP conflicts | GBP |
 | Fieldwork CRM | app.fieldworkhq.com · user `Grok` this session | ServiceWork portal `btpestcontrol.serviceworkportal.com` | Date Added 2026; Exec Summary; service volume Aug 2026 | **High** for counts/$; **Low** for source | **Yes** | Other routes may email other inboxes | Yes | Coalmarch leads have **no person join** |

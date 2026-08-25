@@ -86,7 +86,34 @@ No service type named **WDIR** / Wood Destroying Insect Report was seen on the v
 - **Sales → Estimates** list: historical estimates (years **2018–2025** visible), many **Expired**, some **Accepted**, sidebar **Archived 112**.
 - Customers sidebar **Leads: 0**.
 
-Do **not** treat those zeros as “no quotes in August.” Period-matched inspection-estimate **work-order** counts are the right metric and were not pulled in the first authenticated pass. A completed inspection is **not** automatically a sale.
+Do **not** treat those zeros as “no quotes in August.” Period-matched inspection-estimate **service-volume** counts are below. A completed inspection is **not** automatically a sale. Qty on Service Volume By Location Type is **not** a completed-work-order count.
+
+### Inspection-estimate and related service types (Service Volume)
+
+**Report:** Reports → Operations → Service Volume By Location Type. **Timezone not displayed.** Dates are the Fieldwork date-picker values (aligned to Coalmarch calendar windows).
+
+**Inclusion:** service type name contains Inspection, Estimate, WDIR, Set-up / Set up / New Set-Up, or named renewal/annual inspection. **Exclusion:** this is not Exec Summary completed WOs (YTD completed WOs = 7,901; YTD service-volume qty = 8,293).
+
+**New vs existing:** **Unavailable** (no Date Added on this report). Types named “Renewal” or “Annual Inspection” are **name inferences**, not a customer-status field. **Realtor vs other:** only the type **Wood Destroying Insect Report (WDIR-100)** is identifiable as WDIR; Termite Inspection / Estimate is **not** proven realtor. **Canceled/incomplete:** **Unavailable**. **Inspection → sale:** **not computed**.
+
+| Type (exact) | 24 Jul–22 Aug | 24 May–22 Aug | 1 Jan–22 Aug |
+| --- | ---: | ---: | ---: |
+| Inspection/Estimate | 2 | 13 | 39 |
+| Pest Inspection / Estimate | 4 | 10 | 29 |
+| Termite Inspection / Estimate | 7 | 35 | 82 |
+| Wood Destroying Insect Report (WDIR-100) | 2 | 20 | 49 |
+| Termite Reinstatement - Inspection/Estimate | 1 | 5 | 9 |
+| PestGuard - Set-up | 26 | 69 | 120 |
+| PestguardPLUS Set up | 3 | 7 | 12 |
+| Pest Control - Quarterly New Set-Up | 4 | 10 | 12 |
+| Termite - Service Renewal & Inspection | 20 | 90 | 221 |
+| PestGuard Plus - Annual Inspection | 18 | 65 | 137 |
+| Report footer qty (all types) | 1,134 | 3,319 | 8,293 |
+| Report period $ (all types) | $68,198 | $208,009 | $520,543 |
+
+Line items: `exports/fieldwork-inspection-estimate-types.csv`. Working log: `_fieldwork-inspection-wos.md`.
+
+**Calculated (same report only):** pest onsite-estimate types (Inspection/Estimate + Pest Inspection / Estimate) = **6 / 23 / 68** in the three windows. WDIR-100 = **2 / 20 / 49**. PestGuard Set-up = **26 / 69 / 120**. These are **not** close rates vs Coalmarch 99 / 741 leads.
 
 ### Marketing / source fields
 
@@ -147,7 +174,7 @@ Formulas use only the facts above. Populations are **not** the same people.
 | --- | --- | --- |
 | New accounts in **24 Jul–22 Aug** (exact Coalmarch 30d) | UI used Last-30-days preset (26 Jul–25 Aug) = **53** | Customer List · Date Added · custom **24 Jul–22 Aug 2026** |
 | Which new accounts came from LSA / GBP / site / Ads / realtor / referral / existing | Lead Source empty for Aug estimates; customer source column not in default view | Customer List with **Marketing Campaign or Lead Source** column; value frequency including **blank**; **do not Save** a Customize unless the owner wants a saved view |
-| Inspection-estimate WO volume (period-matched) | Not counted in first pass (module emptiness was misread) | Work orders / Service Volume filtered to **Pest Inspection / Estimate**, **Inspection/Estimate**, plus any WDIR/termite-letter types; 24 Jul–22 Aug, 24 May–22 Aug, 1 Jan–22 Aug |
+| Inspection-estimate volume (service-volume qty, not completed WOs) | Counted for three windows (see table above) | Completed Work Orders by type + status, same dates |
 | New vs existing mix **on jobs** | Exec Summary is all WOs | Jobs/WOs with customer Date Added vs WO date (export, PII stripped) |
 | Recurring vs one-time **$** | Agreements module 0 in Aug; service-volume is not completed-WO revenue | Completed production by service type for 24 Jul–22 Aug and YTD |
 | WDIR volume in Fieldwork | No type named WDIR on the visible service list | Service-volume / WO search for WDIR, WDI, wood-destroying, termite letter |
@@ -189,9 +216,9 @@ Never store blank or `Google`. Fieldwork **can** store a source (Lead Source on 
 2. **Optimize for PestGuard accounts**, not raw CPL. Service-volume is PestGuard-heavy; ~$88 tickets are maintenance visits.
 3. **LSA billing** still must not fail (card declines). LSA vs other Google sources is **still untagged** in Fieldwork.
 4. **Do not reactivate** the 173 paused Search campaigns as a “test.”
-5. **WDIR** is a marketing form channel (~30% of sampled site-form subjects) but **not** a named Fieldwork service type in the Aug service-volume first pass — office must show where those jobs live before spending more on realtor ads.
+5. **WDIR exists as Fieldwork type `Wood Destroying Insect Report (WDIR-100)`** (service-volume qty **2 / 20 / 49** in 30d / 90d / YTD windows). That is **not** a realtor-attribution proof and **not** completed-WO count.
 6. **Instrument source this week** (I8 in the action plan). Until then, $134.86 per new account is a ceiling on “marketing dollars per account,” not a channel CAC.
-7. **Keep CTM 2FA** on the list: Fieldwork will not show missed/after-hours unique callers.
+7. **CTM:** session expired to a login wall; 2FA setup was **not** clicked. Unique/missed/after-hours still unknown. See `07-call-tracking.md` and `18-continuation-handoff.md`.
 
 ---
 

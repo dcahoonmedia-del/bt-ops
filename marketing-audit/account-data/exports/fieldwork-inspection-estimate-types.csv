@@ -1,0 +1,28 @@
+period_start,period_end,service_type,quantity,annual_value_usd,period_total_usd,report,metric_meaning,notes
+2026-07-24,2026-08-22,Inspection/Estimate,2,75,75,Service Volume By Location Type,qty on this report is not completed-WO count,onsite estimate type
+2026-07-24,2026-08-22,Pest Inspection / Estimate,4,75,75,Service Volume By Location Type,qty on this report is not completed-WO count,onsite estimate type
+2026-07-24,2026-08-22,Termite Inspection / Estimate,7,225,225,Service Volume By Location Type,qty on this report is not completed-WO count,
+2026-07-24,2026-08-22,Termite Reinstatement - Inspection/Estimate,1,555,555,Service Volume By Location Type,qty on this report is not completed-WO count,
+2026-07-24,2026-08-22,Wood Destroying Insect Report (WDIR-100),2,150,150,Service Volume By Location Type,qty on this report is not completed-WO count,named WDIR type
+2026-07-24,2026-08-22,PestGuard - Set-up,26,4135,4135,Service Volume By Location Type,qty on this report is not completed-WO count,direct-to-service type name
+2026-07-24,2026-08-22,PestguardPLUS Set up,3,3340,3340,Service Volume By Location Type,qty on this report is not completed-WO count,
+2026-07-24,2026-08-22,Pest Control - Quarterly New Set-Up,4,600,600,Service Volume By Location Type,qty on this report is not completed-WO count,
+2026-07-24,2026-08-22,Termite - Service Renewal & Inspection,20,3080,3080,Service Volume By Location Type,qty on this report is not completed-WO count,name implies existing agreement
+2026-07-24,2026-08-22,PestGuard Plus - Annual Inspection,18,0,0,Service Volume By Location Type,qty on this report is not completed-WO count,name implies existing PestGuard
+2026-07-24,2026-08-22,ALL_SERVICE_TYPES_FOOTER,1134,454876,68198,Service Volume By Location Type,all types in window,62 type rows
+2026-05-24,2026-08-22,Inspection/Estimate,13,450,450,Service Volume By Location Type,qty on this report is not completed-WO count,
+2026-05-24,2026-08-22,Pest Inspection / Estimate,10,300,300,Service Volume By Location Type,qty on this report is not completed-WO count,
+2026-05-24,2026-08-22,Termite Inspection / Estimate,35,975,975,Service Volume By Location Type,qty on this report is not completed-WO count,
+2026-05-24,2026-08-22,Wood Destroying Insect Report (WDIR-100),20,2349,2349,Service Volume By Location Type,qty on this report is not completed-WO count,
+2026-05-24,2026-08-22,PestGuard - Set-up,69,10399,9949,Service Volume By Location Type,qty on this report is not completed-WO count,
+2026-05-24,2026-08-22,ALL_SERVICE_TYPES_FOOTER,3319,1284283.20,208008.55,Service Volume By Location Type,all types in window,77 type rows
+2026-01-01,2026-08-22,Inspection/Estimate,39,800,800,Service Volume By Location Type,qty on this report is not completed-WO count,
+2026-01-01,2026-08-22,Pest Inspection / Estimate,29,450,450,Service Volume By Location Type,qty on this report is not completed-WO count,
+2026-01-01,2026-08-22,Termite Inspection / Estimate,82,1125,1125,Service Volume By Location Type,qty on this report is not completed-WO count,
+2026-01-01,2026-08-22,Wood Destroying Insect Report (WDIR-100),49,5745,5745,Service Volume By Location Type,qty on this report is not completed-WO count,
+2026-01-01,2026-08-22,PestGuard - Set-up,120,16321,15871,Service Volume By Location Type,qty on this report is not completed-WO count,
+2026-01-01,2026-08-22,PestguardPLUS Set up,12,12164,12164,Service Volume By Location Type,qty on this report is not completed-WO count,
+2026-01-01,2026-08-22,Pest Control - Quarterly New Set-Up,12,1669,1669,Service Volume By Location Type,qty on this report is not completed-WO count,
+2026-01-01,2026-08-22,Termite - Service Renewal & Inspection,221,31913,31913,Service Volume By Location Type,qty on this report is not completed-WO count,
+2026-01-01,2026-08-22,PestGuard Plus - Annual Inspection,137,0,0,Service Volume By Location Type,qty on this report is not completed-WO count,
+2026-01-01,2026-08-22,ALL_SERVICE_TYPES_FOOTER,8293,3410319.20,520542.80,Service Volume By Location Type,all types in window,93 type rows

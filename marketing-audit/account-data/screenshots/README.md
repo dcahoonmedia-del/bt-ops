@@ -16,7 +16,8 @@ Coalmarch/GBP files (`01_coalmarch_*.webp`, `08_gbp_*.webp`, etc.) lived on the 
 | `fw-estimates.webp` | 25 Aug 2026 | Empty Estimates *module* (Aug 2026). Not proof of no onsite estimates | Empty table |
 | `fw-service-volume-by-location-type.webp` | 25 Aug 2026 | Aug 2026 service types + footer totals | Service names, no customers |
 | `fw-chrome-history.webp` | 24 Aug 2026 | Pre-login: history only Sign In | None |
-| `fw-session-check-2026-08-25.webp` | 25 Aug 2026 ~1:55 AM | Pre-login wall (superseded by authenticated pass) | Login form only |
+| `fw-session-check-2026-08-25.webp` | 25 Aug 2026 ~1:55 AM | Pre-login Fieldwork wall (superseded) | Login form only |
+| `ctm-access-blocker.webp` | 25 Aug 2026 | CTM login wall after session expired | Login form only |
 
 **Deleted, not committed:** Customer List screenshots for 30d / 90d / YTD. They showed account numbers and masked card numbers. Footer counts (**53 / 156 / 311**) are in `17-fieldwork-crm.md`.
 

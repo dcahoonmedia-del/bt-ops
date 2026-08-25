@@ -65,7 +65,7 @@ GBP **764 listing calls** (Mar–Aug) and GSC **1,174 clicks** (22 May–21 Aug)
 
 **What still prevents a person-level match:** no shared ID in the repo; Estimates *module* unused (onsite estimates are inspection WOs); production is recurring ~$88 tickets, not “this month’s 99 leads.” Do **not** treat blank or generic “Google” as LSA/GBP/organic/Ads if that value appears later.
 
-Detail and formulas: `17-fieldwork-crm.md`. Export: `exports/fieldwork-reconciliation.csv`.
+Fieldwork inspection-estimate **service-volume** qty (not completed WOs): pest onsite-estimate types **6** (24 Jul–22 Aug) vs Coalmarch **99** leads — **not** a close rate. WDIR-100 **2** in that window. PestGuard Set-up **26**. See `17-fieldwork-crm.md`.
 
 ---
 

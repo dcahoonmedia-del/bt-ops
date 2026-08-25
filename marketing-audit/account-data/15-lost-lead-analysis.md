@@ -35,7 +35,7 @@ Cannot say “X jobs/week lost.” Can say:
 - Last 30d **99 platform leads** vs Fieldwork **53** new accounts on a **different** 30d preset (26 Jul–25 Aug). That gap is **not** “46 lost jobs.”  
 - YTD **741 leads** vs **311** new accounts. Some of the 430 are existing callers, spam, WDIR/one-time, or never booked — **unsplit**.  
 - If messages (25) are half-unanswered, that is **order-of-magnitude 10 missed conversations**, not a precise forecast.  
-- If WDIR was down for even **one busy week**, that is several realtor jobs at inspection-ticket value (price unpublished). WDIR is **not** a named Fieldwork service type on the Aug service-volume first pass.  
+- If WDIR was down for even **one busy week**, that is several realtor jobs at inspection-ticket value (price unpublished). Fieldwork type **WDIR-100** service-volume qty is **2** (24 Jul–22 Aug) and **49** YTD — **not** completed WOs and **not** a $ lost figure.  
 - GBP **764 calls / 6 months** — if even 10% missed, tens of calls; **unknown**.
 
 **Do not present a fake “$ lost” to Toby.** Instrument CTM missed + form errors + message SLA + Fieldwork source tags, then size it. Route #3 daily mail is **not** a lost-lead report. YTD $700k production is existing-route work, not proof marketing is fine.
