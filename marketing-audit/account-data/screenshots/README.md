@@ -19,6 +19,8 @@ Coalmarch/GBP files (`01_coalmarch_*.webp`, `08_gbp_*.webp`, etc.) lived on the 
 | `fw-session-check-2026-08-25.webp` | 25 Aug 2026 ~1:55 AM | Pre-login Fieldwork wall (superseded) | Login form only |
 | `ctm-access-blocker.webp` | 25 Aug 2026 | CTM login wall after session expired | Login form only |
 
-**Deleted, not committed:** Customer List screenshots for 30d / 90d / YTD. They showed account numbers and masked card numbers. Footer counts (**53 / 156 / 311**) are in `17-fieldwork-crm.md`.
+**Deleted, not committed:** Customer List screenshots for 30d / 90d / YTD. They showed account numbers and masked card numbers. Footer counts (**52** on 24 Jul–22 Aug custom; **53 / 156 / 311** as previously logged) are in `17-fieldwork-crm.md`.
+
+No CTM call-list screenshots. The earlier `ctm-access-blocker.webp` is login-only.
 
 Do not commit UI that shows customer names, full phone numbers, addresses, account numbers, or credentials.

@@ -22,7 +22,7 @@ This is the management layer on top of the public-web audit in `FINAL-MARKETING-
 | Looker Studio | **Not completed** | |
 | YouTube Studio | **Not completed** | Public/site evidence: videos previously pulled after a former employee issue |
 | Coalmarch Performance Insights | **Yes** | `performanceinsights.coalmarch.com` (TapClicks). Primary lead/spend rollup |
-| CallTrackingMetrics | **Blocked 25 Aug 2026** | Session expired to login. 2FA setup **not** clicked. No call aggregates. |
+| CallTrackingMetrics | **Yes (25 Aug 2026, header aggregates)** | Account 462929. Reports URLs 404. 2FA setup **not** clicked. **149** calls / **75** first-time / **123** answered (24 Jul–22 Aug). Unique/after-hours/voicemail **not shown**. No call-list files saved. |
 | Meta / Facebook Ads Manager | **Not in this Google session** | October 2025 recap: in-house Meta video (~20 clicks/day) existed |
 | Fieldwork CRM | **Yes (25 Aug 2026)** | User `Grok`. Date Added, Executive Summary, service volume, estimates/agreements reports. **No** 2026 source tags |
 
@@ -32,9 +32,9 @@ This is the management layer on top of the public-web audit in `FINAL-MARKETING-
 
 - **Google:** GBP owner performance (Mar–Aug 2026), GSC 3-month and ~16-month query/page stats, July GSC email, GA4 28-day snapshot, Ads account IDs and billing/LSA mail.
 - **Coalmarch:** YTD and last-30-day spend/leads/CPL, monthly 2026 table, paid vs SEO retainer split, inbound-ad lead types.
-- **Call tracking:** Only what Coalmarch rolls up (call vs form vs message). Raw CTM dispositions, duration, spam, and unique callers are **unavailable**.
+- **Call tracking:** CTM Calls header for 24 Jul–22 Aug / 24 May–22 Aug / 1 Jan–22 Aug: **149 / 349 / 809** calls. First-time **75**, Answered **123**, Missed filter **0** (24 Jul–22 Aug). Unique callers, voicemail, after-hours **not shown**. Coalmarch still reports **50** call leads in the 30d window.
 - **Gmail (aggregated):** Paid-budget history, LSA lead-notification volume, website form **types** (estimate vs WDIR vs contact), GBP hygiene thread with Toby, WDIR form-outage thread, contract/budget decisions.
-- **Fieldwork (25 Aug 2026):** new accounts by Date Added (53 / 156 / 311 — see date caveats), Executive Summary production/invoicing for 30d / 90d / YTD, August service-volume mix, empty August estimates/agreements. Customer-level rows were **not** stored.
+- **Fieldwork (25 Aug 2026):** Date Added **52** (24 Jul–22 Aug custom) / **53** (26 Jul–25 Aug preset) / **156** / **311**. Executive Summary production/invoicing. Inspection-estimate **completed WOs** (30d) and service-volume qty (three windows). Empty August Estimates *module* ≠ no estimating. Customer-level rows were **not** stored.
 - **Not used as customer evidence:** individual form bodies, LSA caller identity, CTM recordings, Fieldwork customer lists, route-email bodies.
 
 ---
@@ -51,7 +51,7 @@ This is the management layer on top of the public-web audit in `FINAL-MARKETING-
 
 5. **GBP is operationally dirty in ways Phase 1 could only guess.** Owner-side description still includes **lawn care**. Toby (owner) independently flagged fake/keyword services (home construction, honeybee removal, snake, Jacksonville-only fleas, etc.) and asked Coalmarch for a professional read **before editing**. That hygiene work is higher leverage than a site redesign.
 
-6. **Fieldwork is a $700k YTD route business, not a 741-lead sales funnel.** Date Added **311** new accounts YTD vs Coalmarch **741** leads. Completed work is **7,901** WOs at **~$88** average — PestGuard Regular is the volume engine. The **Estimates module** is empty for 2026; that is **not** “no estimating.” B&T records onsite estimates as **inspection-estimate work orders**. Marketing still is **not** tagged on those WOs. **311/741 = 42%** is new accounts per platform lead, **not** a close rate. **$41,940 / 311 = $134.86** is marketing dollars per new account, **not CAC**.
+6. **Fieldwork is a $700k YTD route business, not a 741-lead sales funnel.** Date Added **311** new accounts YTD vs Coalmarch **741** leads; **52** vs **99** in 24 Jul–22 Aug (same dates). Completed work is **7,901** WOs at **~$88** average — PestGuard Regular is the volume engine. The **Estimates module** is empty for 2026; that is **not** “no estimating.” B&T records onsite estimates as **inspection-estimate work orders**. Marketing still is **not** tagged on those WOs. **311/741 = 42%** and **52/99 = 52.5%** are new accounts per platform lead, **not** close rates. **$41,940 / 311 = $134.86** is marketing dollars per new account, **not CAC**.
 
 ---
 
@@ -65,7 +65,7 @@ Last 30 days (24 Jul–22 Aug 2026): **99 leads** at **$54.49** blended CPL.
 | --- | ---: | --- |
 | Paid (LSA-heavy “inbound advertising”) | 55 leads / $3,350 / $61 CPL | Calls 30, messages 25; July paid **webforms 0** |
 | Organic/SEO retainer attribution | 44 leads / $2,040 retainer / $46.40 CPL | Cheaper on paper; retainer is a fee, not media |
-| Calls (all channels) | 50 | Down 22% vs prior 30d |
+| Calls (all channels) | 50 | Down 22% vs prior 30d. **CTM counted 149 calls** in the same civil dates (first-time 75). Not the same object. |
 | Webforms | 24 | Up 37% — **not** the same as paid webforms |
 | Messages (GBP/LSA-style) | 25 | Up 92% |
 
@@ -115,7 +115,7 @@ GBP Mar–Aug 2026: **764 calls**, **456 website clicks**, **370 direction reque
 - **WDIR form outage (May 2026)** — documented lost real-estate work until fixed.
 - **Homepage/city conversion-rate drop** (May 2026 agency recap) — CRO, not more towns.
 - **LSA message leads** were discussed and not blindly enabled (May 2026). Message volume is now up 92% in the last 30 days — need CTM to see if those are answered.
-- **CTM** session expired 25 Aug 2026 before Reports totals; 2FA setup was **not** clicked. Missed/unique/after-hours still unknown.
+- **CTM** 24 Jul–22 Aug: **149** calls vs Coalmarch **50** call leads (**2.98×**). First-time **75**; Answered **123 / 149**; Missed filter **0** (not proof of live answer). Unique / voicemail / after-hours **not shown**. 2FA setup was **not** clicked.
 - **YouTube** previously stripped (former employee) — not a current lead engine.
 - Capacity: owner/GM side is **labor-constrained** (crawl advertised but understaffed; August tech out; seasonal vs annual contract confusion). Marketing that books work you cannot run is waste.
 
@@ -176,7 +176,7 @@ See `account-data/11-original-audit-validation.md` for the full table. Short ver
 | Wasted spend | CPL doubled YoY; LSA declines; cancelled link package |
 | Lost leads | May WDIR outage; possible unanswered messages; no missed-call data |
 | Incorrect business info | GBP lawn care + junk services; aggregator 9–6 vs site/GBP 8–5 |
-| Broken tracking | CTM locked; Ads UI incomplete; Fieldwork Estimates *module* unused (onsite estimates are WOs); GA4 key events unexplained drop |
+| Broken tracking | CTM Reports UI unreachable (header counts only); Ads UI incomplete; Fieldwork Estimates *module* unused (onsite estimates are WOs); GA4 key events unexplained drop |
 | Bad optimization | Unknown whether LSA is charging for existing customers/spam |
 | Attribution | Coalmarch lead ≠ Fieldwork Date Added (**741 vs 311** YTD) |
 
@@ -195,7 +195,7 @@ Fieldwork did **not** change Coalmarch spend/leads/CPL, LSA-first paid, GBP Jack
 
 | Period | Marketing leads | Fieldwork new accounts | Fieldwork production | Booking rate |
 | --- | ---: | ---: | ---: | --- |
-| ~30d | 99 (24 Jul–22 Aug) | 53 on **26 Jul–25 Aug** preset | $93.73k / 1,064 WOs (24 Jul–22 Aug) | **None comparable** |
+| ~30d | 99 (24 Jul–22 Aug) | **52** same dates (preset **53** on 26 Jul–25 Aug) | $93.73k / 1,064 WOs (24 Jul–22 Aug) | **Not a close rate.** 52/99 = 52.5% accounts per lead |
 | 90d | No native PI total | 156 (24 May–22 Aug) | $271.78k / 3,131 WOs | **None** (no 90d leads) |
 | YTD | 741 / $41,940 | 311 | $700.07k / 7,901 WOs | **Not a close rate.** 311/741 = 42% accounts per lead |
 
@@ -209,10 +209,10 @@ Fieldwork did **not** change Coalmarch spend/leads/CPL, LSA-first paid, GBP Jack
 2. Fix LSA billing.  
 3. Require Fieldwork source list (LSA, GBP, website/organic, Google Ads, realtor/WDIR, referral, existing, other).  
 4. Sell PestGuard accounts, not raw CPL.  
-5. Find where WDIR lives in Fieldwork; count inspection-estimate **work orders** (not the Estimates module).  
+5. Count inspection-estimate **work orders** (not the Estimates module). 24 Jul–22 Aug completed: pest onsite-estimate **6**, WDIR-100 **2**, PestGuard Set-up **26**.  
 6. Do not turn on 173 paused Search campaigns.  
 7. Keep August-style capacity cap.  
-8. Complete CTM aggregates (missed / unique / after-hours).
+8. Treat Coalmarch **50** call leads and CTM **149** calls as different objects; unique/after-hours still need a Reports export (no CDRs).
 
 ### Data-quality plan
 
@@ -220,7 +220,7 @@ Required source values above; 0 blanks on new Date Added; monthly count next to 
 
 ### Unresolved gaps
 
-Exact 24 Jul–22 Aug Date Added count; CTM aggregates; Completed Work Orders by inspection type; source frequency; LTV.
+90d/YTD completed WOs by inspection type; CTM unique / after-hours / voicemail / full source mix; source-frequency on new accounts; LTV; person-level join (not attempted).
 
 ### Inventory
 

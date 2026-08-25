@@ -36,7 +36,11 @@ point_in_time_2026-08-23,gbp_rating,4.9,stars,GBP owner,
 point_in_time_2026-08-23,gbp_reviews,286,count,GBP owner,
 2026-01-01_to_2026-08-22,site_sessions,6920,count,Coalmarch PI,+20% YoY
 2026-08-01_to_2026-08-22,site_sessions,690,count,Coalmarch PI,MTD
-unavailable,unique_new_callers,, ,CTM,2FA not completed
+unavailable,unique_new_callers,,,CTM,No Unique filter; do not use first-time 75 as unique
+2026-07-24_to_2026-08-22,ctm_total_calls,149,count,CTM Calls header,TZ not shown; not Coalmarch 50 call leads
+2026-07-24_to_2026-08-22,ctm_first_time_contact,75,count,CTM,Not Fieldwork new customers
+2026-07-24_to_2026-08-22,ctm_status_answered,123,count,CTM Status=Answered,123/149
+2026-07-24_to_2026-08-22,fieldwork_new_customers,52,count,Fieldwork Date Added custom,Same civil dates as Coalmarch 99
 2026-07-26_to_2026-08-25,fieldwork_new_customers,53,count,Fieldwork Date Added Last 30 days preset,NOT Coalmarch 24 Jul-22 Aug
 2026-05-24_to_2026-08-22,fieldwork_new_customers,156,count,Fieldwork Date Added custom,
 2026-01-01_to_2026-08-22,fieldwork_new_customers,311,count,Fieldwork Date Added custom,

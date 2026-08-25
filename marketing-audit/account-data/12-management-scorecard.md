@@ -19,8 +19,11 @@
 | KPI | Value | Window | Source |
 | --- | --- | --- | --- |
 | Calls (marketing) | 50 | 24 Jul–22 Aug 2026 | Coalmarch |
+| Calls (CTM header) | **149** | 24 Jul–22 Aug 2026 00:00–23:59 (TZ not shown) | CTM Calls filter |
+| CTM first-time contact | **75** | same | CTM (not unique callers) |
+| CTM answered | **123 / 149** | same | CTM Status=Answered |
+| Unique new callers | Unavailable | — | No Unique filter in CTM |
 | GBP listing calls | 764 | Mar–Aug 2026 | GBP |
-| Unique new callers | Unavailable | — | CTM |
 | Forms | 24 | last 30d | Coalmarch |
 | Messages | 25 | last 30d | Coalmarch |
 | LSA leads | Unavailable as charged count | — | ~201 Gmail threads / 365d ≠ charges |
@@ -28,13 +31,14 @@
 | Paid leads | 55 | last 30d | Coalmarch |
 | GBP leads | Unavailable separately | — | Mixed into calls/messages |
 | Qualified leads | Unavailable | — | |
-| Missed prospective | Unavailable | — | CTM |
+| Missed prospective | CTM “Show missed” **0 / 149**; **26 / 149** not Status=Answered | 24 Jul–22 Aug 2026 | Voicemail/after-hours **not shown**; do not treat 0 as live-answer proof |
 
 ## Sales outcomes
 
 | KPI | Value | Window | Source |
 | --- | --- | --- | --- |
-| New customers (Date Added) | **53** | 26 Jul–25 Aug 2026 (Last 30 days **preset**, not 24 Jul–22 Aug) | Fieldwork Customer List |
+| New customers (Date Added) | **52** | 24 Jul–22 Aug 2026 (custom; Coalmarch 30d dates) | Fieldwork Customer List |
+| New customers (Date Added) | **53** | 26 Jul–25 Aug 2026 (Last 30 days **preset**) | Fieldwork Customer List |
 | New customers (Date Added) | **156** | 24 May–22 Aug 2026 | Fieldwork Customer List |
 | New customers (Date Added) | **311** | 1 Jan–22 Aug 2026 | Fieldwork Customer List |
 | Active customers | **2,818** | Point in time 25 Aug 2026 | Fieldwork sidebar |

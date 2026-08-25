@@ -227,9 +227,11 @@ Due to time/token constraints and prioritization of Coalmarch & GBP data, the fo
 - **Next Step:** List containers, tags, triggers related to btpestcontrol.com
 
 ### Call Tracking Metrics (CTM)
-- **Platform:** app.calltrackingmetrics.com
-- **Constraint:** 2FA required - not accessed per audit rules
-- **Note:** Call data already visible via Coalmarch dashboard
+- **Platform:** app.calltrackingmetrics.com (account 462929)
+- **Status (25 Aug 2026):** Header aggregates collected. Reports URLs 404. Set up 2FA **not** clicked.
+- **24 Jul–22 Aug:** 149 calls; first-time 75; Answered 123; Missed filter 0. Unique/after-hours/voicemail not shown.
+- **Vs Coalmarch:** 50 call leads in the same civil dates (not interchangeable).
+- **Note:** No call-list files, CDRs, or recordings saved. See `07-call-tracking.md`.
 
 ### Looker Studio
 - **Next Step:** Check for Coalmarch-built reporting dashboards

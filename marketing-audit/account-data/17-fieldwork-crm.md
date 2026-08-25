@@ -28,11 +28,12 @@ A prior pass hit a login wall (`fw-chrome-history.webp`, `fw-session-check-2026-
 
 | Period shown in UI | Filter | Count | Report |
 | --- | --- | ---: | --- |
-| 26 Jul 2026 – 25 Aug 2026 | Customer List · Date Added · **Last 30 days** preset | **53** | `/newer_reports/customer_list` |
+| 24 Jul 2026 – 22 Aug 2026 | Customer List · Date Added · **custom** (Coalmarch 30d dates) | **52** | `/newer_reports/customer_list` |
+| 26 Jul 2026 – 25 Aug 2026 | Date Added · **Last 30 days** preset | **53** | same |
 | 24 May 2026 – 22 Aug 2026 | Date Added · custom | **156** | same |
 | 1 Jan 2026 – 22 Aug 2026 | Date Added · custom | **311** | same |
 
-The **Last 30 days** preset is **not** Coalmarch’s 24 Jul–22 Aug window (it is 26 Jul–25 Aug). YTD and 90-day custom ranges **do** end on 22 Aug 2026.
+The **Last 30 days** preset (**53**, 26 Jul–25 Aug) is **not** Coalmarch’s 24 Jul–22 Aug window. The aligned custom range is **52**. YTD and 90-day custom ranges **do** end on 22 Aug 2026. Timezone **not displayed**.
 
 Sidebar (Customers module, not the dated report): **2,818** Active. Inactive counts **differed by view** (2,697 vs 2,897) — do not treat inactive as a stable KPI. Leads sidebar: **0**. Commercial: low single digits. Financial hold: **62**.
 
@@ -86,7 +87,9 @@ No service type named **WDIR** / Wood Destroying Insect Report was seen on the v
 - **Sales → Estimates** list: historical estimates (years **2018–2025** visible), many **Expired**, some **Accepted**, sidebar **Archived 112**.
 - Customers sidebar **Leads: 0**.
 
-Do **not** treat those zeros as “no quotes in August.” Period-matched inspection-estimate **service-volume** counts are below. A completed inspection is **not** automatically a sale. Qty on Service Volume By Location Type is **not** a completed-work-order count.
+Do **not** treat those zeros as “no quotes in August.” Period-matched inspection-estimate counts are below. A completed inspection is **not** automatically a sale.
+
+**Completed Work Orders report** (`/newer_reports/completed_work_orders`): unfiltered footer **24 Jul–22 Aug 2026 = 1,064**, matching Executive Summary completed WOs. Customize → Services (one type) → View Report (not Save) was used for type counts. Timezone **not displayed**. New-customer flag on this report: **unavailable**. Canceled/incomplete **by inspection type:** **unavailable** (Exec Summary cancellations for **all** types in this window = **6 / 1,116 scheduled = 0.54%**).
 
 ### Inspection-estimate and related service types (Service Volume)
 
@@ -96,24 +99,47 @@ Do **not** treat those zeros as “no quotes in August.” Period-matched inspec
 
 **New vs existing:** **Unavailable** (no Date Added on this report). Types named “Renewal” or “Annual Inspection” are **name inferences**, not a customer-status field. **Realtor vs other:** only the type **Wood Destroying Insect Report (WDIR-100)** is identifiable as WDIR; Termite Inspection / Estimate is **not** proven realtor. **Canceled/incomplete:** **Unavailable**. **Inspection → sale:** **not computed**.
 
-| Type (exact) | 24 Jul–22 Aug | 24 May–22 Aug | 1 Jan–22 Aug |
-| --- | ---: | ---: | ---: |
-| Inspection/Estimate | 2 | 13 | 39 |
-| Pest Inspection / Estimate | 4 | 10 | 29 |
-| Termite Inspection / Estimate | 7 | 35 | 82 |
-| Wood Destroying Insect Report (WDIR-100) | 2 | 20 | 49 |
-| Termite Reinstatement - Inspection/Estimate | 1 | 5 | 9 |
-| PestGuard - Set-up | 26 | 69 | 120 |
-| PestguardPLUS Set up | 3 | 7 | 12 |
-| Pest Control - Quarterly New Set-Up | 4 | 10 | 12 |
-| Termite - Service Renewal & Inspection | 20 | 90 | 221 |
-| PestGuard Plus - Annual Inspection | 18 | 65 | 137 |
-| Report footer qty (all types) | 1,134 | 3,319 | 8,293 |
-| Report period $ (all types) | $68,198 | $208,009 | $520,543 |
+| Type (exact) | 24 Jul–22 Aug | 24 May–22 Aug | 1 Jan–22 Aug | Name-based bucket (not a status field) |
+| --- | ---: | ---: | ---: | --- |
+| Inspection/Estimate | 2 | 13 | 39 | Pest onsite estimate |
+| Pest Inspection / Estimate | 4 | 10 | 29 | Pest onsite estimate |
+| Termite Inspection / Estimate | 7 | 35 | 82 | Termite onsite estimate (not proven realtor) |
+| Wood Destroying Insect Report (WDIR-100) | 2 | 20 | 49 | Named WDIR product |
+| Termite Reinstatement - Inspection/Estimate | 1 | 5 | 9 | Termite reinstatement (name only) |
+| Termite Reinstatement Fee | — | 1 | 2 | Fee line, not an inspection |
+| Annual Inspection | 3 | 10 | 25 | Named inspection; new vs existing **unknown** |
+| PestGuard Plus - Annual Inspection | 18 | 65 | 137 | Name implies existing PestGuard Plus |
+| PestGuardPlus - Annual Inspection | — | 1 | 4 | Duplicate type name; name implies existing |
+| Termite - Service Renewal & Inspection | 20 | 90 | 221 | Name implies existing termite account |
+| Termite - Follow Up Inspection | 1 | 3 | 10 | Follow-up (not a first estimate) |
+| Nuisance Wildlife - Inspection | 3 | 5 | 11 | Specialty inspection |
+| Dehumidifier Inspection / Maintenance | 2 | — | 14 | Equipment; not pest estimate |
+| Bed Bug Inspection | — | 10 | 15 | Specialty inspection |
+| Carpenter Bee Inspection | — | — | 5 | Specialty inspection |
+| Crawl Space Moisture Follow Up Inspection | — | — | 2 | Follow-up |
+| PestGuard - Set-up | 26 | 69 | 120 | Direct-to-service (bypasses named inspection types) |
+| PestguardPLUS Set up | 3 | 7 | 12 | Direct-to-service |
+| Pest Control - Quarterly New Set-Up | 4 | 10 | 12 | Direct-to-service / new setup name |
+| Report footer qty (all types) | 1,134 | 3,319 | 8,293 | All service types, not inspection-only |
+| Report period $ (all types) | $68,198 | $208,009 | $520,543 | All service types |
 
-Line items: `exports/fieldwork-inspection-estimate-types.csv`. Working log: `_fieldwork-inspection-wos.md`.
+Line items: `exports/fieldwork-inspection-estimate-types.csv`. Completed-WO 30d: `exports/fieldwork-completed-inspection-wos.csv`. Working log: `_fieldwork-inspection-wos.md`.
 
-**Calculated (same report only):** pest onsite-estimate types (Inspection/Estimate + Pest Inspection / Estimate) = **6 / 23 / 68** in the three windows. WDIR-100 = **2 / 20 / 49**. PestGuard Set-up = **26 / 69 / 120**. These are **not** close rates vs Coalmarch 99 / 741 leads.
+**Completed Work Orders vs Service Volume (24 Jul–22 Aug 2026 only):**
+
+| Type | Service-volume qty | Completed WOs | Match? |
+| --- | ---: | ---: | --- |
+| Inspection/Estimate | 2 | **2** | Yes |
+| Pest Inspection / Estimate | 4 | **4** | Yes |
+| Termite Inspection / Estimate | 7 | **7** | Yes |
+| Wood Destroying Insect Report (WDIR-100) | 2 | **2** | Yes |
+| PestGuard - Set-up | 26 | **26** | Yes |
+| Termite - Service Renewal & Inspection | 20 | **12** | **No** — SV qty is not completed for this type |
+| Unfiltered footer | 1,134 (SV) | **1,064** (completed WOs) | Different reports |
+
+YTD/90d **completed** counts by type were **not** finished (UI multi-select). Do **not** assume YTD service-volume qty equals completed WOs.
+
+**Calculated:** pest onsite-estimate types (Inspection/Estimate + Pest Inspection / Estimate) = **6** completed WOs and **6** service-volume qty (24 Jul–22 Aug). Same **6 / 23 / 68** on service volume for the three windows. WDIR-100 = **2 / 20 / 49** (SV; 30d completed = **2**). PestGuard Set-up = **26** completed (24 Jul–22 Aug) and **26 / 69 / 120** SV. These are **not** close rates vs Coalmarch 99 / 741 leads. A later PestGuard Set-up is **not** proven to have been caused by a prior inspection.
 
 ### Marketing / source fields
 
@@ -141,16 +167,16 @@ Formulas use only the facts above. Populations are **not** the same people.
 | Metric | Formula | Result | Use? |
 | --- | --- | --- | --- |
 | YTD new accounts / Coalmarch leads | 311 / 741 | **42.0%** | **Yield proxy only.** Not a close rate. Leads are calls+forms+messages; accounts include every Date Added (any source). Dates both end 22 Aug 2026. |
-| ~30d new accounts / Coalmarch 30d leads | 53 / 99 | **53.5%** | **Do not use.** Numerator is 26 Jul–25 Aug; denominator is 24 Jul–22 Aug. |
+| ~30d new accounts / Coalmarch 30d leads | 52 / 99 | **52.5%** | **Yield proxy only, same civil dates.** Not a close rate. 53/99 used the **wrong** 26 Jul–25 Aug preset. |
 | 90d share of YTD new accounts | 156 / 311 | **50.2%** | Half of 2026 new accounts were added 24 May–22 Aug. |
 | Marketing $ per new Fieldwork account (YTD) | $41,940 / 311 | **$134.86** | **Not CAC.** Spend is all Coalmarch marketing; 311 are all new accounts, not “from ads.” |
-| Marketing $ per new account (~30d, misaligned) | $5,390 / 53 | **$101.70** | **Do not use as CAC.** Date mismatch + same mix problem. |
+| Marketing $ per new account (24 Jul–22 Aug) | $5,390 / 52 | **$103.65** | **Not CAC.** Spend is all Coalmarch marketing; 52 are all Date Added accounts, not “from ads.” |
 | PestGuard Regular share of Aug service-volume qty | 551 / 1,167 | **47.2%** | Share of **this report’s rows**, Aug calendar month, not completed-WO mix. |
 | PestGuard Regular + PLUS share of qty | (551+104) / 1,167 | **56.1%** | Same limitation. |
 | PestGuard Regular + PLUS share of annual $ | ($261,516+$67,302) / $463,201 | **71.0%** | Annualized value on the Aug service-volume report, not YTD invoiced $699.71k. |
 | Avg ticket vs new-account value | $88.60 YTD production / WO | Recurring-visit economics | **Not** the price of a new PestGuard setup. |
 
-**Booking/conversion rate with a comparable numerator and denominator:** **none.** Fieldwork does not show which of the 741 Coalmarch leads became which of the 311 accounts. The empty **Estimates module** is the wrong denominator; inspection-estimate **work-order** counts were not yet period-matched. A completed inspection is not automatically a sale.
+**Booking/conversion rate with a comparable numerator and denominator:** **none.** Fieldwork does not show which of the 741 Coalmarch leads became which of the 311 accounts. The empty **Estimates module** is the wrong denominator. Pest onsite-estimate **completed WOs = 6** (24 Jul–22 Aug) vs Coalmarch **99** leads is **not** a close rate (inspections ≠ sales; leads ≠ those WOs). CTM **75** first-time contacts vs **52** Date Added is also **not** a close rate.
 
 **LTV:** **not computed.** Need average agreement price × tenure. Agreements report was empty for August; PestGuard annual values exist on the service-volume report but are not tenure.
 
@@ -172,12 +198,12 @@ Formulas use only the facts above. Populations are **not** the same people.
 
 | Question | Why unavailable | Exact report/field to resolve |
 | --- | --- | --- |
-| New accounts in **24 Jul–22 Aug** (exact Coalmarch 30d) | UI used Last-30-days preset (26 Jul–25 Aug) = **53** | Customer List · Date Added · custom **24 Jul–22 Aug 2026** |
-| Which new accounts came from LSA / GBP / site / Ads / realtor / referral / existing | Lead Source empty for Aug estimates; customer source column not in default view | Customer List with **Marketing Campaign or Lead Source** column; value frequency including **blank**; **do not Save** a Customize unless the owner wants a saved view |
-| Inspection-estimate volume (service-volume qty, not completed WOs) | Counted for three windows (see table above) | Completed Work Orders by type + status, same dates |
+| New vs existing **on inspection WOs** | No Date Added / new-customer flag on Completed Work Orders | Do not customer-match; name inference only (Renewal / Annual / Set-up) |
+| Which new accounts came from LSA / GBP / site / Ads / realtor / referral / existing | Lead Source on the unused Estimates *module* is empty for Aug 2026; customer source column not in default view. That empty module is **not** “no estimating.” | Customer List with **Marketing Campaign or Lead Source** column; value frequency including **blank**; **do not Save** a Customize unless the owner wants a saved view |
+| Inspection-estimate **completed** WOs for 90d and YTD by type | Only 24 Jul–22 Aug type filters finished | Same Completed Work Orders + Services filter for 24 May–22 Aug and 1 Jan–22 Aug |
 | New vs existing mix **on jobs** | Exec Summary is all WOs | Jobs/WOs with customer Date Added vs WO date (export, PII stripped) |
 | Recurring vs one-time **$** | Agreements module 0 in Aug; service-volume is not completed-WO revenue | Completed production by service type for 24 Jul–22 Aug and YTD |
-| WDIR volume in Fieldwork | No type named WDIR on the visible service list | Service-volume / WO search for WDIR, WDI, wood-destroying, termite letter |
+| WDIR completed-WO count (vs service-volume qty) | **24 Jul–22 Aug completed = 2** (matches SV). 90d/YTD completed by type **not** pulled. Not realtor attribution | Completed Work Orders + WDIR-100 filter for 24 May–22 Aug and 1 Jan–22 Aug |
 | City/ZIP **counts** | No aggregate geo report without customer rows | Customer Value by Location or grouped city/ZIP export, counts only |
 | True CAC / LTV | New accounts are unattributed; no tenure | Source-tagged new accounts × spend; agreement price × years |
 | Whether Fieldwork “Google” exists as a value | Picklist not opened | Lead Source / Marketing Campaign dropdown (read-only) |
@@ -190,13 +216,13 @@ Coalmarch **lead** = tracked call + form + message. Fieldwork **new customer** =
 
 | Period | Marketing spend | Marketing leads | Fieldwork new customers (Date Added) | Fieldwork completed WOs | Fieldwork production | Fieldwork invoiced | Comparable booking rate |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| ~30d | $5,390 · **24 Jul–22 Aug** | **99** · same | **53** · **26 Jul–25 Aug** (preset; **not the same days**) | **1,064** · 24 Jul–22 Aug | **$93.73k** · 24 Jul–22 Aug | **$87.49k** | **None.** Dates and populations differ. |
+| ~30d | $5,390 · **24 Jul–22 Aug** | **99** · same | **52** · **same civil dates** (custom Date Added). Preset Last 30 days was **53** on 26 Jul–25 Aug | **1,064** · 24 Jul–22 Aug | **$93.73k** · 24 Jul–22 Aug | **$87.49k** | **None** that is a close rate. **52/99 = 52.5%** is only new accounts per platform lead. |
 | 90d | No native Coalmarch 90d total | **Unavailable** (do not use May–Aug monthly sum 479) | **156** · 24 May–22 Aug | **3,131** · 24 May–22 Aug | **$271.78k** | **$281.40k** | **None.** No 90d lead denominator. |
 | YTD | $41,940 · 1 Jan–22 Aug | **741** · same | **311** · 1 Jan–22 Aug | **7,901** · 1 Jan–22 Aug | **$700.07k** | **$699.71k** | **None** that is a close rate. **311/741 = 42%** is only “new accounts per platform lead.” |
 
 GBP **764 listing calls** (Mar–Aug) and GSC **1,174 clicks** (22 May–21 Aug) are still **not** Fieldwork denominators.
 
-**What prevents a person-level match:** no shared ID between Coalmarch/CTM/LSA and Fieldwork in the repo; unused Estimates-*module* source field (onsite estimates are WOs, not that module); Date Added ≠ lead timestamp; production is recurring routes, not “this month’s leads.”
+**What prevents a person-level match:** no shared ID between Coalmarch/CTM/LSA and Fieldwork in the repo; unused Estimates-*module* source field (onsite estimates are WOs, not that module); Date Added ≠ lead timestamp; production is recurring routes, not “this month’s leads.” CTM **149** calls vs Coalmarch **50** call leads vs **52** new accounts in the same dates are **three populations**. Phone matching was **not** done (see `07-call-tracking.md`).
 
 ---
 
@@ -216,9 +242,9 @@ Never store blank or `Google`. Fieldwork **can** store a source (Lead Source on 
 2. **Optimize for PestGuard accounts**, not raw CPL. Service-volume is PestGuard-heavy; ~$88 tickets are maintenance visits.
 3. **LSA billing** still must not fail (card declines). LSA vs other Google sources is **still untagged** in Fieldwork.
 4. **Do not reactivate** the 173 paused Search campaigns as a “test.”
-5. **WDIR exists as Fieldwork type `Wood Destroying Insect Report (WDIR-100)`** (service-volume qty **2 / 20 / 49** in 30d / 90d / YTD windows). That is **not** a realtor-attribution proof and **not** completed-WO count.
+5. **WDIR exists as Fieldwork type `Wood Destroying Insect Report (WDIR-100)`** (completed WOs **2** on 24 Jul–22 Aug; service-volume qty **2 / 20 / 49**). That is **not** a realtor-attribution proof.
 6. **Instrument source this week** (I8 in the action plan). Until then, $134.86 per new account is a ceiling on “marketing dollars per account,” not a channel CAC.
-7. **CTM:** session expired to a login wall; 2FA setup was **not** clicked. Unique/missed/after-hours still unknown. See `07-call-tracking.md` and `18-continuation-handoff.md`.
+7. **CTM (25 Aug 2026):** **149** calls vs Coalmarch **50** call leads (24 Jul–22 Aug). First-time **75**; Answered **123**; Missed filter **0** (not proof of live answer). Unique / after-hours / voicemail **not shown**. 2FA setup was **not** clicked. See `07-call-tracking.md`.
 
 ---
 

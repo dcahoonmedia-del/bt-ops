@@ -13,7 +13,7 @@ Ideal:
 | Which service? | **Forms + Fieldwork types** | Site: estimate vs WDIR vs contact. Fieldwork: PestGuard/termite/etc. on WOs — **not joined** to the lead |
 | Which city? | **Weak** | GBP queries; GSC pages; no city-count report without customer rows |
 | Qualified? | **No** | No score in PI |
-| Answered? | **No** | CTM locked |
+| Answered? | **Partial** | CTM Status=Answered **123 / 149** (24 Jul–22 Aug). Unique/after-hours/voicemail **not shown** |
 | Appointment scheduled? | **Partially** | Calendar/WOs exist; not joined to marketing leads |
 | Job completed? | **Yes as totals** | Exec Summary completed WOs by date; not by channel |
 | Recurring? | **Yes as service types** | PestGuard Regular 551 qty on Aug service-volume; Agreements report 0 in Aug 2026 |
@@ -34,9 +34,9 @@ Ideal:
 | Cross-domain | Unaudited |
 | CRM feedback to Ads/LSA | Fieldwork open; **no** source tags on 2026 estimates; no offline conversion import seen |
 | One-time vs recurring | Not in ads |
-| Repeat/existing as new | Unknown |
+| Repeat/existing as new | CTM first-time **75 / 149**; 74 not first-time. Not Fieldwork new vs existing |
 | Spam as leads | Unknown |
 | Ads optimizing to junk | Search likely off; LSA optimizes to Google’s lead definition |
-| Conflicting conversion defs | GA4 52 vs Coalmarch 99 vs GBP calls 100+/mo |
+| Conflicting conversion defs | GA4 52 key events vs Coalmarch 99 leads vs CTM 149 calls vs Fieldwork 52 Date Added vs GBP ~105 Aug calls |
 
 **Do not fix in-product.** Export CTM, lock form analytics, tag Fieldwork source on new accounts, join monthly Date Added counts to PI.

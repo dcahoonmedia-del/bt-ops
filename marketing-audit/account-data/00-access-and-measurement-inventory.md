@@ -23,7 +23,7 @@
 | YouTube | Public `@BTPest` / site gallery | — | Studio not pulled | Low | Dormant/stripped (former employee, Jul 2025 mail) | — | Yes | Social |
 | Coalmarch PI | performanceinsights.coalmarch.com · daniel@ | B&T client | YTD 2026 + monthly | High for their KPIs | Yes | Welcome mail also said performanceinsights.coalmarch.com | Yes | All Google + CTM |
 | Coalmarch leads mail | noreply@coalmarchleads.com | Forms on site | ~56 threads / 365d estimate | High for form *type* | Yes | — | Yes | GA4 forms |
-| CTM | app.calltrackingmetrics.com (Coalmarch tenant) | DNI 910-356-9966 vs office 910-329-1337 | Login wall 25 Aug 2026 after brief session | **None this pass** (aggregates) | Yes (DNI live) | — | Yes | Coalmarch calls, GBP, Ads |
+| CTM | app.calltrackingmetrics.com (Coalmarch tenant / acct 462929) | DNI 910-356-9966 vs office 910-329-1337 | Header aggregates 25 Aug 2026 | **Medium** (no Reports UI; TZ not shown) | Yes | — | Yes | Coalmarch calls, GBP, Ads |
 | Meta Ads | Not in Google profile | — | Oct 2025 recap only | Low | Was active 2025 | — | Yes | Branded search |
 | Birdeye / directories | Public only | — | — | Phase 1 | — | — | — | NAP conflicts | GBP |
 | Fieldwork CRM | app.fieldworkhq.com · user `Grok` this session | ServiceWork portal `btpestcontrol.serviceworkportal.com` | Date Added 2026; Exec Summary; service volume Aug 2026 | **High** for counts/$; **Low** for source | **Yes** | Other routes may email other inboxes | Yes | Coalmarch leads have **no person join** |
@@ -37,7 +37,7 @@
 3. Paid webform **zero in July inbound module** vs **39 webforms in the monthly company total** — different filters.  
 4. LSA “new call” email ≠ charged lead ≠ unique prospect.  
 5. GSC clicks ≠ leads. Possum blog inflates clicks.  
-6. GBP calls ≠ CTM unique new callers.  
+6. GBP calls ≠ CTM unique new callers (unique **unavailable**; first-time **75** vs **149** CTM calls vs **50** Coalmarch call leads, 24 Jul–22 Aug).  
 7. GA4 US-vs-Singapore split on a 28-day view is a **bot/quality flag**, not a market.  
 8. Credentials: a Coalmarch welcome mail contained a default password. **Not stored in-repo. Rotate it.**  
 9. Fieldwork is authenticated as of 25 Aug 2026. **Date Added ≠ lead created.** Empty Estimates *module* ≠ no estimating (inspection-estimate WOs). Blank/generic “Google” is still not LSA/GBP/organic/Ads. Agreements module ≠ PestGuard recurring.

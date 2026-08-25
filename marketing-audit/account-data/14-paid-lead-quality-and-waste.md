@@ -13,7 +13,7 @@
 | Cost per **platform conversion** | $54.49 blended / $61 paid | $56.60 | Coalmarch “lead” |
 | Cost per **likely legitimate** lead | Unavailable | Unavailable | No spam filter export |
 | Cost per **qualified** lead | Unavailable | Unavailable | |
-| Cost per **booked customer** | **Not computed as CAC** | $41,940 / 311 = **$134.86** marketing $ per new Fieldwork account YTD | Unattributed; includes non-paid accounts. 30d 53/99 **invalid** (date mismatch) |
+| Cost per **booked customer** | **Not computed as CAC.** $5,390 / 52 = **$103.65** marketing $ per new account (24 Jul–22 Aug) | $41,940 / 311 = **$134.86** YTD | Unattributed; includes non-paid accounts. **Not CAC.** |
 
 Agency target max CPL **~$70–75** (2025). Mar 2026 LSA plan **$91**. Last 30d paid **$61** is inside the cap; **YTD efficiency still collapsed vs last year.** True CAC needs source-tagged new accounts, not 311 unlabeled Date Added rows.
 

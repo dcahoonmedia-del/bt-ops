@@ -35,8 +35,10 @@ Google (Maps/Search/LSA) + some organic site
 ```
 
 **Volume (Coalmarch, 1 Jan–22 Aug 2026):** 741 leads.  
-**Fieldwork new accounts (Date Added, same end date):** 311.  
-**Fieldwork production (same window):** $700.07k on 7,901 completed WOs.  
+**Fieldwork new accounts (Date Added, same window):** 311.  
+**Fieldwork new accounts (24 Jul–22 Aug custom Date Added):** 52 vs Coalmarch **99** leads.  
+**CTM calls (24 Jul–22 Aug):** 149 vs Coalmarch **50** call leads. First-time contact **75**.  
+**Fieldwork production (1 Jan–22 Aug):** $700.07k on 7,901 completed WOs.  
 **GBP calls Mar–Aug 2026:** 764 (different window, includes existing customers and repeats).  
 **GSC clicks 3 months:** 1,174 (mostly not “leads”).
 
@@ -64,7 +66,7 @@ Google (Maps/Search/LSA) + some organic site
 Ranked by **evidence of inquiries**, not margin:
 
 1. General pest / “free estimate” (majority of form mail sample).  
-2. **WDIR / real-estate inspections** (form-mail sample ~30%; Fieldwork type `WDIR-100` service-volume qty 49 YTD — not completed WOs).  
+2. **WDIR / real-estate inspections** (form-mail sample ~30%; Fieldwork `WDIR-100` completed WOs **2** on 24 Jul–22 Aug; service-volume qty 49 YTD).  
 3. Bed bugs — **agency says volume down**, still strategically important.  
 4. German roaches — service URL in GSC top pages.  
 5. Fleas — GBP search term (Surf City).  
@@ -125,7 +127,7 @@ Fire-ant page, mosquito-vs-franchise table, PCS/WDIR **landing page** (forms exi
 ## K. What to do next
 
 Immediate: GBP cleanup (controlled), LSA billing, WDIR uptime, CRO, do not restimulate paid above ops, **require Fieldwork source tags**.  
-Then: JAX proof, WDIR/PCS page, CTM+Ads exports, PestGuard offer test, Date Added on **24 Jul–22 Aug**.  
+Then: JAX proof, WDIR/PCS page, CTM Reports export (unique/after-hours, no CDRs), PestGuard offer test. Date Added **24 Jul–22 Aug = 52** already counted.  
 Defer: Wilmington mill, more city templates, link packages, redesign.
 
 Detail: `account-data/13-revised-action-plan.md` and `account-data/17-fieldwork-crm.md`.

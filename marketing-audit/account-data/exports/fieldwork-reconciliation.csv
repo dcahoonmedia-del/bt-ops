@@ -1,5 +1,5 @@
 period_label,start_date,end_date,date_definition,marketing_spend_usd,marketing_leads_coalmarch,fieldwork_new_customers,fieldwork_completed_wos,fieldwork_production_usd,fieldwork_invoiced_usd,yield_new_accounts_per_lead,marketing_dollars_per_new_account,notes
-last_30d_marketing,2026-07-24,2026-08-22,Coalmarch lead created,5390,99,n/a,1064,93730,87490,n/a,n/a,FW exec summary uses this window for WOs; new-customer count was NOT taken on these exact days
+last_30d_marketing,2026-07-24,2026-08-22,Coalmarch lead created / FW Date Added custom / Exec WO complete,5390,99,52,1064,93730,87490,0.525,103.65,52/99 is NOT a close rate; 5390/52 is NOT CAC; CTM calls in window=149
 last_30d_fieldwork_preset,2026-07-26,2026-08-25,Fieldwork Date Added Last 30 days preset,,n/a,53,n/a,n/a,n/a,n/a,n/a,Do not divide 53 by 99
 last_90d,2026-05-24,2026-08-22,FW Date Added custom / Exec Summary,Unavailable,Unavailable,156,3131,271780,281400,n/a,n/a,No native Coalmarch 90d lead total
 ytd,2026-01-01,2026-08-22,Lead created vs Date Added vs WO complete,41940,741,311,7901,700070,699710,0.420,134.86,311/741 is NOT a close rate; 41940/311 is NOT CAC
