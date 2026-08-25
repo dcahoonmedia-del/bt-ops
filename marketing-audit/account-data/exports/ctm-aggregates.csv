@@ -1,0 +1,22 @@
+period_start,period_end,metric,numerator,denominator,value,source_system,inclusion_exclusion,limitation
+2026-07-24,2026-08-22,ctm_total_calls,149,,149,CTM Calls header,Calls activity; date URL 00:00-23:59 TZ not shown,Not unique callers; not Coalmarch call leads
+2026-05-24,2026-08-22,ctm_total_calls,349,,349,CTM Calls header,same,same
+2026-01-01,2026-08-22,ctm_total_calls,809,,809,CTM Calls header,same,same
+2026-07-24,2026-08-22,ctm_first_time_contact,75,149,0.503,CTM First-time contact filter,First-seen number in CTM,Not Fieldwork new customer; not unique callers
+2026-07-24,2026-08-22,ctm_not_first_time,74,149,0.497,Arithmetic 149-75,Complement of first-time filter,No named Repeat filter
+2026-07-24,2026-08-22,ctm_calls_per_first_time,149,75,1.987,Arithmetic,Total calls / first-time contacts,Repeat-call inflation vs first-time only
+2026-07-24,2026-08-22,ctm_unique_callers,,,unavailable,No Unique filter,,Do not substitute first-time
+2026-07-24,2026-08-22,ctm_status_answered,123,149,0.826,CTM Status=Answered,Calls list status filter,Voicemail not a status
+2026-07-24,2026-08-22,ctm_show_missed,0,149,0,CTM Show missed calls,Missed filter,Not proof of live answer; after-hours not shown
+2026-07-24,2026-08-22,ctm_abandoned,,,not_shown,No Abandoned status,,
+2026-07-24,2026-08-22,ctm_voicemail,,,not_shown,No Voicemail status,,
+2026-07-24,2026-08-22,ctm_after_hours,,,not_shown,No after-hours filter,,
+2026-07-24,2026-08-22,ctm_not_answered,26,149,0.174,Arithmetic 149-123,Non-Answered statuses,Busy/Hangup/etc not broken out
+2026-07-24,2026-08-22,ctm_source_website,65,149,0.436,CTM source filter,Label Website only,Not organic Google
+2026-07-24,2026-08-22,ctm_source_google_ads,1,149,0.007,CTM source filter,Label Google Ads,Not proof Search CID is live
+2026-07-24,2026-08-22,ctm_source_google_call_asset,1,149,0.007,CTM source filter,Label Google Call Asset,same
+2026-07-24,2026-08-22,ctm_source_confirmed_subtotal,67,149,0.450,Sum of three filters,Website+Google Ads+Call Asset,Remainder 82 not assigned
+2026-07-24,2026-08-22,ctm_source_uncounted_remainder,82,149,0.550,149-67,Other labels seen not counted,Do not call this Emergency Tech
+2026-07-24,2026-08-22,coalmarch_call_leads,50,,50,Coalmarch PI,Call leads only,Different object than CTM 149
+2026-07-24,2026-08-22,ctm_calls_per_coalmarch_call_lead,149,50,2.98,Arithmetic,Same civil dates,Definitions differ; TZ unconfirmed
+2026-07-24,2026-08-22,coalmarch_all_leads,99,,99,Coalmarch PI,Calls+forms+messages,

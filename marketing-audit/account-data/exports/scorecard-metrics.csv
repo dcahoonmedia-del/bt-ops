@@ -1,0 +1,62 @@
+period,metric,value,unit,source,notes
+2026-07-24_to_2026-08-22,marketing_spend,5390,USD,Coalmarch PI,blended paid+retainer as PI reports
+2026-07-24_to_2026-08-22,platform_leads,99,count,Coalmarch PI,calls+forms+messages
+2026-07-24_to_2026-08-22,blended_cpl,54.49,USD,Coalmarch PI,
+2026-07-24_to_2026-08-22,paid_spend,3350,USD,Coalmarch PI,
+2026-07-24_to_2026-08-22,paid_leads,55,count,Coalmarch PI,
+2026-07-24_to_2026-08-22,paid_cpl,61,USD,Coalmarch PI,
+2026-07-24_to_2026-08-22,organic_retainer_spend,2040,USD,Coalmarch PI,fee not media
+2026-07-24_to_2026-08-22,organic_leads,44,count,Coalmarch PI,
+2026-07-24_to_2026-08-22,organic_cpl,46.40,USD,Coalmarch PI,accounting CPL
+2026-07-24_to_2026-08-22,call_leads,50,count,Coalmarch PI,
+2026-07-24_to_2026-08-22,webform_leads,24,count,Coalmarch PI,
+2026-07-24_to_2026-08-22,message_leads,25,count,Coalmarch PI,
+2026-01-01_to_2026-08-22,marketing_spend,41940,USD,Coalmarch PI,YTD
+2026-01-01_to_2026-08-22,platform_leads,741,count,Coalmarch PI,YTD
+2026-01-01_to_2026-08-22,blended_cpl,56.60,USD,Coalmarch PI,YTD +104% vs 2025 YTD
+2026-01-01_to_2026-08-22,yoy_spend_change,120,percent,Coalmarch PI,
+2026-01-01_to_2026-08-22,yoy_lead_change,8,percent,Coalmarch PI,
+2026-03_to_2026-08,gbp_views,3966,count,GBP owner,
+2026-03_to_2026-08,gbp_calls,764,count,GBP owner,not unique new
+2026-03_to_2026-08,gbp_website_clicks,456,count,GBP owner,
+2026-03_to_2026-08,gbp_direction_requests,370,count,GBP owner,
+2026-03_to_2026-08,gbp_interactions,1590,count,GBP owner,
+2026-05-22_to_2026-08-21,gsc_clicks,1174,count,GSC,
+2026-05-22_to_2026-08-21,gsc_impressions,164000,count,GSC,
+2026-05-22_to_2026-08-21,gsc_ctr,0.7,percent,GSC,
+2026-05-22_to_2026-08-21,gsc_avg_position,12.2,position,GSC,
+2026-04-22_to_2026-08-21,gsc_clicks,4670,count,GSC,
+2026-04-22_to_2026-08-21,gsc_impressions,951000,count,GSC,
+2026-07-01_to_2026-07-31,gsc_clicks,385,count,GSC email,
+2026-07-01_to_2026-07-31,gsc_impressions,52600,count,GSC email,
+approx_28d_to_2026-08-23,ga4_active_users,761,count,GA4,spam risk
+approx_28d_to_2026-08-23,ga4_sessions,896,count,GA4,
+approx_28d_to_2026-08-23,ga4_key_events,52,count,GA4,-28.6% vs prior; do not use as leads
+point_in_time_2026-08-23,gbp_rating,4.9,stars,GBP owner,
+point_in_time_2026-08-23,gbp_reviews,286,count,GBP owner,
+2026-01-01_to_2026-08-22,site_sessions,6920,count,Coalmarch PI,+20% YoY
+2026-08-01_to_2026-08-22,site_sessions,690,count,Coalmarch PI,MTD
+unavailable,unique_new_callers,,,CTM,No Unique filter; do not use first-time 75 as unique
+2026-07-24_to_2026-08-22,ctm_total_calls,149,count,CTM Calls header,TZ not shown; not Coalmarch 50 call leads
+2026-07-24_to_2026-08-22,ctm_first_time_contact,75,count,CTM,Not Fieldwork new customers
+2026-07-24_to_2026-08-22,ctm_status_answered,123,count,CTM Status=Answered,123/149
+2026-07-24_to_2026-08-22,fieldwork_new_customers,52,count,Fieldwork Date Added custom,Same civil dates as Coalmarch 99
+2026-07-26_to_2026-08-25,fieldwork_new_customers,53,count,Fieldwork Date Added Last 30 days preset,NOT Coalmarch 24 Jul-22 Aug
+2026-05-24_to_2026-08-22,fieldwork_new_customers,156,count,Fieldwork Date Added custom,
+2026-01-01_to_2026-08-22,fieldwork_new_customers,311,count,Fieldwork Date Added custom,
+2026-07-24_to_2026-08-22,fieldwork_completed_wos,1064,count,Fieldwork Exec Summary,
+2026-07-24_to_2026-08-22,fieldwork_production,93730,USD,Fieldwork Exec Summary,
+2026-07-24_to_2026-08-22,fieldwork_invoiced,87490,USD,Fieldwork Exec Summary,
+2026-05-24_to_2026-08-22,fieldwork_completed_wos,3131,count,Fieldwork Exec Summary,
+2026-05-24_to_2026-08-22,fieldwork_production,271780,USD,Fieldwork Exec Summary,
+2026-05-24_to_2026-08-22,fieldwork_invoiced,281400,USD,Fieldwork Exec Summary,
+2026-01-01_to_2026-08-22,fieldwork_completed_wos,7901,count,Fieldwork Exec Summary,
+2026-01-01_to_2026-08-22,fieldwork_production,700070,USD,Fieldwork Exec Summary,
+2026-01-01_to_2026-08-22,fieldwork_invoiced,699710,USD,Fieldwork Exec Summary,
+2026-01-01_to_2026-08-22,marketing_dollars_per_new_account,134.86,USD,calculated 41940/311,NOT CAC; unattributed mix
+2026-01-01_to_2026-08-22,new_accounts_per_platform_lead,0.420,ratio,calculated 311/741,NOT a close rate
+point_in_time_2026-08-25,fieldwork_active_customers,2818,count,Fieldwork sidebar,
+2026-08-01_to_2026-08-31,pestguard_regular_qty,551,count,Fieldwork service volume,Aug calendar; not 30d marketing window
+unavailable,qualified_leads,, ,CRM source tags,Estimates module unused; inspection-estimate WOs not yet counted
+unavailable,cac_or_roas,, ,finance,do not use 134.86 as CAC
+

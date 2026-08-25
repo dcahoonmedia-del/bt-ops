@@ -1,0 +1,11 @@
+period_start,period_end,service_type,completed_wo_count,report,filter,notes
+2026-07-24,2026-08-22,ALL_TYPES_UNFILTERED,1064,Completed Work Orders,default completed report,Matches Exec Summary 1064
+2026-07-24,2026-08-22,Inspection/Estimate,2,Completed Work Orders,Services one type,Matches service-volume qty
+2026-07-24,2026-08-22,Pest Inspection / Estimate,4,Completed Work Orders,Services one type,Matches service-volume qty
+2026-07-24,2026-08-22,Termite Inspection / Estimate,7,Completed Work Orders,Services one type,Matches service-volume qty
+2026-07-24,2026-08-22,Wood Destroying Insect Report (WDIR-100),2,Completed Work Orders,Services one type,Matches service-volume qty; not realtor attribution
+2026-07-24,2026-08-22,PestGuard - Set-up,26,Completed Work Orders,Services one type,Matches service-volume qty; direct-to-service type name
+2026-07-24,2026-08-22,Termite - Service Renewal & Inspection,12,Completed Work Orders,Services one type,Service-volume qty was 20; completed is lower
+2026-07-24,2026-08-22,PestguardPLUS Set up,,Completed Work Orders,not finished,UI multi-select
+2026-07-24,2026-08-22,Pest Control - Quarterly New Set-Up,,Completed Work Orders,not finished,UI multi-select
+2026-07-24,2026-08-22,PestGuard Plus - Annual Inspection,,Completed Work Orders,not finished,UI multi-select
