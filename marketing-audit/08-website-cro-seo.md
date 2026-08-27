@@ -1,5 +1,7 @@
 # Website: conversion, branding, technical SEO
 
+**Superseded for decisions:** 27 Aug 2026 live pass in [`website-audit/WEBSITE-AND-COMPETITOR-MASTER.md`](website-audit/WEBSITE-AND-COMPETITOR-MASTER.md). Keep this file as the 23 Aug 2026 public-web notes.
+
 **URL:** https://www.btpestcontrol.com/  
 **Date:** 2026-08-23  
 **Stack (inferred):** Drupal + Sprowt/local-services theme (robots Disallow `/admin/`, `/core/`; Simple XML Sitemap).

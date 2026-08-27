@@ -1,0 +1,2 @@
+month_start,month_end,timezone,marketing_spend_usd,platform_leads,call_leads,form_leads,message_leads,ctm_calls,ctm_first_time,ctm_answered,fieldwork_date_added,accounts_per_platform_lead,marketing_dollars_per_new_account,pestguard_setup_completed_wos,pest_inspection_estimate_completed_wos,wdir100_completed_wos,production_usd,site_sessions,site_sessions_source,notes
+YYYY-MM-DD,YYYY-MM-DD,America/New_York,,,,,,,,,,,,,,,,,,,Do not label marketing_dollars_per_new_account as CAC. Do not treat accounts_per_platform_lead as a close rate.

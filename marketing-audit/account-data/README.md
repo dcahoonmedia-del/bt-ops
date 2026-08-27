@@ -4,13 +4,17 @@
 **Client:** B&T Pest Control, Holly Ridge NC  
 **Website:** btpestcontrol.com  
 
-**Canonical account-data write-ups:** `../ACCOUNT-DATA-EXECUTIVE-SUMMARY.md` and `17-fieldwork-crm.md` (Fieldwork authenticated 25 Aug). `AUDIT_SUMMARY_REPORT.md` is an earlier Coalmarch/GBP snapshot; its “platforms not accessed” list is stale.  
+**Master index (all phases):** [`../MARKETING-CONTROL-CENTER.md`](../MARKETING-CONTROL-CENTER.md). This folder is the **authenticated account-data working set**, not the website phase.
+
+**Canonical account-data write-ups:** `../ACCOUNT-DATA-EXECUTIVE-SUMMARY.md` and `17-fieldwork-crm.md` (Fieldwork authenticated 25 Aug). `AUDIT_SUMMARY_REPORT.md` is an earlier Coalmarch/GBP snapshot; its “platforms not accessed” list is stale. Website work lives in `../website-audit/`.  
 
 ---
 
 ## 📄 Primary Reports
 
-### 1. **AUDIT_SUMMARY_REPORT.md** ⭐ MAIN REPORT
+### 1. **AUDIT_SUMMARY_REPORT.md** (early snapshot — **not** the master index)
+
+Use [`../MARKETING-CONTROL-CENTER.md`](../MARKETING-CONTROL-CENTER.md) and [`../ACCOUNT-DATA-EXECUTIVE-SUMMARY.md`](../ACCOUNT-DATA-EXECUTIVE-SUMMARY.md) instead. This file still contains useful YTD tables.
 Comprehensive executive summary with:
 - YTD & 30-day performance metrics
 - Monthly trends (Jan-Aug 2026)

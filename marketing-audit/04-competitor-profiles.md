@@ -1,5 +1,7 @@
 # Competitor profiles (Eastern NC overlap)
 
+**Benchmark table for website CRO (27 Aug 2026):** [`website-audit/WEBSITE-AND-COMPETITOR-MASTER.md`](website-audit/WEBSITE-AND-COMPETITOR-MASTER.md) §3. This file remains the broader inventory.
+
 Date: 2026-08-23. Profiles are limited to companies that **sell into B&T’s Onslow–Pender–New Hanover–Carteret strip**. Nationals without a local branch page are noted as advertising competitors only.
 
 Threat scale: **Critical / High / Medium / Low**.

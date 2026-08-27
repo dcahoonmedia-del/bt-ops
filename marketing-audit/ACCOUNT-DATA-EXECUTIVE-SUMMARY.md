@@ -6,6 +6,8 @@
 
 This is the management layer on top of the public-web audit in `FINAL-MARKETING-AUDIT.md`. It does **not** redo that audit. It tests those hypotheses against first-party data.
 
+**Website / competitors / ownership (27 Aug 2026)** is a **separate phase** — not more lead reconciliation. Canonical: [`MARKETING-CONTROL-CENTER.md`](MARKETING-CONTROL-CENTER.md) and [`website-audit/WEBSITE-AND-COMPETITOR-MASTER.md`](website-audit/WEBSITE-AND-COMPETITOR-MASTER.md). Headline: the site is **helping** (real forms, CTM, reviews) but **hurting conversion vs local peers** (offer buried, 9-field form, no click-to-text, city-page junk). **Do not migrate** in the 90-day plan. Punch list is a Coalmarch ticket. GTM live ID is **GTM-MH3JJKS**.
+
 ---
 
 ## 1. Account access
@@ -18,7 +20,7 @@ This is the management layer on top of the public-web audit in `FINAL-MARKETING-
 | GA4 | **Partial** | Coalmarch-owned property; overview metrics only in this pass |
 | Google Ads (Search/PPC) | **Yes (paused)** | CID **367-996-4323**: **173 campaigns, all paused** (JAX/Wilmington/Rocky Point pest & bed bug). Not the live spend engine |
 | Local Services Ads | **Inferred + Gmail** | CID **589-278-3347** is **active** (hundreds of “new call” emails). Direct LSA UI not fully exported |
-| Tag Manager | **Not completed** | |
+| Tag Manager | **Container ID only (27 Aug 2026)** | Live site loads **GTM-MH3JJKS**. Admin/workspace not opened. |
 | Looker Studio | **Not completed** | |
 | YouTube Studio | **Not completed** | Public/site evidence: videos previously pulled after a former employee issue |
 | Coalmarch Performance Insights | **Yes** | `performanceinsights.coalmarch.com` (TapClicks). Primary lead/spend rollup |
