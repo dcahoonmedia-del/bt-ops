@@ -1,0 +1,9 @@
+required_source_value,meaning,do_not_map_from,status
+LSA,Google Local Services Ads (CID 589-278-3347),Google / Internet / Website / blank,Recommended required picklist — not yet observed in Fieldwork UI
+GBP,Google Business Profile listing contact that was not an LSA charge,Google / Maps / blank,Recommended required picklist — not yet observed in Fieldwork UI
+website/organic,btpestcontrol.com form or organic site call; not paid,Google / Website / Organic / SEO / blank,Recommended required picklist — not yet observed in Fieldwork UI
+Google Ads,Search/PPC CID 367-996-4323 only,Google / AdWords / PPC / blank,Recommended required picklist — not yet observed in Fieldwork UI
+realtor/WDIR,Real-estate inspection or WDIR (agent lender or closing homeowner),Realtor / WDI / termite letter / blank,Recommended required picklist — not yet observed in Fieldwork UI
+referral,Named customer or partner referral,Word of mouth / friend / blank,Recommended required picklist — not yet observed in Fieldwork UI
+existing customer,Already in Fieldwork; not a new marketing lead,Google / Repeat / blank,Recommended required picklist — not yet observed in Fieldwork UI
+other,Must include a note (yard sign truck walk-in directory unknown after ask),Google / Other with no note / blank,Recommended required picklist — not yet observed in Fieldwork UI

@@ -1,0 +1,7 @@
+service_type,quantity,annual_value_usd,period_total_usd,period,report,notes
+PestGuard - Regular Pest Service,551,261516,21937,2026-08-01_to_2026-08-31,Service Volume By Location Type,Scrolled totals; not on first-page screenshot
+PestGuardPLUS Regular Service,104,67302,5638,2026-08-01_to_2026-08-31,Service Volume By Location Type,Scrolled totals
+Pest Control - Quarterly,87,25441,6360,2026-08-01_to_2026-08-31,Service Volume By Location Type,Scrolled totals
+Commercial Pest Service - Monthly,41,33348,2779,2026-08-01_to_2026-08-31,Service Volume By Location Type,Also on first-page screenshot
+Extra Service / Follow-up,33,0,0,2026-08-01_to_2026-08-31,Service Volume By Location Type,Also on first-page screenshot
+ALL_ROWS_FOOTER,1167,463201,68455,2026-08-01_to_2026-08-31,Service Volume By Location Type,Screenshot footer; Location Type column blank
