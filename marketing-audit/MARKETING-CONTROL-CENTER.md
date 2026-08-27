@@ -53,7 +53,7 @@ No homepage $45-hero test is live. That is the recommended next CRO test (Coalma
 | --- | --- | --- |
 | **This index** | `MARKETING-CONTROL-CENTER.md` | 27 Aug 2026 |
 | Website, ownership, competitors, 30/60/90, Coalmarch questions | `website-audit/WEBSITE-AND-COMPETITOR-MASTER.md` | 27 Aug 2026 |
-| Website evidence (sources, screenshots, stack crumbs) | `website-audit/EVIDENCE-APPENDIX.md` | 27 Aug 2026 |
+| Website evidence (sources, stack crumbs, screenshot inventory) | `website-audit/EVIDENCE-APPENDIX.md` | 27 Aug 2026 |
 | Account-data executive summary | `ACCOUNT-DATA-EXECUTIVE-SUMMARY.md` | 23–25 Aug 2026 |
 | Account-data full | `ACCOUNT-DATA-AUDIT.md` | 23–25 Aug 2026 |
 | Public-web decision doc (Phase 1) | `FINAL-MARKETING-AUDIT.md` | 23 Aug 2026 |

@@ -76,13 +76,13 @@ National brands (Aptive, Orkin, Terminix) were **not** re-audited as conversion 
 
 ## 5. Screenshots
 
-**This pass** did not persist new image files in git. Use:
+Committed mobile-emulation captures (27 Aug 2026; DevTools visible; no form values):
 
-- Live URLs above (primary)
-- Phase 1 `../evidence/` HTML captures
-- `competitor-audit-27aug2026.md` for competitor quotes
+- `screenshots/bt-home-mobile-hero.webp` — hero “Since 1982”, sticky CALL US / REQUEST AN ESTIMATE, 288 reviews
+- `screenshots/bt-home-mobile-coupon.webp` — offers still dated **08/31/2026**
+- `screenshots/bt-packages-mobile-45.webp` — PestGuard 45/month inclusion copy
 
-Do not treat missing 27 Aug screenshots as missing research — HTML + curl + prior browser notes are the record.
+Also use Phase 1 `../evidence/` HTML captures.
 
 ---
 
