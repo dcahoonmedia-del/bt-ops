@@ -1,5 +1,6 @@
 results/*.pcap
 results/*.log
 results/docker-inspect.json
-__pycache__/
 results/timeline/
+results/chatgpt-auth/
+__pycache__/
