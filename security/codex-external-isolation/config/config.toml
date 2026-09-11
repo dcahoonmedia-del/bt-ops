@@ -6,7 +6,6 @@ check_for_update_on_startup = false
 web_search = "disabled"
 sandbox_mode = "read-only"
 approval_policy = "untrusted"
-default_permissions = ":read-only"
 hide_agent_reasoning = false
 
 [features]

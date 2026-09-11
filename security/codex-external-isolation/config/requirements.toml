@@ -1,16 +1,21 @@
 # Managed isolation pins for Test 0.
-# Loaded from the disposable CODEX_HOME and /etc/codex when supported.
+# Loaded from /etc/codex/requirements.toml and the disposable CODEX_HOME.
 
 check_for_update_on_startup = false
 allow_browser_and_computer_use = false
 allow_managed_hooks_only = true
 allow_remote_control = false
-allow_appshots = false
 
 allowed_sandbox_modes = ["read-only"]
 allowed_web_search_modes = ["disabled"]
 allowed_approval_policies = ["untrusted", "never"]
-allowed_permission_profiles = [":read-only"]
+
+default_permissions = ":read-only"
+
+[allowed_permission_profiles]
+":read-only" = true
+":workspace" = false
+":danger-full-access" = false
 
 [features]
 plugins = false
@@ -27,5 +32,3 @@ in_app_browser = false
 tool_suggest = false
 plugin_sharing = false
 skill_mcp_dependency_install = false
-
-[hooks]
