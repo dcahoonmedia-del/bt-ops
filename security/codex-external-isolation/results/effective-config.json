@@ -1,0 +1,126 @@
+{
+  "initialize": {
+    "serverInfo": null,
+    "userAgent": "bt-ops-isolation-test0/0.154.0 (Debian 12.0.0; x86_64) unknown (bt-ops-isolation-test0; 0.154.0-test0)",
+    "platformFamily": "unix",
+    "platformOs": "linux"
+  },
+  "config_read": {
+    "check_for_update_on_startup": false,
+    "web_search": "disabled",
+    "sandbox_mode": "read-only",
+    "approval_policy": "never",
+    "marketplaces": {},
+    "plugins": {},
+    "mcp_servers": {},
+    "apps": {
+      "_default": {
+        "enabled": false,
+        "approvals_reviewer": null,
+        "destructive_enabled": false,
+        "open_world_enabled": false,
+        "default_tools_approval_mode": null
+      }
+    },
+    "agents": {
+      "enabled": false,
+      "max_concurrent_threads_per_session": null,
+      "max_depth": null,
+      "default_subagent_model": null,
+      "default_subagent_reasoning_effort": null,
+      "job_max_runtime_seconds": null,
+      "interrupt_message": null
+    },
+    "features": {
+      "network_proxy": false,
+      "apps": false,
+      "browser_use": false,
+      "computer_use": false,
+      "hooks": false,
+      "in_app_browser": false,
+      "memories": false,
+      "multi_agent": false,
+      "plugin_sharing": false,
+      "plugins": false,
+      "remote_plugin": false,
+      "shell_snapshot": false,
+      "shell_tool": false,
+      "skill_mcp_dependency_install": false,
+      "tool_suggest": false,
+      "unified_exec": false,
+      "auth_elicitation": true,
+      "background_paginated_rollout_migration": false,
+      "mcp_2026_07_28": false,
+      "mentions_v2": true,
+      "remote_control": false,
+      "windows_sandbox_service": false
+    }
+  },
+  "config_requirements_read": {
+    "cliAuthCredentialsStore": null,
+    "chatgptBaseUrl": null,
+    "additionalDeveloperInstructions": null,
+    "allowedApprovalPolicies": [
+      "never"
+    ],
+    "allowedApprovalsReviewers": null,
+    "allowedSandboxModes": [
+      "read-only"
+    ],
+    "allowedWindowsSandboxImplementations": null,
+    "allowedPermissionProfiles": {
+      ":danger-full-access": false,
+      ":read-only": true,
+      ":workspace": false
+    },
+    "defaultPermissions": ":read-only",
+    "allowedWebSearchModes": [
+      "disabled"
+    ],
+    "allowManagedHooksOnly": true,
+    "allowBrowserAndComputerUse": false,
+    "allowAppshots": null,
+    "allowRemoteControl": false,
+    "computerUse": null,
+    "browserUse": null,
+    "inAppBrowser": null,
+    "featureRequirements": {
+      "apps": false,
+      "browser_use": false,
+      "computer_use": false,
+      "hooks": false,
+      "in_app_browser": false,
+      "multi_agent": false,
+      "plugin_sharing": false,
+      "plugins": false,
+      "remote_plugin": false,
+      "shell_snapshot": false,
+      "shell_tool": false,
+      "skill_mcp_dependency_install": false,
+      "tool_suggest": false,
+      "unified_exec": false
+    },
+    "hooks": null,
+    "enforceResidency": null,
+    "network": null,
+    "application": null,
+    "autoReview": null,
+    "models": null,
+    "sqliteHome": null,
+    "logDir": null,
+    "modelCatalogJson": null,
+    "checkForUpdateOnStartup": false,
+    "allowLoginShell": null,
+    "feedback": null,
+    "windowsSandboxPrivateDesktop": null
+  },
+  "plugin_list": {
+    "marketplaces": [],
+    "marketplaceLoadErrors": [],
+    "featuredPluginIds": []
+  },
+  "account_read": {
+    "account": null,
+    "requiresOpenaiAuth": true
+  }
+}

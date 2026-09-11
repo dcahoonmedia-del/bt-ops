@@ -1,0 +1,48 @@
+{
+  "Id": "3419cb309cacc3fae1db0d96176e0c3ed7fb8d4abb2f41c572a096f5faacca8f",
+  "Name": "/codex-iso-test0",
+  "Image": "bt-ops-codex-isolation:0.154.0",
+  "ReadonlyRootfs": true,
+  "NetworkMode": "codex-iso-net",
+  "CapDrop": [
+    "ALL"
+  ],
+  "CapAdd": null,
+  "SecurityOpt": [
+    "no-new-privileges:true"
+  ],
+  "Privileged": false,
+  "PidMode": "",
+  "PidsLimit": 256,
+  "Memory": 2147483648,
+  "User": "1000:1000",
+  "Env": [
+    "OPENAI_API_KEY=",
+    "CODEX_API_KEY=",
+    "CODEX_HOME=/opt/codex-isolation/runtime/home",
+    "HOME=/opt/codex-isolation/runtime/user",
+    "LANG=C.UTF-8",
+    "GPG_KEY=7169605F62C751356D054A26A821E680E5FA6305",
+    "PYTHON_VERSION=3.12.14",
+    "PYTHON_SHA256=5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a",
+    "DEBIAN_FRONTEND=noninteractive",
+    "PYTHONDONTWRITEBYTECODE=1",
+    "PYTHONUNBUFFERED=1",
+    "PIP_DISABLE_PIP_VERSION_CHECK=1"
+  ],
+  "Binds": null,
+  "Mounts": [
+    {
+      "Type": "bind",
+      "Source": "/workspace/security/codex-external-isolation/results",
+      "Destination": "/opt/codex-isolation/results",
+      "RW": true,
+      "Mode": ""
+    }
+  ],
+  "Tmpfs": {
+    "/opt/codex-isolation/runtime": "rw,nosuid,uid=1000,gid=1000,size=512m",
+    "/tmp": "rw,nosuid,size=128m"
+  },
+  "no_gmail_fieldwork_bt_browser_mounts": true
+}
