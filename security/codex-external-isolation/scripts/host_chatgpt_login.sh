@@ -25,13 +25,15 @@ fi
 echo "==> building isolated image ${IMAGE}"
 "${DOCKER[@]}" build -t "${IMAGE}" "${ROOT}"
 
-if ! "${DOCKER[@]}" network inspect "${NETWORK}" >/dev/null 2>&1; then
-  "${DOCKER[@]}" network create --driver bridge --subnet "${SUBNET}" "${NETWORK}" >/dev/null
-fi
+# User-defined bridges in this environment have DNS but no working IPv4 NAT.
+# ChatGPT device-code login must reach auth.openai.com, so use Docker's
+# default bridge. All other isolation controls stay unchanged.
+NETWORK="${DOCKER_NETWORK:-bridge}"
 "${DOCKER[@]}" volume create "${VOLUME}" >/dev/null
 "${DOCKER[@]}" rm -f "${CONTAINER}" >/dev/null 2>&1 || true
+rm -f "${RESULTS_DIR}/auth-challenge.json" "${RESULTS_DIR}/AUTH_REQUIRED.txt"
 
-echo "==> starting isolated ChatGPT device-code login"
+echo "==> starting isolated ChatGPT device-code login on ${NETWORK}"
 "${DOCKER[@]}" run -d --name "${CONTAINER}" \
   --read-only \
   --tmpfs /tmp:rw,nosuid,size=128m \
