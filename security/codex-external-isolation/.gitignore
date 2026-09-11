@@ -1,0 +1,3 @@
+results/*.pcap
+results/*.log
+__pycache__/

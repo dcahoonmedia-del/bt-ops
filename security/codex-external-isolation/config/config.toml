@@ -1,0 +1,43 @@
+# Isolated Test 0 Codex user config.
+# Lives only in the disposable container CODEX_HOME.
+# Never written to a host ~/.codex or Mac Codex profile.
+
+check_for_update_on_startup = false
+web_search = "disabled"
+sandbox_mode = "read-only"
+approval_policy = "untrusted"
+default_permissions = ":read-only"
+hide_agent_reasoning = false
+
+[features]
+plugins = false
+remote_plugin = false
+apps = false
+hooks = false
+shell_tool = false
+shell_snapshot = false
+multi_agent = false
+unified_exec = false
+browser_use = false
+computer_use = false
+in_app_browser = false
+tool_suggest = false
+plugin_sharing = false
+network_proxy = false
+skill_mcp_dependency_install = false
+memories = false
+
+[apps._default]
+enabled = false
+destructive_enabled = false
+open_world_enabled = false
+
+[agents]
+enabled = false
+
+# Empty marketplace allowlist: no Git/remote/curated sources.
+[marketplaces]
+
+[mcp_servers]
+
+[hooks]
