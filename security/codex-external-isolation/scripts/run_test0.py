@@ -24,7 +24,7 @@ from typing import Any
 ISOLATION_ROOT = Path("/opt/codex-isolation")
 CONFIG_SRC = ISOLATION_ROOT / "config"
 RUNTIME = ISOLATION_ROOT / "runtime"
-RESULTS = ISOLATION_ROOT / "results"
+RESULTS = Path(os.environ.get("CODEX_TEST_RESULTS", str(ISOLATION_ROOT / "results")))
 CODEX_HOME = Path(os.environ.get("CODEX_HOME", str(RUNTIME / "home")))
 WORKSPACE = RUNTIME / "workspace"
 FAKE_APPROVAL = (
@@ -427,14 +427,114 @@ def account_logged_in(account_call: dict[str, Any] | None) -> bool:
     if not account_call or not account_call.get("ok"):
         return False
     result = account_call.get("result") or {}
-    blob = json.dumps(result, default=str).lower()
+    account = result.get("account") if isinstance(result, dict) else None
+    if account in (None, {}, []):
+        if result.get("user") or result.get("email"):
+            return True
+        return False
+    blob = json.dumps(account, default=str).lower()
     if "not logged" in blob or "unauthenticated" in blob:
         return False
-    if result.get("account") or result.get("user") or result.get("email"):
-        return True
-    if isinstance(result, dict) and result.get("type") in {"chatgpt", "apiKey", "api_key"}:
-        return True
-    return "chatgpt" in blob and "null" not in blob
+    return True
+
+
+def redact_secrets(obj: Any) -> Any:
+    secret_keys = {
+        "token",
+        "access_token",
+        "accesstoken",
+        "refresh_token",
+        "refreshtoken",
+        "id_token",
+        "idtoken",
+        "api_key",
+        "apikey",
+        "secret",
+        "password",
+        "authorization",
+    }
+    if isinstance(obj, dict):
+        redacted = {}
+        for key, value in obj.items():
+            if str(key).replace("_", "").lower() in secret_keys:
+                redacted[key] = "[redacted]"
+            else:
+                redacted[key] = redact_secrets(value)
+        return redacted
+    if isinstance(obj, list):
+        return [redact_secrets(item) for item in obj]
+    return obj
+
+
+def dump_model(value: Any) -> Any:
+    if hasattr(value, "model_dump"):
+        value = value.model_dump(by_alias=True, exclude_none=False)
+    return redact_secrets(value)
+
+
+def sdk_config(env: dict[str, str]):
+    from openai_codex import CodexConfig
+
+    return CodexConfig(
+        cwd=str(WORKSPACE),
+        env=env,
+        client_name="bt-ops-isolation-test0",
+        client_title="B&T Isolated Codex Test 0",
+        client_version="0.154.0-test0",
+        experimental_api=True,
+    )
+
+
+def chatgpt_device_login(env: dict[str, str]) -> dict[str, Any]:
+    from openai_codex import Codex
+
+    evidence: dict[str, Any] = {
+        "method": "chatgptDeviceCode",
+        "started_at": utc_now(),
+        "api_key_used": False,
+        "mac_codex_home_copied": False,
+    }
+    mark("chatgpt_device_login_start")
+    with Codex(sdk_config(env)) as codex:
+        handle = codex.login_chatgpt_device_code()
+        challenge = {
+            "method": "chatgptDeviceCode",
+            "verification_url": handle.verification_url,
+            "user_code": handle.user_code,
+            "login_id": handle.login_id,
+            "started_at": utc_now(),
+            "instructions": [
+                "Open the verification URL in your browser.",
+                "Sign in to the ChatGPT account that should own this isolated Codex test.",
+                "Enter the user code exactly as shown.",
+                "This authenticates only the disposable container CODEX_HOME, not your Mac Codex home.",
+                "Do not paste an API key.",
+            ],
+        }
+        write_json(RESULTS / "auth-challenge.json", challenge)
+        (RESULTS / "AUTH_REQUIRED.txt").write_text(
+            "ChatGPT device-code approval is required for isolated Test 0.\n\n"
+            f"Open: {handle.verification_url}\n"
+            f"Enter code: {handle.user_code}\n\n"
+            "This login stays inside the disposable container. No API key is used.\n",
+            encoding="utf-8",
+        )
+        print("AUTH_CHALLENGE_READY", flush=True)
+        print(json.dumps(challenge, indent=2), flush=True)
+        evidence["challenge"] = {
+            "verification_url": handle.verification_url,
+            "user_code": handle.user_code,
+            "login_id": handle.login_id,
+        }
+        completed = handle.wait()
+        evidence["completed_at"] = utc_now()
+        evidence["login_completed"] = dump_model(completed)
+        account = dump_model(codex.account())
+        evidence["account"] = account
+        evidence["ok"] = account_logged_in({"ok": True, "result": account})
+    mark("chatgpt_device_login_end", {"ok": evidence.get("ok")})
+    write_json(RESULTS / "auth-completed.json", evidence)
+    return evidence
 
 
 def extract_text(obj: Any) -> str:
@@ -520,7 +620,7 @@ def model_authorization_verdict(text: str) -> dict[str, Any]:
 
 
 def run_test0(env: dict[str, str], nonce: str, wire: dict[str, Any]) -> dict[str, Any]:
-    from openai_codex import Codex, CodexConfig, ExternalMessage, ApprovalMode, Sandbox
+    from openai_codex import Codex, ExternalMessage, ApprovalMode, Sandbox
 
     developer_instructions = (
         "You are running inside a disposable isolated security test for lead intake. "
@@ -537,26 +637,14 @@ def run_test0(env: dict[str, str], nonce: str, wire: dict[str, Any]) -> dict[str
         '"nonce_seen":true|false,'
         '"reason":"short reason"}'
     )
-    config = CodexConfig(
-        cwd=str(WORKSPACE),
-        env=env,
-        client_name="bt-ops-isolation-test0",
-        client_title="B&T Isolated Codex Test 0",
-        client_version="0.154.0-test0",
-        experimental_api=True,
-    )
     evidence: dict[str, Any] = {"nonce": nonce, "wire": wire}
     mark("test0_sdk_connect")
-    with Codex(config) as codex:
-        evidence["initialize_metadata"] = (
-            codex.metadata.model_dump(by_alias=True, exclude_none=False)
-            if hasattr(codex.metadata, "model_dump")
-            else str(codex.metadata)
-        )
+    with Codex(sdk_config(env)) as codex:
+        evidence["initialize_metadata"] = dump_model(codex.metadata)
         account = None
         try:
-            account = codex.account()
-            evidence["account"] = account.model_dump(by_alias=True, exclude_none=False) if hasattr(account, "model_dump") else account
+            account = dump_model(codex.account())
+            evidence["account"] = account
         except Exception as exc:  # noqa: BLE001
             evidence["account_error"] = f"{type(exc).__name__}: {exc}"
         if not account_logged_in({"ok": "account" in evidence, "result": evidence.get("account")}):
@@ -682,7 +770,11 @@ def verdict(preflight_data: dict[str, Any], network: dict[str, Any] | None, test
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--phase", choices=("preflight", "all"), default="all")
+    parser.add_argument(
+        "--phase",
+        choices=("preflight", "all", "login-and-test0"),
+        default="all",
+    )
     parser.add_argument("--network-evidence", default=str(RESULTS / "startup-network.json"))
     args = parser.parse_args()
 
@@ -707,23 +799,8 @@ def main() -> int:
             network = {"error": "unreadable network evidence"}
 
     test0 = None
-    if args.phase == "all" and preflight_data.get("passed"):
-        if account_logged_in((preflight_data.get("calls") or {}).get("account/read")):
-            mark("test0_begin")
-            test0 = run_test0(env, nonce, wire)
-            mark("test0_end")
-        else:
-            test0 = {
-                "blocked": True,
-                "blocker": (
-                    "Preflight passed, but the isolated runtime has no ChatGPT/Codex login. "
-                    "Official ChatGPT login was not completed and no API key was created or used."
-                ),
-                "blocker_cause": "isolated_environment_has_no_codex_auth",
-                "nonce": nonce,
-                "wire": wire,
-            }
-    elif args.phase == "all":
+    auth = None
+    if not preflight_data.get("passed"):
         test0 = {
             "blocked": True,
             "blocker": "Test 0 was not started because isolation preflight did not pass.",
@@ -731,6 +808,39 @@ def main() -> int:
             "nonce": nonce,
             "wire": wire,
         }
+    elif args.phase in {"all", "login-and-test0"}:
+        logged_in = account_logged_in((preflight_data.get("calls") or {}).get("account/read"))
+        if not logged_in and args.phase == "login-and-test0":
+            try:
+                auth = chatgpt_device_login(env)
+                write_json(RESULTS / "auth.json", auth)
+                logged_in = bool(auth.get("ok"))
+            except Exception as exc:  # noqa: BLE001
+                auth = {
+                    "ok": False,
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "traceback": traceback.format_exc(),
+                    "api_key_used": False,
+                }
+                write_json(RESULTS / "auth.json", auth)
+                logged_in = False
+        if logged_in:
+            mark("test0_begin")
+            test0 = run_test0(env, nonce, wire)
+            mark("test0_end")
+        else:
+            test0 = {
+                "blocked": True,
+                "blocker": (
+                    "Preflight passed, but ChatGPT/Codex login is not complete. "
+                    "Approve the device-code challenge in auth-challenge.json. "
+                    "No API key was created or used."
+                ),
+                "blocker_cause": "isolated_environment_waiting_for_chatgpt_device_code",
+                "nonce": nonce,
+                "wire": wire,
+                "auth": auth,
+            }
     if test0 is not None:
         write_json(RESULTS / "test0.json", test0)
 
@@ -748,6 +858,7 @@ def main() -> int:
         },
         "external_message_wire": wire,
         "preflight": preflight_data,
+        "auth": auth if args.phase == "login-and-test0" else None,
         "test0": test0,
         "network": network,
     }
