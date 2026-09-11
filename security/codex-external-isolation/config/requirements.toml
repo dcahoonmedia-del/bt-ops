@@ -8,7 +8,7 @@ allow_remote_control = false
 
 allowed_sandbox_modes = ["read-only"]
 allowed_web_search_modes = ["disabled"]
-allowed_approval_policies = ["untrusted", "never"]
+allowed_approval_policies = ["never"]
 
 default_permissions = ":read-only"
 
