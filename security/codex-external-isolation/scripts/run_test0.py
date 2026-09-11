@@ -91,6 +91,20 @@ def setup_runtime() -> dict[str, str]:
     return env
 
 
+def bundled_codex_bin() -> str | None:
+    try:
+        from openai_codex.client import _installed_codex_path
+
+        return str(_installed_codex_path())
+    except Exception:
+        try:
+            from codex_cli_bin import bundled_codex_path
+
+            return str(bundled_codex_path())
+        except Exception:
+            return None
+
+
 def package_versions() -> dict[str, Any]:
     info: dict[str, Any] = {"python": sys.version}
     try:
@@ -101,21 +115,26 @@ def package_versions() -> dict[str, Any]:
         info["openai_codex_file"] = getattr(openai_codex, "__file__", None)
     except Exception as exc:  # noqa: BLE001
         info["openai_codex_error"] = str(exc)
-    try:
-        proc = subprocess.run(
-            ["codex", "--version"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        info["codex_cli"] = {
-            "returncode": proc.returncode,
-            "stdout": proc.stdout.strip(),
-            "stderr": proc.stderr.strip(),
-        }
-    except Exception as exc:  # noqa: BLE001
-        info["codex_cli_error"] = str(exc)
+    bin_path = bundled_codex_bin()
+    info["codex_bin"] = bin_path
+    if bin_path:
+        try:
+            proc = subprocess.run(
+                [bin_path, "--version"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            info["codex_cli"] = {
+                "returncode": proc.returncode,
+                "stdout": proc.stdout.strip(),
+                "stderr": proc.stderr.strip(),
+            }
+        except Exception as exc:  # noqa: BLE001
+            info["codex_cli_error"] = str(exc)
+    else:
+        info["codex_cli_error"] = "bundled Codex binary not found"
     return info
 
 
@@ -303,10 +322,7 @@ def rpc_call(client: Any, method: str, params: Any | None = None) -> dict[str, A
     started = time.time()
     record: dict[str, Any] = {"method": method, "params": params, "started_at": utc_now()}
     try:
-        if params is None:
-            result = client.request(method)
-        else:
-            result = client.request(method, params)
+        result = client._request_raw(method, params)
         if hasattr(result, "model_dump"):
             result = result.model_dump(by_alias=True, exclude_none=False)
         record["ok"] = True
@@ -334,26 +350,37 @@ def preflight(env: dict[str, str]) -> dict[str, Any]:
     calls: dict[str, Any] = {}
     initialize = None
     isolation = None
+    stderr_lines: list[str] = []
     try:
         mark("app_server_start")
         client.start()
         mark("initialize_begin")
-        initialize = rpc_call(client, "initialize", {
-            "clientInfo": {
-                "name": config.client_name,
-                "title": config.client_title,
-                "version": config.client_version,
-            },
-            "capabilities": {"experimentalApi": True},
-        })
-        if initialize.get("ok"):
-            try:
-                client.notify("initialized", None)
-            except TypeError:
-                client.notify("initialized")
+        started = time.time()
+        try:
+            init_result = client.initialize()
+            initialize = {
+                "method": "initialize",
+                "ok": True,
+                "started_at": utc_now(),
+                "elapsed_ms": int((time.time() - started) * 1000),
+                "result": (
+                    init_result.model_dump(by_alias=True, exclude_none=False)
+                    if hasattr(init_result, "model_dump")
+                    else init_result
+                ),
+            }
+        except Exception as exc:  # noqa: BLE001
+            initialize = {
+                "method": "initialize",
+                "ok": False,
+                "started_at": utc_now(),
+                "elapsed_ms": int((time.time() - started) * 1000),
+                "error": f"{type(exc).__name__}: {exc}",
+                "traceback": traceback.format_exc(),
+            }
         mark("initialize_end", {"ok": initialize.get("ok")})
         # Let any hidden startup sync attempt surface before we read config.
-        time.sleep(3)
+        time.sleep(5)
         calls["config/read"] = rpc_call(client, "config/read", {})
         calls["configRequirements/read"] = rpc_call(client, "configRequirements/read", {})
         calls["plugin/list"] = rpc_call(client, "plugin/list", {"cwds": []})
@@ -363,8 +390,10 @@ def preflight(env: dict[str, str]) -> dict[str, Any]:
             calls["configRequirements/read"].get("result"),
             calls["plugin/list"].get("result"),
         )
+        stderr_lines = list(getattr(client, "_stderr_lines", []))
     finally:
         try:
+            stderr_lines = stderr_lines or list(getattr(client, "_stderr_lines", []))
             client.close()
         except Exception:
             pass
@@ -390,6 +419,7 @@ def preflight(env: dict[str, str]) -> dict[str, Any]:
         "uid": os.getuid(),
         "codex_home": str(CODEX_HOME),
         "cwd": str(WORKSPACE),
+        "app_server_stderr": stderr_lines[-80:],
     }
 
 

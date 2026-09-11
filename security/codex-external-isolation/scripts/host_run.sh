@@ -21,26 +21,29 @@ need() {
   }
 }
 
-need docker
 need python3
 if ! command -v tcpdump >/dev/null 2>&1 && ! command -v tshark >/dev/null 2>&1; then
   echo "tcpdump or tshark is required for startup network evidence" >&2
   exit 1
 fi
 
-if ! docker info >/dev/null 2>&1; then
+if docker info >/dev/null 2>&1; then
+  DOCKER=(docker)
+elif sudo docker info >/dev/null 2>&1; then
+  DOCKER=(sudo docker)
+else
   echo "docker daemon is not available" >&2
   exit 1
 fi
 
 echo "==> building isolated image ${IMAGE}"
-docker build -t "${IMAGE}" "${ROOT}"
+"${DOCKER[@]}" build -t "${IMAGE}" "${ROOT}"
 
-if docker network inspect "${NETWORK}" >/dev/null 2>&1; then
-  docker network rm "${NETWORK}" >/dev/null || true
+if "${DOCKER[@]}" network inspect "${NETWORK}" >/dev/null 2>&1; then
+  "${DOCKER[@]}" network rm "${NETWORK}" >/dev/null || true
 fi
-docker network create --driver bridge --subnet "${SUBNET}" "${NETWORK}" >/dev/null
-BRIDGE="$(docker network inspect -f '{{.Id}}' "${NETWORK}" | cut -c1-12)"
+"${DOCKER[@]}" network create --driver bridge --subnet "${SUBNET}" "${NETWORK}" >/dev/null
+BRIDGE="$("${DOCKER[@]}" network inspect -f '{{.Id}}' "${NETWORK}" | cut -c1-12)"
 IFACE="br-${BRIDGE}"
 if ! ip link show "${IFACE}" >/dev/null 2>&1; then
   IFACE="$(ip -o link show | awk -F': ' '/br-/{print $2}' | while read -r name; do
@@ -58,7 +61,7 @@ cleanup() {
     sudo kill -INT "${TCPDUMP_PID}" 2>/dev/null || true
     wait "${TCPDUMP_PID}" 2>/dev/null || true
   fi
-  docker rm -f "${CONTAINER}" >/dev/null 2>&1 || true
+  "${DOCKER[@]}" rm -f "${CONTAINER}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -72,7 +75,7 @@ fi
 
 echo "==> launching isolated container"
 set +e
-docker run --name "${CONTAINER}" \
+"${DOCKER[@]}" run --name "${CONTAINER}" \
   --read-only \
   --tmpfs /tmp:rw,nosuid,size=128m \
   --tmpfs /opt/codex-isolation/runtime:rw,nosuid,uid=1000,gid=1000,size=512m \
@@ -92,7 +95,7 @@ docker run --name "${CONTAINER}" \
 DOCKER_RC=$?
 set -e
 
-docker inspect "${CONTAINER}" > "${INSPECT_JSON}" || true
+"${DOCKER[@]}" inspect "${CONTAINER}" > "${INSPECT_JSON}" || true
 
 if [[ -n "${TCPDUMP_PID}" ]]; then
   sudo kill -INT "${TCPDUMP_PID}" 2>/dev/null || true
