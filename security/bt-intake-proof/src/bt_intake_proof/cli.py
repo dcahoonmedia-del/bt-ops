@@ -10,9 +10,12 @@ from pathlib import Path
 
 from .gates import diagnose_google
 from .cloud_auth import cloud_authorization_url
+from .live_google import contactus_gmail
+from .live_receive import impersonated_receiver_token, receive_once
 from .oauth_consent import OAuthClientError, authorization_url, blocked_oauth_url, exchange_code
 from .scorecard import apply_local_contract_results, empty_scorecard, markdown_table, write_scorecard
 from .setup_google import blocked_setup
+from .store import ReceiptStore
 
 ROOT = Path(__file__).resolve().parents[2]
 RESULTS = ROOT / "results"
@@ -100,6 +103,53 @@ def cmd_oauth_exchange(args: argparse.Namespace) -> int:
     return 0
 
 
+def _live_store() -> ReceiptStore:
+    return ReceiptStore(RESULTS / "live" / "receipts.sqlite")
+
+
+def cmd_receive_once(_args: argparse.Namespace) -> int:
+    RESULTS.mkdir(parents=True, exist_ok=True)
+    store = _live_store()
+    try:
+        payload = receive_once(store, contactus_gmail(), impersonated_receiver_token())
+    except OAuthClientError as exc:
+        payload = {"status": "FAIL", "error": str(exc)}
+        _print(payload)
+        return 1
+    finally:
+        store.close()
+    (RESULTS / "live" / "last-receive.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    _print(payload)
+    return 0
+
+
+def cmd_receive_loop(args: argparse.Namespace) -> int:
+    import time
+
+    RESULTS.mkdir(parents=True, exist_ok=True)
+    store = _live_store()
+    try:
+        gmail = contactus_gmail()
+        sa_token = impersonated_receiver_token()
+        started = time.time()
+        while True:
+            if time.time() - started > 50 * 60:
+                gmail = contactus_gmail()
+                sa_token = impersonated_receiver_token()
+                started = time.time()
+            payload = receive_once(store, gmail, sa_token)
+            (RESULTS / "live" / "last-receive.json").write_text(
+                json.dumps(payload, indent=2) + "\n", encoding="utf-8"
+            )
+            if payload.get("pulled"):
+                _print(payload)
+            time.sleep(args.interval)
+    except KeyboardInterrupt:
+        return 0
+    finally:
+        store.close()
+
+
 def cmd_record_local_tests(args: argparse.Namespace) -> int:
     scorecard = empty_scorecard(
         "contactus@ Gmail read-only consent passed. Pub/Sub create is blocked on Cloud admin credentials or console-created topic."
@@ -125,6 +175,10 @@ def main(argv: list[str] | None = None) -> int:
     ex = sub.add_parser("oauth-exchange")
     ex.add_argument("redirect", help="localhost redirect URL or code from contactus consent")
     ex.set_defaults(func=cmd_oauth_exchange)
+    sub.add_parser("receive-once").set_defaults(func=cmd_receive_once)
+    loop = sub.add_parser("receive-loop")
+    loop.add_argument("--interval", type=float, default=2.0)
+    loop.set_defaults(func=cmd_receive_loop)
     args = parser.parse_args(argv)
     return args.func(args)
 

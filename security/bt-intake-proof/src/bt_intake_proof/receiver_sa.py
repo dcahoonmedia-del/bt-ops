@@ -188,6 +188,18 @@ def summarize_pull(pull: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def acknowledge(access_token: str, ack_ids: list[str]) -> None:
+    if not ack_ids:
+        return
+    sub = subscription_path(project_id(), DEFAULT_SUBSCRIPTION_ID)
+    _request(
+        "POST",
+        f"https://pubsub.googleapis.com/v1/{sub}:acknowledge",
+        access_token,
+        {"ackIds": ack_ids},
+    )
+
+
 def refuse_json_key() -> None:
     probe = impersonation_possible_without_key()
     if not probe["adc_present"] and not probe["cloud_user_token_present"] and not probe["gce_metadata"]:

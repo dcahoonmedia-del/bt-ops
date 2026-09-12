@@ -1,5 +1,11 @@
-# Stopped for Daniel — grant Service Account Token Creator
+# Next for Daniel — send the new-message proof email
 
-Steps 1 and 2 are done. Impersonation still needs `roles/iam.serviceAccountTokenCreator` for `daniel@btpestcontrol.com` on `bt-intake-proof-receiver` only. No JSON key was created.
+Token Creator, impersonation, and subscriber pull are PASS. No JSON key was created.
 
-Follow `SA_CONSOLE_GUIDE.md`.
+Wait until I say the receiver is running, then send **one** new email:
+
+- From: `daniel@btpestcontrol.com`
+- To: `contactus@btpestcontrol.com`
+- Subject or body must include exactly: `BT-INTAKE-PROOF-NEW-E9A8-7F3C`
+
+Do not reply to an old thread for this step. Do not send customer mail. Do not send the reply or recovery markers yet.

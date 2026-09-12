@@ -1,27 +1,27 @@
 {
   "overall": "BLOCKED",
-  "stopped_at": "cloud_impersonation_source",
-  "reason": "Watch PASS. No JSON key created. Waiting for project-owner Cloud login to impersonate bt-intake-proof-receiver.",
+  "stopped_at": "new_message_automatic_capture",
+  "reason": "Watch and Pub/Sub pull PASS. Waiting for marked internal mail from daniel@ to contactus@.",
   "gates": {
     "gmail_watch_registration": {
       "result": "PASS",
       "detail": "historyId 6007776 expires 2026-09-19T01:52:34Z"
     },
     "pubsub_delivery": {
-      "result": "BLOCKED",
-      "detail": "Watch PASS. No JSON key created. Waiting for project-owner Cloud login to impersonate bt-intake-proof-receiver."
+      "result": "PASS",
+      "detail": "Impersonated bt-intake-proof-receiver and pulled 1 Gmail watch envelope for contactus@. No JSON key. Not acked. History not fetched."
     },
     "new_message_automatic_capture": {
       "result": "BLOCKED",
-      "detail": "Watch PASS. No JSON key created. Waiting for project-owner Cloud login to impersonate bt-intake-proof-receiver."
+      "detail": "Waiting for BT-INTAKE-PROOF-NEW-E9A8-7F3C from daniel@ to contactus@."
     },
     "old_thread_reply_capture": {
       "result": "BLOCKED",
-      "detail": "Watch PASS. No JSON key created. Waiting for project-owner Cloud login to impersonate bt-intake-proof-receiver."
+      "detail": "Waiting for new-message capture first."
     },
     "state_preservation": {
       "result": "BLOCKED",
-      "detail": "Watch PASS. No JSON key created. Waiting for project-owner Cloud login to impersonate bt-intake-proof-receiver."
+      "detail": "Waiting for new-message capture first."
     },
     "durable_storage": {
       "result": "BLOCKED",
@@ -35,11 +35,11 @@
     },
     "recovery_after_receiver_downtime": {
       "result": "BLOCKED",
-      "detail": "Watch PASS. No JSON key created. Waiting for project-owner Cloud login to impersonate bt-intake-proof-receiver."
+      "detail": "Waiting for new-message capture first."
     },
     "codex_external_message_delivery": {
       "result": "BLOCKED",
-      "detail": "Watch PASS. No JSON key created. Waiting for project-owner Cloud login to impersonate bt-intake-proof-receiver."
+      "detail": "Waiting for a durable eligible receipt before isolated Codex dispatch."
     }
   },
   "google": {

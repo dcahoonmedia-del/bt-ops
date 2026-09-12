@@ -10,9 +10,9 @@ Test 0 isolation stays unchanged. Codex delivery reuses `security/codex-external
 
 ## Current gate
 
-**BLOCKED on Daniel** at Phase 1 (Google setup).
+Watch and Pub/Sub pull are **PASS**. Next: marked internal mail from `daniel@` to `contactus@`.
 
-I will not choose a Google Cloud project, enable billing, or complete `contactus@` consent. The Cursor Gmail MCP is `daniel@btpestcontrol.com` and can send/modify mail; it is not used here.
+The Cursor Gmail MCP is `daniel@btpestcontrol.com` and can send/modify mail; it is not used here.
 
 See `DANIEL_DECISIONS.md` and `RESULTS.md`.
 
@@ -27,6 +27,7 @@ PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```bash
 PYTHONPATH=src python3 -m bt_intake_proof.cli gate
 PYTHONPATH=src python3 -m bt_intake_proof.cli setup
+PYTHONPATH=src python3 -m bt_intake_proof.cli receive-once
 ```
 
 Codex dispatch (Phase 4 only, after a durable eligible receipt exists):

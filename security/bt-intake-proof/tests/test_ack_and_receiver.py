@@ -218,6 +218,20 @@ class ReceiverTests(unittest.TestCase):
         self.assertEqual(row["classification"], "reply")
         self.assertNotEqual(row["gmail_message_id"], "old-id")
 
+    def test_does_not_rewind_watch_cursor(self) -> None:
+        gmail = FakeGmail({})
+        gmail.history = lambda start: {"history": [], "historyId": "100"}  # type: ignore[method-assign]
+        result = process_notification(
+            self.store,
+            {"emailAddress": MAILBOX, "historyId": "100"},
+            gmail=gmail,
+            pubsub_message_id="ps-old",
+            ack=lambda: None,
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["end_history_id"], "8000")
+        self.assertEqual(self.store.get_watch(MAILBOX)["history_id"], "8000")
+
     def test_history_parser(self) -> None:
         ids = added_message_ids(
             {

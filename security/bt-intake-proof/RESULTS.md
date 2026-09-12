@@ -1,16 +1,16 @@
 # B&T contactus intake proof
 
-**Gmail `users.watch`: PASS.** Receiver pull: **BLOCKED** — Token Creator for `daniel@` on `bt-intake-proof-receiver` is not effective yet.
+**Gmail `users.watch`: PASS.** **Pub/Sub pull: PASS.** Impersonation used Token Creator. No JSON key was created.
 
-No JSON key was created. Steps 1 and 2 (SA + subscription Subscriber) are done. Impersonation still returns `iam.serviceAccounts.getAccessToken` denied.
+Pulled one Gmail watch envelope for `contactus@btpestcontrol.com` (`historyId` `6007776`, message id `21177054176054382`). It was **not** acked and Gmail history was **not** fetched, so no customer mail was processed.
 
 ## Scorecard
 
 | Gate | Result |
 | --- | --- |
 | Gmail watch registration | PASS |
-| Pub/Sub delivery | BLOCKED — waiting for console-created receiver SA + impersonation |
-| New-message automatic capture | BLOCKED |
+| Pub/Sub delivery | PASS |
+| New-message automatic capture | BLOCKED — waiting for marked internal mail |
 | Old-thread reply capture | BLOCKED |
 | State preservation | BLOCKED |
 | Durable storage | BLOCKED (local contract PASS) |

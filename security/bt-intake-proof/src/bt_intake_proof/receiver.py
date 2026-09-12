@@ -99,6 +99,9 @@ def process_notification(
         receipts.append(receipt)
 
     new_history = str(history.get("historyId") or parsed["historyId"])
+    cursor_id = str((cursor or {}).get("history_id") or "")
+    if cursor_id.isdigit() and new_history.isdigit() and int(new_history) < int(cursor_id):
+        new_history = cursor_id
     error = None
     commit = None
     try:

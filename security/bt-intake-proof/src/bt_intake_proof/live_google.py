@@ -6,6 +6,7 @@ import json
 import urllib.error
 import urllib.request
 from typing import Any
+from urllib.parse import urlencode
 
 from .constants import (
     DEFAULT_SUBSCRIPTION_ID,
@@ -33,6 +34,66 @@ def _token_record() -> dict[str, Any]:
     data = json.loads(path.read_text(encoding="utf-8"))
     assert_readonly_credentials(list(data.get("scopes") or [data.get("scope") or GMAIL_READONLY_SCOPE]), data.get("email") or "")
     return data
+
+
+class HttpReadOnlyGmail:
+    """users.getProfile / watch / history / messages.get / threads.get only."""
+
+    def __init__(self, access_token: str, email: str, scopes: list[str]) -> None:
+        assert_readonly_credentials(scopes, email)
+        self.access_token = access_token
+        self.email = normalize_email(email)
+        self.scopes = list(scopes)
+
+    def _get(self, url: str) -> dict[str, Any]:
+        return _get_json(url, self.access_token)
+
+    def profile(self) -> dict[str, Any]:
+        return gmail_profile(self.access_token)
+
+    def history(self, start_history_id: str) -> dict[str, Any]:
+        params = {"startHistoryId": str(start_history_id), "historyTypes": "messageAdded"}
+        url = "https://gmail.googleapis.com/gmail/v1/users/me/history?" + urlencode(params)
+        merged: dict[str, Any] = {"history": [], "historyId": str(start_history_id)}
+        while url:
+            page = self._get(url)
+            merged["history"].extend(page.get("history") or [])
+            if page.get("historyId"):
+                merged["historyId"] = str(page["historyId"])
+            token = page.get("nextPageToken")
+            if not token:
+                break
+            url = "https://gmail.googleapis.com/gmail/v1/users/me/history?" + urlencode(
+                {**params, "pageToken": token}
+            )
+        return merged
+
+    def get_message(self, message_id: str, fmt: str = "raw") -> dict[str, Any]:
+        if fmt not in {"raw", "metadata", "minimal", "full"}:
+            raise GmailAuthError(f"unsupported Gmail format {fmt}")
+        return self._get(
+            f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}?format={fmt}"
+        )
+
+    def get_thread_message_ids(self, thread_id: str) -> list[str]:
+        thread = self._get(
+            f"https://gmail.googleapis.com/gmail/v1/users/me/threads/{thread_id}?format=minimal"
+        )
+        ids = []
+        for message in thread.get("messages") or []:
+            mid = message.get("id")
+            if mid:
+                ids.append(mid)
+        return ids
+
+
+def contactus_gmail() -> HttpReadOnlyGmail:
+    token = refresh_access_token()
+    return HttpReadOnlyGmail(
+        str(token.get("access_token") or ""),
+        str(token.get("email") or MAILBOX),
+        list(token.get("scopes") or [GMAIL_READONLY_SCOPE]),
+    )
 
 
 def gmail_profile(access_token: str) -> dict[str, Any]:
