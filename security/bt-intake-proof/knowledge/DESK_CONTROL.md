@@ -1,13 +1,15 @@
-# Natural-language Lead Desk control
+# Lead Desk control
 
-Version: 2026-09-12-intent
-Daniel operates the desk by talking, often iPhone dictation. He does not need case IDs, draft numbers, hashes, nonces, approval codes, or a magic phrase such as the literal words `send it`.
+Version: 2026-09-12-action
+Production path: Daniel speaks naturally to ChatGPT → ChatGPT interprets intent → backend receives a small structured action → backend validates exact case/version/payload/freshness and executes narrowly.
 
-The conversational model infers intent from the full current conversation, the draft just shown, the question just asked, Daniel's complete newest utterance (including mid-sentence reversals), and current ownership/holds.
+Daniel does not need case IDs, draft numbers, hashes, nonces, approval codes, or a magic phrase. ChatGPT holds the conversation. The Python backend does not model his speech.
 
-The backend authorizes execution. The model cannot bypass Phase E.
+`normalize_desk_intent` is a temporary fallback only. Do not grow its phrase lists.
 
-## Internal intents
+## Structured action
+
+ChatGPT submits one of:
 
 - `approve_and_send_current`
 - `approve_draft_only`
@@ -19,18 +21,20 @@ The backend authorizes execution. The model cannot bypass Phase E.
 - `conditional_instruction`
 - `ambiguous_needs_confirmation`
 
-If the intent is materially ambiguous, ask one short natural question. Do not require a machine phrase.
+Optional fields: `owner`, `note`, `reassign_to_daniel`. Unknown or missing intent is rejected. If the intent is materially ambiguous, ChatGPT asks one short natural question. Do not require a machine phrase from Daniel.
 
-Later contradictory language in the same dictated turn wins. "Send that - actually wait, make it shorter first" is revise, not send. "If she confirms, send it" is conditional, not send. "Don't send that" is no send even though it contains `send`.
+The isolated Gmail review packets may still use CASE=/DRAFT= markers. That is not the intended production conversational UX.
 
 ## Send still binds
 
-Any inferred send binds to the exact current case, draft version, recipient, channel, payload, and latest inbound. A newer inbound, changed draft, changed recipient, hold, office ownership, or stale displayed context blocks execution.
+Any send still binds to the exact current case, draft version, recipient, channel, payload, and latest inbound. A newer inbound, changed draft, changed recipient, hold, office ownership, or stale displayed context blocks execution. ChatGPT meaning "send" does not bypass Phase E.
+
+`submit_desk_action` authorizes only. It does not send. A later execute still needs a stored Phase E action id.
 
 ## Office ownership
 
-Brenda and Ally are office staff. "Leave this with Brenda", "Ally is handling this", and "The office has this" are office-owned, no customer send. "Brenda or Ally" asks which one if that matters. Do not silently take a case away from them or create duplicate AI outreach. Transfer only when Daniel explicitly reassigns.
+Brenda and Ally are office staff. Office-owned cases stay with the office. Do not silently take a case away from them or create duplicate AI outreach. Transfer only when Daniel explicitly reassigns.
 
 ## Live tonight
 
-This is the control contract and unit tests. Isolated Gmail review packets may still use CASE-APPROVE markers. Conversational send is not a new live customer-send path.
+This is the control contract and unit tests. Conversational send is not a new live customer-send path.

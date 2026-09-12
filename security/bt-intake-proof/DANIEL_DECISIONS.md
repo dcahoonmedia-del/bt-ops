@@ -18,4 +18,4 @@ Phase F1 iPhone Lead Desk uses Gmail packets in `daniel@`, not a ChatGPT custom 
 
 Production intake will capture every contactus@ inbound, then classify. The `BT-INTAKE-PROOF-*` filters stay on for isolated testing until you separately authorize shadow intake of all real contactus@ mail. Real-customer processing is off.
 
-You can run the desk in ordinary speech. You do not need to remember case IDs or say a magic phrase. If you say "yeah, looks good" after I asked whether to send, that can mean send this version. If you change your mind in the same breath, the later instruction wins. I still will not send a stale or office-owned packet.
+Talk to ChatGPT in ordinary speech. You do not need case IDs or a magic phrase. ChatGPT interprets what you meant and sends a small action to the backend. The backend still checks the exact current case, draft, recipient, and latest inbound. I will not send a stale or office-owned packet.
