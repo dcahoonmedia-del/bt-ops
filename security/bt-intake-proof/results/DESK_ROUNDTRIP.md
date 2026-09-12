@@ -1,7 +1,8 @@
 # Desk round-trip scorecard
 
 Reviewed baseline: `378ffcf` / PR #14
-This revision: see git commit on `cursor/bt-intake-roundtrip-e9a8`
+This revision: `2c762a2` on `cursor/bt-intake-roundtrip-e9a8`
+Deployed revision: **BLOCKED** (no SSH key on this agent VM; live host still at the Gmail-bridge revision until Codex deploys)
 Isolation: BT-INTAKE-PROOF on. Real-customer sends OFF. Broad/shadow capture OFF.
 This milestone is **not** an approval row and does **not** reuse Phase E action 1 / `BT-PHASE-E-SEND-E9A8-C4F1`.
 
