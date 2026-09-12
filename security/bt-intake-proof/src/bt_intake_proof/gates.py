@@ -81,6 +81,11 @@ def token_path() -> Path:
     return Path(override) if override else SECRETS / "contactus_gmail_readonly_token.json"
 
 
+def cloud_token_path() -> Path:
+    override = os.environ.get("BT_GCP_TOKEN", "").strip()
+    return Path(override) if override else SECRETS / "project_owner_cloud_token.json"
+
+
 def _token_payload() -> dict[str, Any] | None:
     path = token_path()
     if not path.exists():

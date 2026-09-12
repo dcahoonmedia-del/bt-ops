@@ -1,27 +1,27 @@
 {
   "overall": "BLOCKED",
-  "stopped_at": "pubsub_pull",
-  "reason": "users.watch PASS. Receiver cannot yet pull the Pub/Sub subscription with Gmail read-only.",
+  "stopped_at": "cloud_impersonation_source",
+  "reason": "Watch PASS. No JSON key created. Waiting for project-owner Cloud login to impersonate bt-intake-proof-receiver.",
   "gates": {
     "gmail_watch_registration": {
       "result": "PASS",
-      "detail": "historyId 6007776 expires 2026-09-19T01:52:34Z on projects/bt-intake-proof/topics/bt-intake-proof-contactus"
+      "detail": "historyId 6007776 expires 2026-09-19T01:52:34Z"
     },
     "pubsub_delivery": {
       "result": "BLOCKED",
-      "detail": "users.watch PASS. Receiver cannot yet pull the Pub/Sub subscription with Gmail read-only."
+      "detail": "Watch PASS. No JSON key created. Waiting for project-owner Cloud login to impersonate bt-intake-proof-receiver."
     },
     "new_message_automatic_capture": {
       "result": "BLOCKED",
-      "detail": "users.watch PASS. Receiver cannot yet pull the Pub/Sub subscription with Gmail read-only."
+      "detail": "Watch PASS. No JSON key created. Waiting for project-owner Cloud login to impersonate bt-intake-proof-receiver."
     },
     "old_thread_reply_capture": {
       "result": "BLOCKED",
-      "detail": "users.watch PASS. Receiver cannot yet pull the Pub/Sub subscription with Gmail read-only."
+      "detail": "Watch PASS. No JSON key created. Waiting for project-owner Cloud login to impersonate bt-intake-proof-receiver."
     },
     "state_preservation": {
       "result": "BLOCKED",
-      "detail": "users.watch PASS. Receiver cannot yet pull the Pub/Sub subscription with Gmail read-only."
+      "detail": "Watch PASS. No JSON key created. Waiting for project-owner Cloud login to impersonate bt-intake-proof-receiver."
     },
     "durable_storage": {
       "result": "BLOCKED",
@@ -35,11 +35,11 @@
     },
     "recovery_after_receiver_downtime": {
       "result": "BLOCKED",
-      "detail": "users.watch PASS. Receiver cannot yet pull the Pub/Sub subscription with Gmail read-only."
+      "detail": "Watch PASS. No JSON key created. Waiting for project-owner Cloud login to impersonate bt-intake-proof-receiver."
     },
     "codex_external_message_delivery": {
       "result": "BLOCKED",
-      "detail": "users.watch PASS. Receiver cannot yet pull the Pub/Sub subscription with Gmail read-only."
+      "detail": "Watch PASS. No JSON key created. Waiting for project-owner Cloud login to impersonate bt-intake-proof-receiver."
     }
   },
   "google": {
@@ -64,20 +64,6 @@
   },
   "local_contract_tests": {
     "passed": true,
-    "output": "25 tests OK"
-  },
-  "watch": {
-    "status": "PASS",
-    "project_id": "bt-intake-proof",
-    "mailbox": "contactus@btpestcontrol.com",
-    "topic": "projects/bt-intake-proof/topics/bt-intake-proof-contactus",
-    "subscription": "projects/bt-intake-proof/subscriptions/bt-intake-proof-contactus-sub",
-    "history_id": "6007776",
-    "expiration_ms": "1789782754594",
-    "expiration_utc": "2026-09-19T01:52:34.594000+00:00",
-    "gmail_scopes": [
-      "https://www.googleapis.com/auth/gmail.readonly"
-    ],
-    "daniel_mailbox_used": false
+    "output": "27 tests OK"
   }
 }

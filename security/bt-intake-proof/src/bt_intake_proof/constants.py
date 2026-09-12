@@ -20,6 +20,9 @@ FORBIDDEN_GMAIL_SCOPES = (
 GMAIL_PUSH_SERVICE_ACCOUNT = "gmail-api-push@system.gserviceaccount.com"
 DEFAULT_TOPIC_ID = "bt-intake-proof-contactus"
 DEFAULT_SUBSCRIPTION_ID = "bt-intake-proof-contactus-sub"
+RECEIVER_SA_ID = "bt-intake-proof-receiver"
+CLOUD_OWNER_HINT = "daniel@btpestcontrol.com"
+CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 
 # Pre-existing internal daniel→contactus thread (SENT from daniel@ on 2026-09-11).
 # Use only this internal test thread for the old-thread reply. Never customer threads.

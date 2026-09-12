@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from .gates import diagnose_google
+from .cloud_auth import cloud_authorization_url
 from .oauth_consent import OAuthClientError, authorization_url, blocked_oauth_url, exchange_code
 from .scorecard import apply_local_contract_results, empty_scorecard, markdown_table, write_scorecard
 from .setup_google import blocked_setup
@@ -71,6 +72,20 @@ def cmd_oauth_url(_args: argparse.Namespace) -> int:
     return 0 if payload.get("authorization_url") else 2
 
 
+def cmd_cloud_oauth_url(_args: argparse.Namespace) -> int:
+    RESULTS.mkdir(parents=True, exist_ok=True)
+    try:
+        payload = cloud_authorization_url()
+    except OAuthClientError as exc:
+        payload = {"status": "BLOCKED", "authorization_url": None, "error": str(exc)}
+        _print(payload)
+        return 2
+    safe = dict(payload)
+    (RESULTS / "cloud-oauth-url.json").write_text(json.dumps(safe, indent=2) + "\n", encoding="utf-8")
+    _print(safe)
+    return 0
+
+
 def cmd_oauth_exchange(args: argparse.Namespace) -> int:
     RESULTS.mkdir(parents=True, exist_ok=True)
     try:
@@ -106,6 +121,7 @@ def main(argv: list[str] | None = None) -> int:
     rec.add_argument("--output", default="")
     rec.set_defaults(func=cmd_record_local_tests)
     sub.add_parser("oauth-url").set_defaults(func=cmd_oauth_url)
+    sub.add_parser("cloud-oauth-url").set_defaults(func=cmd_cloud_oauth_url)
     ex = sub.add_parser("oauth-exchange")
     ex.add_argument("redirect", help="localhost redirect URL or code from contactus consent")
     ex.set_defaults(func=cmd_oauth_exchange)
