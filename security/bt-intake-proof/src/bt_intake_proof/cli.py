@@ -354,6 +354,40 @@ def cmd_desk_intent(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_desk_control(args: argparse.Namespace) -> int:
+    from .cases import CaseLayer
+    from .desk_bridge import format_result_email, process_control_mail
+
+    store = ReceiptStore(Path(args.store) if args.store else store_path())
+    try:
+        layer = CaseLayer(store)
+        body = args.body
+        if args.body_file:
+            body = Path(args.body_file).read_text(encoding="utf-8")
+        result = process_control_mail(
+            layer,
+            sender=args.sender,
+            subject=args.subject,
+            body=body,
+            gmail_message_id=args.message_id or None,
+        )
+    finally:
+        store.close()
+    RESULTS.mkdir(parents=True, exist_ok=True)
+    dest = RESULTS / "live" / "desk-control-result.json"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    safe = {key: value for key, value in result.items() if key != "result_email"}
+    dest.write_text(json.dumps(safe, indent=2, default=str) + "\n", encoding="utf-8")
+    email = result.get("result_email") or format_result_email(result)
+    (RESULTS / "live" / "desk-control-result.txt").write_text(
+        f"Subject: {email['subject']}\n\n{email['body']}",
+        encoding="utf-8",
+    )
+    safe["execute_send"] = False
+    _print(safe)
+    return 0 if result.get("ok") else 2
+
+
 def cmd_desk_action(args: argparse.Namespace) -> int:
     from .desk_control import submit_desk_action
 
@@ -422,6 +456,14 @@ def main(argv: list[str] | None = None) -> int:
     desk.add_argument("--case-id", default="", help="optional case to detail; default is newest inbound")
     desk.set_defaults(func=cmd_lead_desk_packets)
     sub.add_parser("intake-mode").set_defaults(func=cmd_intake_mode)
+    dc = sub.add_parser("desk-control", help="Process one ChatGPT Gmail control message. Does not auto-send.")
+    dc.add_argument("--sender", default="daniel@btpestcontrol.com")
+    dc.add_argument("--subject", default="BT-INTAKE-PROOF-DESK-CTRL-E9A8")
+    dc.add_argument("--body", default="")
+    dc.add_argument("--body-file", default="")
+    dc.add_argument("--message-id", default="")
+    dc.add_argument("--store", default="")
+    dc.set_defaults(func=cmd_desk_control)
     da = sub.add_parser("desk-action", help="Primary path: authorize a ChatGPT structured intent. Does not send.")
     da.add_argument("--intent", default="", help="One of the desk intents, e.g. approve_and_send_current")
     da.add_argument("--json", default="", help="Small JSON action from ChatGPT: {intent, owner, note}")

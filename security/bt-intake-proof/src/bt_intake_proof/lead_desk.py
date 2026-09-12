@@ -140,6 +140,24 @@ def _contact_name(case: dict[str, Any], fieldwork: dict[str, Any] | None) -> str
     return INTERNAL_NAMES.get(sender.lower(), sender or "(unknown)")
 
 
+def _desk_owner(case: dict[str, Any], fieldwork: dict[str, Any] | None) -> str:
+    owner = str(case.get("owner") or "").strip().lower()
+    if owner in {"brenda", "ally"}:
+        return owner
+    if owner == "office" or _office_hold(fieldwork) or case.get("hold"):
+        return "office"
+    return "Daniel Cahoon"
+
+
+def _desk_hold(case: dict[str, Any], fieldwork: dict[str, Any] | None) -> dict[str, Any] | None:
+    if case.get("hold"):
+        return {"kind": "hold", "source": "desk_control"}
+    owner = str(case.get("owner") or "").strip().lower()
+    if owner in {"brenda", "ally", "office"}:
+        return {"kind": "office_owned", "owner": owner, "source": "desk_control"}
+    return _office_hold(fieldwork)
+
+
 def _office_hold(fieldwork: dict[str, Any] | None) -> dict[str, Any] | None:
     evidence = (fieldwork or {}).get("evidence") or {}
     hold = evidence.get("office_context") or evidence.get("office_hold")
@@ -331,7 +349,7 @@ class LeadDesk:
                 continue
             if waiting_on_daniel is False and waiting:
                 continue
-            hold = _office_hold(fieldwork)
+            hold = _desk_hold(case, fieldwork)
             items.append(
                 {
                     "case_id": case["case_id"],
@@ -342,7 +360,7 @@ class LeadDesk:
                     "attention_reason": _attention_reason(case, send),
                     "latest_inbound_at": case.get("latest_inbound_at"),
                     "stage": case.get("stage"),
-                    "owner": "office" if hold else "Daniel Cahoon",
+                    "owner": _desk_owner(case, fieldwork),
                     "office_hold": hold,
                     "draft_exists": int(case.get("draft_version") or 0) > 0,
                     "waiting_on_daniel": waiting,
@@ -467,8 +485,8 @@ class LeadDesk:
             "contact_name": _contact_name(case, fieldwork),
             "stage": case.get("stage"),
             "approval_state": case.get("approval_state"),
-            "owner": "office" if _office_hold(fieldwork) else "Daniel Cahoon",
-            "office_hold": _office_hold(fieldwork),
+            "owner": _desk_owner(case, fieldwork),
+            "office_hold": _desk_hold(case, fieldwork),
             "inbound_class": case.get("inbound_class"),
             "opened_at": case.get("opened_at"),
             "updated_at": case.get("updated_at"),

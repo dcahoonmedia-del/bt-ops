@@ -6,7 +6,7 @@ import json
 import re
 from typing import Any
 
-from .constants import CLASS_REPLY, MAILBOX
+from .constants import CLASS_REPLY, MAILBOX, MARKER_DESK_CTRL
 from .store import ReceiptStore, utc_now
 
 STAGE_NEW = "new"
@@ -75,6 +75,8 @@ def marker_kind(marker: str | None) -> str:
     text = str(marker or "")
     if MARKER_REVIEW in text:
         return "review_packet"
+    if MARKER_DESK_CTRL in text:
+        return "desk_control"
     if MARKER_DESK in text:
         return "desk_packet"
     if MARKER_APPROVE in text:
@@ -509,6 +511,9 @@ class CaseLayer:
             subject = str(receipt.get("subject") or "")
             if MARKER_REVIEW in subject and not subject.lower().startswith(("re:", "fwd:")):
                 results.append({"skipped": True, "reason": "review_packet"})
+                continue
+            if MARKER_DESK_CTRL in subject or MARKER_DESK_CTRL in str(receipt.get("body_text") or ""):
+                results.append({"skipped": True, "reason": "desk_control"})
                 continue
             if MARKER_DESK in subject or MARKER_DESK in str(receipt.get("body_text") or ""):
                 results.append({"skipped": True, "reason": "desk_packet"})
