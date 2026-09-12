@@ -1,7 +1,7 @@
 {
   "overall": "BLOCKED",
-  "stopped_at": "old_thread_reply_capture",
-  "reason": "Reply captured on the new-message thread. Waiting for designated thread BT-PILOT-0911-TEST02.",
+  "stopped_at": "recovery_after_receiver_downtime",
+  "reason": "Old-thread reply PASS. Receiver will be stopped for the recovery marker.",
   "gates": {
     "gmail_watch_registration": {
       "result": "PASS",
@@ -16,8 +16,8 @@
       "detail": "Event-driven capture of BT-INTAKE-PROOF-NEW-E9A8-7F3C in 18.47s. Gmail message 1a09369252aa667b."
     },
     "old_thread_reply_capture": {
-      "result": "BLOCKED",
-      "detail": "Captured a 15.54s event-driven reply on the new-message thread 1a09369252aa667b. Still need a reply on designated thread 1a09242c087af92c / BT-PILOT-0911-TEST02 with BT-INTAKE-PROOF-REPLY-E9A8-7F3C."
+      "result": "PASS",
+      "detail": "Event-driven reply 1a0936fd1117e77d on Re: BT-PILOT-0911-TEST02 in 14.69s. Thread 1a09243262a6a145. Marker BT-INTAKE-PROOF-REPLY-E9A8-7F3C."
     },
     "state_preservation": {
       "result": "PASS",
@@ -35,7 +35,7 @@
     },
     "recovery_after_receiver_downtime": {
       "result": "BLOCKED",
-      "detail": "Waiting for new-message and Codex first."
+      "detail": "Receiver stopped. Waiting for BT-INTAKE-PROOF-RECOVERY-E9A8-7F3C, then history catch-up without duplicate."
     },
     "codex_external_message_delivery": {
       "result": "PASS",
@@ -60,7 +60,7 @@
     "gcloud_present": false,
     "decisions_required": [],
     "failures": [],
-    "next_action": "Capture the designated old-thread reply BT-INTAKE-PROOF-REPLY-E9A8-7F3C."
+    "next_action": "Stop receiver, send BT-INTAKE-PROOF-RECOVERY-E9A8-7F3C, recover from history, prove no duplicate."
   },
   "local_contract_tests": {
     "passed": true,

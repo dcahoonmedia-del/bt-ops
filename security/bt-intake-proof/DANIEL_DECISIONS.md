@@ -1,11 +1,11 @@
-# Need the designated old-thread reply
+# Next — recovery email after I stop the receiver
 
-A reply was captured in 15.54s, but it was on **Re: BT-INTAKE-PROOF-NEW-E9A8-7F3C**, not the older internal thread.
+Old-thread reply on **BT-PILOT-0911-TEST02** captured in 14.69s.
 
-Open the existing thread **BT-PILOT-0911-TEST02** (Gmail thread `1a09242c087af92c`) and reply there:
+Wait until I say the receiver is stopped, then send **one new email**:
 
 - From: `daniel@btpestcontrol.com`
 - To: `contactus@btpestcontrol.com`
-- Put this exact marker in the reply: `BT-INTAKE-PROOF-REPLY-E9A8-7F3C`
+- Subject or body must include exactly: `BT-INTAKE-PROOF-RECOVERY-E9A8-7F3C`
 
-Do not reply again on the new proof email. Do not send the recovery marker yet. Reply **sent** when that old-thread reply is gone.
+Do not reply on an old thread for this step. Reply **sent** when it is gone.

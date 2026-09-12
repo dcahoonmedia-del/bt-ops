@@ -14,6 +14,7 @@ from .gates import diagnose_google
 from .cloud_auth import cloud_authorization_url
 from .live_google import contactus_gmail
 from .live_receive import impersonated_receiver_token, receive_once
+from .receiver import recover_from_cursor
 from .oauth_consent import OAuthClientError, authorization_url, blocked_oauth_url, exchange_code
 from .scorecard import apply_local_contract_results, empty_scorecard, markdown_table, write_scorecard
 from .setup_google import blocked_setup
@@ -152,6 +153,44 @@ def cmd_receive_loop(args: argparse.Namespace) -> int:
         store.close()
 
 
+def cmd_recover(_args: argparse.Namespace) -> int:
+    store = _live_store()
+    try:
+        result = recover_from_cursor(store, contactus_gmail())
+    except OAuthClientError as exc:
+        payload = {"status": "FAIL", "error": str(exc)}
+        _print(payload)
+        return 1
+    finally:
+        store.close()
+    safe = {
+        "ok": result.get("ok"),
+        "acked": result.get("acked"),
+        "receipt_count": result.get("receipt_count"),
+        "eligible": [
+            {
+                "gmail_message_id": item.get("gmail_message_id"),
+                "thread_id": item.get("thread_id"),
+                "classification": item.get("classification"),
+                "test_marker": item.get("test_marker"),
+                "detection_path": item.get("detection_path"),
+            }
+            for item in (result.get("eligible") or [])
+        ],
+        "ineligible_count": len(result.get("ineligible") or []),
+        "start_history_id": result.get("start_history_id"),
+        "end_history_id": result.get("end_history_id"),
+        "detection_path": result.get("detection_path"),
+        "commit": {
+            k: (result.get("commit") or {}).get(k)
+            for k in ("ok", "inserted", "duplicates", "skipped_ineligible", "history_id")
+        },
+    }
+    (RESULTS / "live" / "last-recover.json").write_text(json.dumps(safe, indent=2) + "\n", encoding="utf-8")
+    _print(safe)
+    return 0 if result.get("ok") else 1
+
+
 def cmd_write_dispatch_payload(args: argparse.Namespace) -> int:
     store = _live_store()
     try:
@@ -217,6 +256,7 @@ def main(argv: list[str] | None = None) -> int:
     disp.add_argument("--message-id", default="")
     disp.add_argument("--nonce", default="")
     disp.set_defaults(func=cmd_write_dispatch_payload)
+    sub.add_parser("recover").set_defaults(func=cmd_recover)
     args = parser.parse_args(argv)
     return args.func(args)
 
