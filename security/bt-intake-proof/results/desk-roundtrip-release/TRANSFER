@@ -3,14 +3,15 @@
 FILE=bt-intake-desk-roundtrip.tar.gz
 SHA256=99d6b234724e7e9d8dc66ad557fef5fff7d201a26c4a76ae494e9a4d6964ec2a
 SOURCE_COMMIT=2fc84eb1cbc9570eaf7235e0873c6b0e831f0759
-RAW=https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/2fc84eb1cbc9570eaf7235e0873c6b0e831f0759/security/bt-intake-proof/results/desk-roundtrip-release/bt-intake-desk-roundtrip.tar.gz
+ARTIFACT_COMMIT=e69e9f67023426c6c3e077442a9d7f169db86352
+RAW=https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/e69e9f67023426c6c3e077442a9d7f169db86352/security/bt-intake-proof/results/desk-roundtrip-release/bt-intake-desk-roundtrip.tar.gz
 DEST=/tmp/bt-intake-desk-roundtrip.tar.gz
 
 # On the VM (Google Cloud SSH-in-browser). Keep secrets on the host.
 # Deploy transaction only. Do not send BT-DESK-ROUNDTRIP-SEND-E9A8.
 # Do not reset SQLite. Do not prepare/deliver mail in this command.
 
-curl -fsSLo /tmp/bt-intake-desk-roundtrip.tar.gz https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/2fc84eb1cbc9570eaf7235e0873c6b0e831f0759/security/bt-intake-proof/results/desk-roundtrip-release/bt-intake-desk-roundtrip.tar.gz
+curl -fsSLo /tmp/bt-intake-desk-roundtrip.tar.gz https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/e69e9f67023426c6c3e077442a9d7f169db86352/security/bt-intake-proof/results/desk-roundtrip-release/bt-intake-desk-roundtrip.tar.gz
 echo "99d6b234724e7e9d8dc66ad557fef5fff7d201a26c4a76ae494e9a4d6964ec2a  /tmp/bt-intake-desk-roundtrip.tar.gz" | sha256sum -c
 rm -rf /tmp/bt-intake-desk-roundtrip-src
 mkdir -p /tmp/bt-intake-desk-roundtrip-src
