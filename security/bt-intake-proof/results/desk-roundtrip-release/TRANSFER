@@ -1,18 +1,17 @@
 # Non-secret browser-SSH transfer card. No tokens or client JSON.
 
 FILE=bt-intake-desk-roundtrip.tar.gz
-SHA256=0c683bd5eb484e94fe50ae7d4509ffc88789d148ae503dc52ad686ba1f0d6ce5
-SOURCE_COMMIT=f5cd153fc4b80decd969a41d00a9cff521b3fa4d
-ARTIFACT_COMMIT=6f3daec961da082dc677d6a2b90a2549600ae081
-RAW=https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/6f3daec961da082dc677d6a2b90a2549600ae081/security/bt-intake-proof/results/desk-roundtrip-release/bt-intake-desk-roundtrip.tar.gz
+SHA256=5af92d6e4e18627e2a0006f6702b3afddc5041b162601dff47c07424cffec5a0
+SOURCE_COMMIT=fdef43d5dce3ce13ef57a98fe446d1e4e6009642
+RAW=https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/fdef43d5dce3ce13ef57a98fe446d1e4e6009642/security/bt-intake-proof/results/desk-roundtrip-release/bt-intake-desk-roundtrip.tar.gz
 DEST=/tmp/bt-intake-desk-roundtrip.tar.gz
 
 # On the VM (Google Cloud SSH-in-browser). Keep secrets on the host.
 # Deploy transaction only. Do not send BT-DESK-ROUNDTRIP-SEND-E9A8.
 # Do not reset SQLite. Do not prepare/deliver mail in this command.
 
-curl -fsSLo /tmp/bt-intake-desk-roundtrip.tar.gz https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/6f3daec961da082dc677d6a2b90a2549600ae081/security/bt-intake-proof/results/desk-roundtrip-release/bt-intake-desk-roundtrip.tar.gz
-echo "0c683bd5eb484e94fe50ae7d4509ffc88789d148ae503dc52ad686ba1f0d6ce5  /tmp/bt-intake-desk-roundtrip.tar.gz" | sha256sum -c
+curl -fsSLo /tmp/bt-intake-desk-roundtrip.tar.gz https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/fdef43d5dce3ce13ef57a98fe446d1e4e6009642/security/bt-intake-proof/results/desk-roundtrip-release/bt-intake-desk-roundtrip.tar.gz
+echo "5af92d6e4e18627e2a0006f6702b3afddc5041b162601dff47c07424cffec5a0  /tmp/bt-intake-desk-roundtrip.tar.gz" | sha256sum -c
 rm -rf /tmp/bt-intake-desk-roundtrip-src
 mkdir -p /tmp/bt-intake-desk-roundtrip-src
 tar -xzf /tmp/bt-intake-desk-roundtrip.tar.gz -C /tmp/bt-intake-desk-roundtrip-src
@@ -24,18 +23,9 @@ sudo bash /tmp/bt-intake-desk-roundtrip-src/bt-intake-proof/scripts/guarded_desk
 # sudo bash /opt/bt-intake-proof/scripts/rollback_to_predeploy.sh
 
 # Action 2 already sent_verified/consumed. Do not recover --execute. Do not resend.
-# After deploy + health PASS, inspect current stages only:
-# sudo -u btintake bash /opt/bt-intake-proof/scripts/report_desk_send_outcome.sh \
-#   --action-id 2 --case-id BTC-contactus-desk-roundtrip-e9a8-20260912
-#
-# If report shows send_stage=sent_verified and recipient_receipt_verified=false,
-# enqueue one accurate result (does not send the proof):
-# sudo -u btintake bash /opt/bt-intake-proof/scripts/report_desk_send_outcome.sh \
-#   --action-id 2 --case-id BTC-contactus-desk-roundtrip-e9a8-20260912 --enqueue-result
-#
-# Optional existing daniel@ readonly recipient verify. Does not send or change labels.
-# Do not run this to "confirm" Codex prose. Only if a backend receipt row is wanted:
+# Do not enqueue an intermediate sent-stage result. After deploy + health PASS, one command:
 # sudo -u btintake bash /opt/bt-intake-proof/scripts/report_desk_send_outcome.sh \
 #   --action-id 2 --case-id BTC-contactus-desk-roundtrip-e9a8-20260912 --verify-recipient --enqueue-result
 #
-# Do not reset SQLite, reissue approval, mutate bindings, or send from Cursor/Gmail MCP.
+# That uses existing daniel@ readonly. It does not send the proof, change labels, or forge receipt.
+# Keep customer sends and broad capture OFF. Do not reset SQLite or reissue approval.
