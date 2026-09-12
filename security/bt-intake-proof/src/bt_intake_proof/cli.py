@@ -296,6 +296,31 @@ def cmd_phasee_verify(args: argparse.Namespace) -> int:
     return 0 if result.get("ok") else 2
 
 
+def cmd_lead_desk_packets(args: argparse.Namespace) -> int:
+    from .desk_packets import build_desk_packets, write_desk_packets
+
+    store = Path(args.store) if args.store else store_path()
+    dest = Path(args.out) if args.out else RESULTS / "live" / "desk-packets"
+    payload = build_desk_packets(store, case_id=args.case_id or None)
+    write_desk_packets(payload, dest)
+    safe = {
+        "status": "PASS",
+        "generated_at": payload.get("generated_at"),
+        "store_fingerprint": payload.get("store_fingerprint"),
+        "store_unchanged": payload.get("store_unchanged"),
+        "case_id": payload.get("case_id"),
+        "health_overall": payload.get("health_overall"),
+        "queue_count": payload.get("queue_count"),
+        "subjects": [item.get("subject") for item in payload.get("emails") or []],
+        "out": str(dest),
+        "public_ingress": False,
+        "chatgpt_mcp_mobile": "not_used",
+    }
+    (RESULTS / "phasef1-packets.json").write_text(json.dumps(safe, indent=2) + "\n", encoding="utf-8")
+    _print(safe)
+    return 0
+
+
 def cmd_record_local_tests(args: argparse.Namespace) -> int:
     scorecard = empty_scorecard(
         "contactus@ Gmail read-only consent passed. Pub/Sub create is blocked on Cloud admin credentials or console-created topic."
@@ -340,6 +365,11 @@ def main(argv: list[str] | None = None) -> int:
     pv = sub.add_parser("phasee-verify")
     pv.add_argument("action_id", type=int, help="stored case_send_actions.id")
     pv.set_defaults(func=cmd_phasee_verify)
+    desk = sub.add_parser("lead-desk-packets")
+    desk.add_argument("--store", default="", help="readonly SQLite path; defaults to BT_INTAKE_STORE")
+    desk.add_argument("--out", default="", help="directory for desk-queue/case/health files")
+    desk.add_argument("--case-id", default="", help="optional case to detail; default is newest inbound")
+    desk.set_defaults(func=cmd_lead_desk_packets)
     args = parser.parse_args(argv)
     return args.func(args)
 

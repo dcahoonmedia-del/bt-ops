@@ -34,6 +34,7 @@ MARKER_APPROVE = "BT-INTAKE-PROOF-CASE-APPROVE-E9A8"
 MARKER_CHANGES = "BT-INTAKE-PROOF-CASE-CHANGES-E9A8"
 MARKER_NONE = "BT-INTAKE-PROOF-CASE-NONE-E9A8"
 MARKER_REVIEW = "BT-INTAKE-PROOF-CASE-REVIEW-E9A8"
+MARKER_DESK = "BT-INTAKE-PROOF-DESK-"
 
 _CASE_REF = re.compile(r"CASE=([A-Za-z0-9._-]+)")
 _DRAFT_REF = re.compile(r"DRAFT=(\d+)")
@@ -74,6 +75,8 @@ def marker_kind(marker: str | None) -> str:
     text = str(marker or "")
     if MARKER_REVIEW in text:
         return "review_packet"
+    if MARKER_DESK in text:
+        return "desk_packet"
     if MARKER_APPROVE in text:
         return "decision_approve"
     if MARKER_CHANGES in text:
@@ -506,6 +509,9 @@ class CaseLayer:
             subject = str(receipt.get("subject") or "")
             if MARKER_REVIEW in subject and not subject.lower().startswith(("re:", "fwd:")):
                 results.append({"skipped": True, "reason": "review_packet"})
+                continue
+            if MARKER_DESK in subject or MARKER_DESK in str(receipt.get("body_text") or ""):
+                results.append({"skipped": True, "reason": "desk_packet"})
                 continue
             parsed = parse_decision(subject, receipt.get("body_text"))
             if parsed and parsed.get("case_id") and parsed.get("decision"):

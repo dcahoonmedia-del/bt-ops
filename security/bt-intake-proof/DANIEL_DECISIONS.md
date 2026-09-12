@@ -13,3 +13,5 @@ Approval is recorded only. It will not send a customer message.
 Phase E (internal B&T test only): approving the exact `BT-PHASE-E-SEND-E9A8-C4F1` packet authorizes one bounded contactus@ → daniel@ send of that version. A generic or stale approval will not send. Phase C cases still do not send.
 
 I am **not** opening a public URL, adding a domain, or adding a paid auth product. Say if you want IAP on the VM later.
+
+Phase F1 iPhone Lead Desk uses Gmail packets in `daniel@`, not a ChatGPT custom MCP. OpenAI's custom MCP apps are web-only. Ask ChatGPT to read the latest `BT-INTAKE-PROOF-DESK-*` emails. Those packets do not approve or send.
