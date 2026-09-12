@@ -65,6 +65,12 @@ from .store import ReceiptStore, utc_now
 MARKER_CTRL = MARKER_DESK_CTRL
 MARKER_BIND = MARKER_DESK_BIND
 MARKER_RESULT = MARKER_DESK_RESULT
+KIND_CASE_INITIAL = "case_initial"
+INITIAL_REVIEW_PENDING = "pending_enqueue"
+INITIAL_REVIEW_QUEUED = "queued"
+INITIAL_REVIEW_STALE = "stale"
+# Bounded explicit recovery only. Not a backfill list.
+ALLOWED_INITIAL_REVIEW_RECOVERY_IDS = frozenset({"1a096ffa404426f1"})
 
 BRIDGE_INTENTS = (
     INTENT_APPROVE_SEND,
@@ -417,6 +423,20 @@ def ensure_bridge_tables(layer: CaseLayer) -> None:
             sent_gmail_id TEXT,
             verdict TEXT NOT NULL,
             verified_at TEXT NOT NULL
+        );
+            """
+        )
+    names = _table_names(layer)
+    if "case_initial_reviews" not in names:
+        layer.conn.executescript(
+            """
+        CREATE TABLE IF NOT EXISTS case_initial_reviews (
+            inbound_message_id TEXT PRIMARY KEY,
+            case_id TEXT NOT NULL,
+            draft_version INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            queued_at TEXT
         );
             """
         )
@@ -1110,6 +1130,195 @@ def enqueue_on_demand_case(layer: CaseLayer, case_id: str) -> dict[str, Any]:
     }
 
 
+def _mark_initial_review_queued(layer: CaseLayer, inbound_message_id: str) -> None:
+    layer.conn.execute(
+        """
+        UPDATE case_initial_reviews
+        SET status = ?, queued_at = ?
+        WHERE inbound_message_id = ? AND status = ?
+        """,
+        (INITIAL_REVIEW_QUEUED, utc_now(), inbound_message_id, INITIAL_REVIEW_PENDING),
+    )
+
+
+def record_initial_review_intent(
+    layer: CaseLayer,
+    *,
+    inbound_message_id: str,
+    case_id: str,
+    draft_version: int,
+) -> dict[str, Any]:
+    """Durable intent so a crash after draft commit can enqueue later. Not a backfill scan."""
+    ensure_bridge_tables(layer)
+    inbound = str(inbound_message_id or "")
+    if not inbound or not case_id:
+        return {"ok": False, "reason": "missing_intent_keys"}
+    now = utc_now()
+    cur = layer.conn.execute(
+        """
+        INSERT OR IGNORE INTO case_initial_reviews
+            (inbound_message_id, case_id, draft_version, status, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (inbound, case_id, int(draft_version), INITIAL_REVIEW_PENDING, now),
+    )
+    row = layer.conn.execute(
+        "SELECT * FROM case_initial_reviews WHERE inbound_message_id = ?",
+        (inbound,),
+    ).fetchone()
+    return {
+        "ok": True,
+        "inserted": int(cur.rowcount or 0) == 1,
+        "inbound_message_id": inbound,
+        "case_id": None if row is None else row["case_id"],
+        "draft_version": None if row is None else row["draft_version"],
+        "status": None if row is None else row["status"],
+    }
+
+
+def enqueue_initial_case_review(layer: CaseLayer, inbound_message_id: str, case_id: str) -> dict[str, Any]:
+    """Queue one current CASE packet on the existing outbox. Never invents a ready draft."""
+    ensure_bridge_tables(layer)
+    inbound = str(inbound_message_id or "")
+    if not inbound or not case_id:
+        return {"ok": False, "reason": "missing_enqueue_keys"}
+    existing = layer.conn.execute(
+        "SELECT id, status FROM desk_result_outbox WHERE control_gmail_id = ? AND kind = ?",
+        (inbound, KIND_CASE_INITIAL),
+    ).fetchone()
+    if existing:
+        _mark_initial_review_queued(layer, inbound)
+        return {
+            "ok": True,
+            "skipped": True,
+            "reason": "already_queued",
+            "case_id": case_id,
+            "kind": KIND_CASE_INITIAL,
+            "outbox_id": existing["id"],
+            "status": existing["status"],
+        }
+    mail = _fresh_case_email(layer, case_id)
+    if not mail:
+        return {"ok": False, "reason": "case_packet_unavailable", "case_id": case_id}
+    now = utc_now()
+    layer.conn.execute(
+        """
+        INSERT OR IGNORE INTO desk_result_outbox
+            (control_gmail_id, nonce, kind, subject, body, status, created_at)
+        VALUES (?, ?, ?, ?, ?, 'pending', ?)
+        """,
+        (inbound, None, KIND_CASE_INITIAL, mail["subject"], mail["body"], now),
+    )
+    row = layer.conn.execute(
+        "SELECT id, status FROM desk_result_outbox WHERE control_gmail_id = ? AND kind = ?",
+        (inbound, KIND_CASE_INITIAL),
+    ).fetchone()
+    _mark_initial_review_queued(layer, inbound)
+    return {
+        "ok": True,
+        "case_id": case_id,
+        "kind": KIND_CASE_INITIAL,
+        "outbox_id": None if row is None else row["id"],
+        "status": None if row is None else row["status"],
+        "subject": mail.get("subject"),
+    }
+
+
+def recover_pending_initial_reviews(layer: CaseLayer) -> list[dict[str, Any]]:
+    """Enqueue only intents recorded at draft time. Does not scan historical cases."""
+    ensure_bridge_tables(layer)
+    rows = layer.conn.execute(
+        """
+        SELECT * FROM case_initial_reviews
+        WHERE status = ?
+        ORDER BY created_at
+        """,
+        (INITIAL_REVIEW_PENDING,),
+    ).fetchall()
+    out = []
+    for row in rows:
+        inbound = row["inbound_message_id"]
+        case_id = row["case_id"]
+        case = layer.get_case(case_id)
+        if not case:
+            out.append({"ok": False, "reason": "unknown_case", "inbound_message_id": inbound, "case_id": case_id})
+            continue
+        if str(case.get("latest_inbound_message_id") or "") != inbound:
+            layer.conn.execute(
+                "UPDATE case_initial_reviews SET status = ? WHERE inbound_message_id = ? AND status = ?",
+                (INITIAL_REVIEW_STALE, inbound, INITIAL_REVIEW_PENDING),
+            )
+            out.append({"ok": False, "reason": "inbound_changed", "inbound_message_id": inbound, "stale": True})
+            continue
+        if int(case.get("draft_version") or 0) != int(row["draft_version"]):
+            layer.conn.execute(
+                "UPDATE case_initial_reviews SET status = ? WHERE inbound_message_id = ? AND status = ?",
+                (INITIAL_REVIEW_STALE, inbound, INITIAL_REVIEW_PENDING),
+            )
+            out.append({"ok": False, "reason": "stale_draft_version", "inbound_message_id": inbound, "stale": True})
+            continue
+        out.append(enqueue_initial_case_review(layer, inbound, case_id))
+    return out
+
+
+def recover_initial_review_for_inbound(
+    layer: CaseLayer,
+    gmail_message_id: str,
+    *,
+    enqueue: bool = False,
+) -> dict[str, Any]:
+    """Explicit recovery for one allow-listed inbound. Does not redraft or consume controls."""
+    from .desk_fresh_case import is_desk_roundtrip_receipt
+    from .phasee import is_phasee_receipt
+
+    mid = str(gmail_message_id or "").strip()
+    if mid not in ALLOWED_INITIAL_REVIEW_RECOVERY_IDS:
+        return {"ok": False, "reason": "recovery_id_not_allowed", "gmail_message_id": mid, "execute": False}
+    receipt = layer.store.get_receipt(MAILBOX, mid)
+    if not receipt or not receipt.get("eligible"):
+        return {"ok": False, "reason": "missing_eligible_receipt", "gmail_message_id": mid, "execute": False}
+    if is_phasee_receipt(receipt) or is_desk_roundtrip_receipt(receipt):
+        return {"ok": False, "reason": "not_normal_casemgr", "gmail_message_id": mid, "execute": False}
+    case = layer.get_case_by_thread(receipt.get("mailbox") or MAILBOX, str(receipt.get("thread_id") or ""))
+    if not case:
+        return {"ok": False, "reason": "case_not_found", "gmail_message_id": mid, "execute": False}
+    if str(case.get("latest_inbound_message_id") or "") != mid:
+        return {"ok": False, "reason": "not_current_inbound", "gmail_message_id": mid, "execute": False}
+    draft = layer.latest_draft(case["case_id"])
+    if not draft:
+        return {"ok": False, "reason": "draft_missing_do_not_redraft", "gmail_message_id": mid, "execute": False}
+    expected_nonce = f"bt-case-{case['case_id']}-r{mid}"
+    if str(draft.get("nonce") or "") != expected_nonce:
+        return {"ok": False, "reason": "draft_nonce_mismatch", "gmail_message_id": mid, "execute": False}
+    plan = {
+        "ok": True,
+        "execute": False,
+        "gmail_message_id": mid,
+        "case_id": case["case_id"],
+        "draft_version": draft.get("version"),
+        "proposed_unchanged": True,
+        "model_rerun": False,
+        "controls_consumed": False,
+        "reason": "dry_run",
+    }
+    if not enqueue:
+        return plan
+    record_initial_review_intent(
+        layer,
+        inbound_message_id=mid,
+        case_id=case["case_id"],
+        draft_version=int(draft["version"]),
+    )
+    queued = enqueue_initial_case_review(layer, mid, case["case_id"])
+    return {
+        **plan,
+        "execute": True,
+        "reason": None if queued.get("ok") else queued.get("reason"),
+        "ok": bool(queued.get("ok")),
+        "queued": queued,
+    }
+
+
 def enqueue_control_deliveries(
     layer: CaseLayer,
     result: dict[str, Any],
@@ -1147,6 +1356,16 @@ def enqueue_control_deliveries(
             """,
             (control_id, nonce, kind_case, case_mail["subject"], case_mail["body"], now),
         )
+        inbound = str((layer.get_case(str(result.get("case_id") or "")) or {}).get("latest_inbound_message_id") or "")
+        if inbound:
+            layer.conn.execute(
+                """
+                UPDATE desk_result_outbox
+                SET status = 'superseded'
+                WHERE control_gmail_id = ? AND kind = ? AND status = 'pending'
+                """,
+                (inbound, KIND_CASE_INITIAL),
+            )
 
 
 def deliver_pending_desk_mail(layer: CaseLayer, transport: Any) -> list[dict[str, Any]]:

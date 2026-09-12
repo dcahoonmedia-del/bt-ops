@@ -13,7 +13,12 @@ from .constants import MAILBOX
 from .fieldwork_match import match_and_context
 from .fieldwork_readonly import grok_bot_client
 from .knowledge import trusted_rules_text
-from .desk_bridge import install_desk_send_draft
+from .desk_bridge import (
+    enqueue_initial_case_review,
+    install_desk_send_draft,
+    record_initial_review_intent,
+    recover_pending_initial_reviews,
+)
 from .desk_fresh_case import is_desk_roundtrip_receipt
 from .phasee import install_phasee_draft, is_phasee_receipt
 from .review import format_review_email
@@ -180,6 +185,7 @@ def draft_pending_cases(store: ReceiptStore) -> list[dict[str, Any]]:
                 }
             )
             continue
+        queued_initial = None
         if is_phasee_receipt(receipt):
             layer.save_fieldwork(
                 case["case_id"],
@@ -226,7 +232,24 @@ def draft_pending_cases(store: ReceiptStore) -> list[dict[str, Any]]:
                 )
                 out.append({"case_id": case["case_id"], "status": "FAIL", **{k: ran.get(k) for k in ("reason", "returncode")}})
                 continue
-            saved = layer.save_draft(case["case_id"], ran["draft"], nonce)
+            inbound = str(receipt.get("gmail_message_id") or "")
+            layer.conn.execute("BEGIN")
+            try:
+                saved = layer.save_draft(case["case_id"], ran["draft"], nonce)
+                record_initial_review_intent(
+                    layer,
+                    inbound_message_id=inbound,
+                    case_id=case["case_id"],
+                    draft_version=saved["version"],
+                )
+                layer.conn.execute("COMMIT")
+            except Exception:
+                try:
+                    layer.conn.execute("ROLLBACK")
+                except Exception:
+                    pass
+                raise
+            queued_initial = enqueue_initial_case_review(layer, inbound, case["case_id"])
         packet = layer.review_packet(case["case_id"])
         email = format_review_email(packet)
         review_path = store.path.parent / f"review-{case['case_id']}-v{saved['version']}.json"
@@ -238,16 +261,17 @@ def draft_pending_cases(store: ReceiptStore) -> list[dict[str, Any]]:
             "at": utc_now(),
         }}, indent=2) + "\n", encoding="utf-8")
         review_path.chmod(0o644)
-        out.append(
-            {
-                "case_id": case["case_id"],
-                "status": "PASS",
-                "version": saved["version"],
-                "review_path": str(review_path),
-                "empty_user_input": ran.get("empty_user_input"),
-                "content_in_user_input": ran.get("content_in_user_input"),
-            }
-        )
+        item = {
+            "case_id": case["case_id"],
+            "status": "PASS",
+            "version": saved["version"],
+            "review_path": str(review_path),
+            "empty_user_input": ran.get("empty_user_input"),
+            "content_in_user_input": ran.get("content_in_user_input"),
+        }
+        if queued_initial is not None:
+            item["initial_review"] = queued_initial
+        out.append(item)
     return out
 
 
@@ -257,5 +281,12 @@ def process_cases(store: ReceiptStore) -> dict[str, Any]:
     synced = sync_cases(store)
     controls = process_pending_controls(store)
     drafted = draft_pending_cases(store)
+    initial_reviews = recover_pending_initial_reviews(CaseLayer(store))
     queued = queue_approved_phasee_sends(CaseLayer(store))
-    return {"synced": synced, "controls": controls, "drafted": drafted, "phasee_queued": queued}
+    return {
+        "synced": synced,
+        "controls": controls,
+        "drafted": drafted,
+        "initial_reviews": initial_reviews,
+        "phasee_queued": queued,
+    }
