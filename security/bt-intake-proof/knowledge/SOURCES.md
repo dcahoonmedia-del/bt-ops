@@ -20,3 +20,5 @@ Phase D matching tonight uses fixture PHASE-D-MATT-001 from `BT-Grok-Migration-A
 Phase E (2026-09-12): exact approval → one bounded Gmail send → independent verification. Internal B&T test mail only. No Fieldwork. No LSA/CTM. No Auditor.
 
 Phase F1 (2026-09-12): read-only Lead Desk for iPhone ChatGPT via backend-generated Gmail packets to daniel@. Custom MCP is web-only and is not the iPhone path. No public ingress. No approvals or new sends.
+
+Production intake (2026-09-12): capture every contactus@ inbound and reply, then classify. Subject markers are not a production capture filter. Live processing of real customer mail is not authorized yet. See `PRODUCTION_INTAKE.md`.

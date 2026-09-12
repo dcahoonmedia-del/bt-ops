@@ -1,4 +1,9 @@
-"""Decide whether a Gmail message may enter the intake-proof store and Codex."""
+"""Isolated-test eligibility harness.
+
+BT-INTAKE-PROOF-* markers and the daniel@ sender allow-list are test restrictions
+only. They are not production Lead Desk behavior. Production capture is defined in
+production_intake.py and is not live until Daniel authorizes shadow intake.
+"""
 
 from __future__ import annotations
 

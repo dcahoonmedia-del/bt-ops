@@ -18,6 +18,10 @@ A newer inbound on the same thread supersedes any prior approval.
 
 Phase E proves one version-bound internal send: contactus@ → daniel@ only, after Daniel approves the exact packet on iPhone.
 
+## Production intake vs isolated test (2026-09-12)
+
+Production Lead Desk: every `contactus@` inbound and new reply is captured first. Subject text does not decide intake. Triage (`new_customer_lead`, existing-customer, office-owned, vendor/internal, automated, spam, uncertain) happens after capture. Classification failure stays pending and visible. Live receiver still uses `BT-INTAKE-PROOF-*` + daniel@ until Daniel authorizes shadow intake. Do not process real customer mail yet.
+
 ## Phase F1 limits (2026-09-12 assignment)
 
 Read-only Lead Desk. ChatGPT on iPhone reads backend-generated `BT-INTAKE-PROOF-DESK-*` packets in daniel@ Gmail. Custom MCP is not the iPhone path and must not be exposed publicly.
