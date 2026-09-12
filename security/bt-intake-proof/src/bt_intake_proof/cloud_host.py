@@ -54,7 +54,8 @@ def dispatch_pending(store: ReceiptStore) -> list[dict[str, Any]]:
         constructor = build_constructor(receipt, nonce)
         payload_path = store.path.parent / f"dispatch-{receipt['gmail_message_id']}.json"
         payload_path.write_text(json.dumps({"constructor": constructor}, indent=2) + "\n", encoding="utf-8")
-        payload_path.chmod(0o600)
+        # Isolation container runs as uid 1000; btintake is 999. 0600 is unreadable inside Docker.
+        payload_path.chmod(0o644)
         if not ISOLATION_DISPATCH.exists():
             results.append({"gmail_message_id": receipt["gmail_message_id"], "status": "BLOCKED", "reason": "dispatch_script_missing"})
             continue
@@ -72,6 +73,7 @@ def dispatch_pending(store: ReceiptStore) -> list[dict[str, Any]]:
                 "UPDATE receipts SET codex_dispatch_state = ? WHERE mailbox = ? AND gmail_message_id = ?",
                 (DISPATCH_FAILED, MAILBOX, receipt["gmail_message_id"]),
             )
+        err = (completed.stderr or completed.stdout or "")[-400:].replace("\n", " ")
         results.append(
             {
                 "gmail_message_id": receipt["gmail_message_id"],
@@ -88,6 +90,7 @@ def dispatch_pending(store: ReceiptStore) -> list[dict[str, Any]]:
             test_marker=marker,
             status="PASS" if ok else "FAIL",
             returncode=completed.returncode,
+            error_tail=err if not ok else None,
         )
     return results
 

@@ -38,7 +38,10 @@ CODEX_API_KEY=
 EOF
 chmod 640 "$ETC/env"
 getent group docker >/dev/null 2>&1 && usermod -aG docker btintake || true
+mkdir -p "$ISO_PREFIX/results/intake-dispatch"
+chmod 1777 "$ISO_PREFIX/results" "$ISO_PREFIX/results/intake-dispatch" || true
 chown -R btintake:btintake "$PREFIX" "$ISO_PREFIX" "$STATE" "$ETC"
+chmod 1777 "$ISO_PREFIX/results" "$ISO_PREFIX/results/intake-dispatch" || true
 install -m 644 "$ROOT/systemd/bt-intake-receiver.service" /etc/systemd/system/bt-intake-receiver.service
 systemctl daemon-reload
 systemctl enable bt-intake-receiver.service

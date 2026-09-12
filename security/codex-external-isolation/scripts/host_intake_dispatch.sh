@@ -20,7 +20,13 @@ else
 fi
 
 mkdir -p "${RESULTS_DIR}"
+# Container runs as uid 1000; the GCE service user is btintake (999).
+chmod a+rwxt "${RESULTS_DIR}" || true
 PAYLOAD="$(cd "$(dirname "${PAYLOAD}")" && pwd)/$(basename "${PAYLOAD}")"
+STAGE="${RESULTS_DIR}/$(basename "${PAYLOAD}")"
+cp "${PAYLOAD}" "${STAGE}"
+chmod a+r "${STAGE}"
+PAYLOAD="${STAGE}"
 DISPATCH_SCRIPT="${ROOT}/scripts/run_intake_dispatch.py"
 
 "${DOCKER[@]}" rm -f "${CONTAINER}" >/dev/null 2>&1 || true
