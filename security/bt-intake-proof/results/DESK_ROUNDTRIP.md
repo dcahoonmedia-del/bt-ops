@@ -22,7 +22,7 @@ Evidence labels: **unit** / **fixture** / **runtime** / **real-phone**.
 | Pending replay / boolean / legacy flag | **PASS** (unit) | `origin_already_authenticated` removed; legacy `origin_authenticated` does not authorize; versioned `desk-sent-v1` proof is bound to this control message |
 | Full identity PASS | **FAIL / not claimed** | Sent match is mailbox corroboration, not human identity |
 | Runtime daniel@ Sent lookup | **BLOCKED** | token not written; bootstrap staged only |
-| Daniel readonly OAuth bootstrap | **STAGED** | `scripts/daniel_readonly_oauth.py`; consent not started |
+| Daniel readonly OAuth bootstrap | **STAGED** | hidden TTY complete; strict loopback; consent not started |
 | Sequential replay / reopen | **PASS** (unit) | not concurrency |
 | Simultaneous nonce + execute/deliver | **PASS** (unit) | two connections/threads |
 | Crash after accept, before persist | **PASS** (unit) | reconcile; no duplicate / silent stick |
@@ -33,7 +33,7 @@ Evidence labels: **unit** / **fixture** / **runtime** / **real-phone**.
 | Real iPhone / Mac-off | **PENDING** | |
 | Live deploy | **BLOCKED** | existing-path blocker accepted; artifacts staged only |
 
-**Unit:** `PYTHONPATH=src python3 -m unittest discover -s tests` → 160 passed, 1 skipped.
+**Unit:** `PYTHONPATH=src python3 -m unittest discover -s tests` → 163 passed, 1 skipped.
 
 ## Two remaining access dependencies
 

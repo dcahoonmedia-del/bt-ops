@@ -6,13 +6,15 @@ listener. Does not request send/modify/delete. Stdlib only so it can run on the
 current /opt/bt-intake-proof host without deploying the new worker.
 
 Daniel completes the Google consent screen. Codex runs this helper on the VM
-and finishes the loopback-URL exchange from a 0600 file (not chat, not argv).
+and finishes the loopback-URL exchange via hidden TTY input (getpass). Echo
+must be disabled; otherwise the helper fails closed. Not chat, not argv, not cat.
 """
 
 from __future__ import annotations
 
 import argparse
 import base64
+import getpass
 import hashlib
 import json
 import os
@@ -24,6 +26,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -158,14 +161,60 @@ def load_desktop_client(path: Path) -> dict[str, Any]:
     return installed
 
 
+def _split_callback(uri: str) -> urllib.parse.SplitResult:
+    raw = str(uri or "").strip()
+    if not raw:
+        raise BootstrapError("empty callback URI")
+    parsed = urllib.parse.urlsplit(raw)
+    if parsed.scheme != "http":
+        raise BootstrapError("callback must be http loopback")
+    if parsed.username is not None or parsed.password is not None or "@" in (parsed.netloc or ""):
+        raise BootstrapError("callback userinfo is not allowed")
+    if parsed.hostname not in {"127.0.0.1", "localhost"}:
+        raise BootstrapError("callback host must be exactly localhost or 127.0.0.1")
+    if parsed.fragment:
+        raise BootstrapError("callback fragment is not allowed")
+    return parsed
+
+
+def normalize_callback(uri: str) -> dict[str, Any]:
+    parsed = _split_callback(uri)
+    path = parsed.path or "/"
+    if path == "":
+        path = "/"
+    port = parsed.port
+    if port == 80:
+        port = None
+    return {
+        "scheme": "http",
+        "host": parsed.hostname,
+        "port": port,
+        "path": path,
+        "origin": f"http://{parsed.hostname}" if port is None else f"http://{parsed.hostname}:{port}",
+    }
+
+
+def callbacks_match(saved: str, incoming: str) -> bool:
+    left = normalize_callback(saved)
+    right = normalize_callback(incoming)
+    return left == right
+
+
+def format_callback(parts: dict[str, Any]) -> str:
+    path = "" if parts["path"] == "/" else parts["path"]
+    return parts["origin"] + path
+
+
 def redirect_uri(installed: dict[str, Any]) -> str:
     uris = [str(item) for item in (installed.get("redirect_uris") or []) if item]
     for preferred in ("http://127.0.0.1/", "http://127.0.0.1", "http://localhost/", "http://localhost"):
         if preferred in uris:
-            return preferred.rstrip("/") if preferred.endswith("/") and preferred.count("/") > 2 else preferred
+            return format_callback(normalize_callback(preferred))
     for uri in uris:
-        if uri.startswith("http://127.0.0.1") or uri.startswith("http://localhost"):
-            return uri
+        try:
+            return format_callback(normalize_callback(uri))
+        except BootstrapError:
+            continue
     raise BootstrapError("Desktop client has no loopback redirect_uri; refusing a public redirect")
 
 
@@ -176,23 +225,59 @@ def pkce_pair() -> tuple[str, str]:
     return verifier, challenge
 
 
-def parse_redirect(text: str) -> dict[str, str]:
+def parse_redirect(text: str, *, expected: str) -> dict[str, str]:
     raw = (text or "").strip()
     if not raw:
         raise BootstrapError("empty authorization response")
-    if raw.startswith("http://") or raw.startswith("https://"):
-        parsed = urllib.parse.urlparse(raw)
-        query = urllib.parse.parse_qs(parsed.query)
-        if parsed.fragment:
-            query.update(urllib.parse.parse_qs(parsed.fragment))
-        if query.get("error"):
-            raise BootstrapError(f"Google returned error: {query['error'][0]}")
-        code = (query.get("code") or [""])[0]
-        state = (query.get("state") or [""])[0]
-        if not code:
-            raise BootstrapError("redirect URL does not contain a code parameter")
-        return {"code": code, "state": state}
-    raise BootstrapError("redirect file must contain the full loopback URL, not a bare code")
+    if "\n" in raw or "\r" in raw:
+        raise BootstrapError("authorization response must be a single URL line")
+    if not raw.startswith("http://"):
+        raise BootstrapError("authorization response must be the full http loopback URL")
+    parsed = urllib.parse.urlsplit(raw)
+    if parsed.fragment:
+        raise BootstrapError("callback fragment is not allowed")
+    if not callbacks_match(expected, raw):
+        raise BootstrapError("callback origin/path does not match the saved loopback")
+    pairs = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=False)
+    keys = [key for key, _ in pairs]
+    if keys.count("code") != 1 or keys.count("state") != 1:
+        raise BootstrapError("callback must contain exactly one code and one state")
+    query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+    if query.get("error"):
+        raise BootstrapError("Google returned an OAuth error")
+    code = query["code"][0]
+    state = query["state"][0]
+    if not code or not state:
+        raise BootstrapError("callback code or state is empty")
+    return {"code": code, "state": state}
+
+
+def echo_can_be_disabled(fd: int | None = None) -> bool:
+    try:
+        import termios
+
+        handle = sys.stdin.fileno() if fd is None else fd
+        termios.tcgetattr(handle)
+        return True
+    except Exception:
+        return False
+
+
+def read_hidden_redirect_from_tty() -> str:
+    """Read the Mac loopback URL with echo off. Fail closed if echo cannot be disabled."""
+    if not sys.stdin.isatty():
+        raise BootstrapError("hidden TTY input required; echo cannot be disabled")
+    if not echo_can_be_disabled():
+        raise BootstrapError("hidden TTY input required; echo cannot be disabled")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", getpass.GetPassWarning)
+        try:
+            value = getpass.getpass("Loopback redirect URL (hidden): ", stream=sys.stderr)
+        except (getpass.GetPassWarning, EOFError, OSError) as exc:
+            raise BootstrapError("hidden TTY input required; echo cannot be disabled") from exc
+    if not value:
+        raise BootstrapError("empty authorization response")
+    return value
 
 
 def _gmail_scopes(scopes: list[str]) -> list[str]:
@@ -268,6 +353,7 @@ def start(paths: dict[str, Path] | None = None) -> dict[str, Any]:
         "state": state,
         "code_verifier": verifier,
         "redirect_uri": redirect,
+        "callback": normalize_callback(redirect),
         "client_id": client["client_id"],
         "token_uri": client.get("token_uri") or "https://oauth2.googleapis.com/token",
         "scope": READONLY,
@@ -285,7 +371,7 @@ def start(paths: dict[str, Path] | None = None) -> dict[str, Any]:
         "pkce": "S256",
         "auth_url_file": str(dest["auth_url"]),
         "setup_file": str(dest["setup"]),
-        "redirect_file": str(dest["redirect"]),
+        "complete": "hidden_tty_getpass",
         "token_file": str(dest["token"]),
         "expires_at": setup["expires_at"],
         "contactus_oauth_untouched": True,
@@ -343,18 +429,20 @@ def assert_contactus_unchanged(before: dict[str, dict[str, Any] | None], paths: 
 
 def complete(
     *,
-    redirect_file: Path | None = None,
+    redirect_text: str | None = None,
     paths: dict[str, Path] | None = None,
     post_form=_post_form,
     get_json=_get_json,
+    read_hidden=None,
 ) -> dict[str, Any]:
     dest = paths or paths_from_env()
     before = contactus_fingerprints(dest)
     setup = _load_setup(dest["setup"])
-    source = Path(redirect_file or dest["redirect"])
-    if not source.exists():
-        raise BootstrapError(f"redirect file is missing: {source}")
-    parsed = parse_redirect(source.read_text(encoding="utf-8"))
+    raw = redirect_text
+    if raw is None:
+        reader = read_hidden or read_hidden_redirect_from_tty
+        raw = reader()
+    parsed = parse_redirect(raw, expected=str(setup["redirect_uri"]))
     if parsed["state"] != setup["state"]:
         raise BootstrapError("OAuth state mismatch")
     client = load_desktop_client(dest["client"])
@@ -411,7 +499,7 @@ def complete(
     assert_contactus_unchanged(before, dest)
     _wipe(dest["setup"])
     _wipe(dest["auth_url"])
-    _wipe(source)
+    _wipe(dest["redirect"])
     return {
         "status": "PASS",
         "email": email,
@@ -459,8 +547,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Standalone daniel@ gmail.readonly bootstrap")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("start")
-    complete_p = sub.add_parser("complete")
-    complete_p.add_argument("--redirect-file", help="0600 file containing the Mac loopback redirect URL")
+    sub.add_parser("complete")
     sub.add_parser("abort")
     sub.add_parser("status")
     args = parser.parse_args(argv)
@@ -469,7 +556,7 @@ def main(argv: list[str] | None = None) -> int:
             _print(start())
             return 0
         if args.cmd == "complete":
-            _print(complete(redirect_file=Path(args.redirect_file) if args.redirect_file else None))
+            _print(complete())
             return 0
         if args.cmd == "abort":
             _print(abort())

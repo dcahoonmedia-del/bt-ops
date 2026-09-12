@@ -1,0 +1,13 @@
+# Non-secret browser-SSH transfer card. No tokens, codes, or client JSON.
+
+FILE=daniel_readonly_oauth.py
+SHA256=e65713f2e678f3386b78ae504f83f91455dfa50ba6099e68b60ed17b0143cd86
+DEST=/opt/bt-intake-proof/scripts/daniel_readonly_oauth.py
+RAW=https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/cursor/bt-intake-roundtrip-e9a8/security/bt-intake-proof/scripts/daniel_readonly_oauth.py
+
+# On the VM (browser SSH). Do not curl if SHA256 will not be checked.
+
+curl -fsSLo daniel_readonly_oauth.py "$RAW"
+echo "e65713f2e678f3386b78ae504f83f91455dfa50ba6099e68b60ed17b0143cd86  daniel_readonly_oauth.py" | sha256sum -c
+install -m 755 daniel_readonly_oauth.py /opt/bt-intake-proof/scripts/daniel_readonly_oauth.py
+sha256sum /opt/bt-intake-proof/scripts/daniel_readonly_oauth.py

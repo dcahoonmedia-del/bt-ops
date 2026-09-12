@@ -109,9 +109,8 @@ class DanielReadonlyOauthTests(unittest.TestCase):
     def test_wrong_state_does_not_write_token_or_touch_contactus(self) -> None:
         started = mod.start(self.paths)
         self.assertTrue(started["setup_file"])
-        self.paths["redirect"].write_text("http://127.0.0.1/?code=4/abc&state=wrong-state\n", encoding="utf-8")
         with self.assertRaises(mod.BootstrapError):
-            mod.complete(paths=self.paths)
+            mod.complete(paths=self.paths, redirect_text="http://127.0.0.1/?code=4/abc&state=wrong-state")
         self.assertFalse(self.paths["token"].exists())
         self.assertEqual(self._hash(self.contactus_ro), self.before["contactus_readonly"]["sha256"])
         self.assertEqual(self._hash(self.contactus_send), self.before["contactus_send"]["sha256"])
@@ -119,9 +118,6 @@ class DanielReadonlyOauthTests(unittest.TestCase):
 
     def test_wrong_account_refuses(self) -> None:
         setup = json.loads(mod.start(self.paths) and self.paths["setup"].read_text(encoding="utf-8"))
-        self.paths["redirect"].write_text(
-            f"http://127.0.0.1/?code=4/abc&state={setup['state']}\n", encoding="utf-8"
-        )
         token = {
             "access_token": "ya29.daniel",
             "refresh_token": "1//r",
@@ -135,16 +131,18 @@ class DanielReadonlyOauthTests(unittest.TestCase):
             return info if "tokeninfo" in url else profile
 
         with self.assertRaises(mod.BootstrapError) as raised:
-            mod.complete(paths=self.paths, post_form=lambda url, data: token, get_json=get_json)
+            mod.complete(
+                paths=self.paths,
+                redirect_text=f"http://127.0.0.1/?code=4/abc&state={setup['state']}",
+                post_form=lambda url, data: token,
+                get_json=get_json,
+            )
         self.assertIn(MAILBOX, str(raised.exception))
         self.assertFalse(self.paths["token"].exists())
         self.assertEqual(self._hash(self.contactus_ro), self.before["contactus_readonly"]["sha256"])
 
     def test_wrong_scope_refuses(self) -> None:
         setup = json.loads(mod.start(self.paths) and self.paths["setup"].read_text(encoding="utf-8"))
-        self.paths["redirect"].write_text(
-            f"http://127.0.0.1/?code=4/abc&state={setup['state']}\n", encoding="utf-8"
-        )
         token = {
             "access_token": "ya29.bad",
             "refresh_token": "1//r",
@@ -152,15 +150,17 @@ class DanielReadonlyOauthTests(unittest.TestCase):
             "token_type": "Bearer",
         }
         with self.assertRaises(mod.BootstrapError):
-            mod.complete(paths=self.paths, post_form=lambda url, data: token, get_json=lambda *a, **k: {})
+            mod.complete(
+                paths=self.paths,
+                redirect_text=f"http://127.0.0.1/?code=4/abc&state={setup['state']}",
+                post_form=lambda url, data: token,
+                get_json=lambda *a, **k: {},
+            )
         self.assertFalse(self.paths["token"].exists())
         self.assertEqual(self._hash(self.contactus_send), self.before["contactus_send"]["sha256"])
 
     def test_success_writes_daniel_token_only(self) -> None:
         setup = json.loads(mod.start(self.paths) and self.paths["setup"].read_text(encoding="utf-8"))
-        self.paths["redirect"].write_text(
-            f"http://127.0.0.1/?code=4/abc&state={setup['state']}\n", encoding="utf-8"
-        )
         token = {
             "access_token": "ya29.daniel",
             "refresh_token": "1//r",
@@ -179,7 +179,12 @@ class DanielReadonlyOauthTests(unittest.TestCase):
             posted.update(data)
             return token
 
-        payload = mod.complete(paths=self.paths, post_form=post_form, get_json=get_json)
+        payload = mod.complete(
+            paths=self.paths,
+            redirect_text=f"http://127.0.0.1/?code=4/abc&state={setup['state']}",
+            post_form=post_form,
+            get_json=get_json,
+        )
         self.assertEqual(payload["status"], "PASS")
         self.assertEqual(payload["email"], ALLOWED_SENDER)
         self.assertTrue(payload["contactus_tokens_unchanged"])
@@ -202,13 +207,64 @@ class DanielReadonlyOauthTests(unittest.TestCase):
         setup = json.loads(self.paths["setup"].read_text(encoding="utf-8"))
         setup["expires_unix"] = 1
         self.paths["setup"].write_text(json.dumps(setup), encoding="utf-8")
-        self.paths["redirect"].write_text(
-            f"http://127.0.0.1/?code=4/abc&state={setup['state']}\n", encoding="utf-8"
-        )
         with self.assertRaises(mod.BootstrapError):
-            mod.complete(paths=self.paths)
+            mod.complete(
+                paths=self.paths,
+                redirect_text=f"http://127.0.0.1/?code=4/abc&state={setup['state']}",
+            )
         self.assertFalse(self.paths["token"].exists())
+
+    def test_rejects_non_loopback_and_userinfo_prefix_tricks(self) -> None:
+        expected = "http://127.0.0.1"
+        cases = [
+            "http://127.0.0.1.evil.com/?code=4/abc&state=s",
+            "http://localhost.attacker.test/?code=4/abc&state=s",
+            "http://evil.127.0.0.1/?code=4/abc&state=s",
+            "http://user@127.0.0.1/?code=4/abc&state=s",
+            "http://127.0.0.1/?code=4/abc&state=s#frag",
+            "https://127.0.0.1/?code=4/abc&state=s",
+        ]
+        for url in cases:
+            with self.subTest(url=url):
+                with self.assertRaises(mod.BootstrapError):
+                    mod.parse_redirect(url, expected=expected)
+        client = {
+            "client_id": "123.apps.googleusercontent.com",
+            "redirect_uris": ["http://127.0.0.1.evil.com", "http://localhost.evil"],
+        }
+        with self.assertRaises(mod.BootstrapError):
+            mod.redirect_uri(client)
+
+    def test_rejects_duplicate_code_state_and_path_mismatch(self) -> None:
+        expected = "http://127.0.0.1"
+        with self.assertRaises(mod.BootstrapError):
+            mod.parse_redirect("http://127.0.0.1/?code=a&code=b&state=s", expected=expected)
+        with self.assertRaises(mod.BootstrapError):
+            mod.parse_redirect("http://127.0.0.1/?code=a&state=s&state=t", expected=expected)
+        with self.assertRaises(mod.BootstrapError):
+            mod.parse_redirect("http://localhost/?code=a&state=s", expected=expected)
+        with self.assertRaises(mod.BootstrapError):
+            mod.parse_redirect("http://127.0.0.1/callback/?code=a&state=s", expected=expected)
+        parsed = mod.parse_redirect("http://127.0.0.1/?code=a&state=s", expected=expected)
+        self.assertEqual(parsed, {"code": "a", "state": "s"})
+
+    def test_hidden_input_fails_closed_without_echo_off(self) -> None:
+        with mock.patch.object(mod.sys.stdin, "isatty", return_value=False):
+            with self.assertRaises(mod.BootstrapError) as raised:
+                mod.read_hidden_redirect_from_tty()
+        self.assertIn("echo cannot be disabled", str(raised.exception))
+        with mock.patch.object(mod.sys.stdin, "isatty", return_value=True):
+            with mock.patch.object(mod, "echo_can_be_disabled", return_value=False):
+                with self.assertRaises(mod.BootstrapError) as raised2:
+                    mod.read_hidden_redirect_from_tty()
+        self.assertIn("echo cannot be disabled", str(raised2.exception))
+        with mock.patch.object(mod.sys.stdin, "isatty", return_value=True):
+            with mock.patch.object(mod, "echo_can_be_disabled", return_value=True):
+                with mock.patch.object(mod.getpass, "getpass", side_effect=mod.getpass.GetPassWarning("echo")):
+                    with self.assertRaises(mod.BootstrapError):
+                        mod.read_hidden_redirect_from_tty()
 
 
 if __name__ == "__main__":
     unittest.main()
+
