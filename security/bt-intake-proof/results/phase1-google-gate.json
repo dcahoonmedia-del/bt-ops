@@ -2,7 +2,7 @@
   "status": "BLOCKED",
   "mailbox_required": "contactus@btpestcontrol.com",
   "readonly_scope": "https://www.googleapis.com/auth/gmail.readonly",
-  "project_id": null,
+  "project_id": "bt-intake-proof",
   "rejected_project_id": null,
   "allow_resource_create": true,
   "oauth_client_present": false,
@@ -13,11 +13,6 @@
   "gmail_mcp_note": "Cursor Gmail MCP is authenticated as daniel@btpestcontrol.com and can send/modify. It is not used for this proof and is not a users.watch + Pub/Sub substitute.",
   "gcloud_present": false,
   "decisions_required": [
-    {
-      "id": "gcp_project_id",
-      "status": "required",
-      "ask": "Name the Google Cloud project I may use for this B&T intake proof only. Reply with the real project ID (6-30 lowercase letters, digits, or hyphens). I will not pick one from your existing projects."
-    },
     {
       "id": "oauth_desktop_client",
       "status": "required",

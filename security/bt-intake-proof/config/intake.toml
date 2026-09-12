@@ -1,12 +1,11 @@
-# B&T intake proof config. project_id is intentionally empty.
-# Daniel must name the Google Cloud project before any live Google call.
+# Authorized project named by Daniel on 2026-09-12.
+# Only the four named Pub/Sub/watch resources may be created in this project.
 
 mailbox = "contactus@btpestcontrol.com"
 allowed_sender = "daniel@btpestcontrol.com"
 marker_prefix = "BT-INTAKE-PROOF-"
 topic_id = "bt-intake-proof-contactus"
 subscription_id = "bt-intake-proof-contactus-sub"
-project_id = ""
-# Daniel authorized these four creates only, once a real project ID is named.
+project_id = "bt-intake-proof"
 allow_resource_create = "yes"
 designated_reply_thread_id = "1a09242c087af92c"

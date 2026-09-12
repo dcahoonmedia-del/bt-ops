@@ -1,4 +1,5 @@
 secrets/
+results/AUTH_URL.txt
 results/live/
 results/*.sqlite
 results/*.sqlite-journal

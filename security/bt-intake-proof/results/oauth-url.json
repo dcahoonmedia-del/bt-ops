@@ -1,0 +1,8 @@
+{
+  "status": "BLOCKED",
+  "authorization_url": null,
+  "mailbox_required": "contactus@btpestcontrol.com",
+  "scope": "https://www.googleapis.com/auth/gmail.readonly",
+  "project_id": "bt-intake-proof",
+  "reason": "Desktop OAuth client JSON is not in this environment yet. Create the Desktop client in project bt-intake-proof and send the downloaded JSON."
+}

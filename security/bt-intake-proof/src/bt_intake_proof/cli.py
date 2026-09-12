@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from .gates import diagnose_google
+from .oauth_consent import OAuthClientError, authorization_url, blocked_oauth_url
 from .scorecard import apply_local_contract_results, empty_scorecard, markdown_table, write_scorecard
 from .setup_google import blocked_setup
 
@@ -28,7 +29,7 @@ def cmd_gate(_args: argparse.Namespace) -> int:
         encoding="utf-8",
     )
     scorecard = empty_scorecard(
-        "Waiting for a real Google Cloud project ID and Desktop OAuth client JSON. Placeholder IDs are rejected."
+        "Project bt-intake-proof is named. Waiting for Desktop OAuth client JSON, then contactus@ read-only consent."
     )
     write_scorecard(RESULTS / "scorecard.json", scorecard)
     _print({"google": diagnosis, "setup": blocked_setup(diagnosis), "scorecard_overall": scorecard["overall"]})
@@ -57,9 +58,22 @@ def cmd_scorecard(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_oauth_url(_args: argparse.Namespace) -> int:
+    RESULTS.mkdir(parents=True, exist_ok=True)
+    try:
+        payload = authorization_url()
+    except OAuthClientError:
+        payload = blocked_oauth_url()
+    (RESULTS / "oauth-url.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    if payload.get("authorization_url"):
+        (RESULTS / "AUTH_URL.txt").write_text(payload["authorization_url"] + "\n", encoding="utf-8")
+    _print(payload)
+    return 0 if payload.get("authorization_url") else 2
+
+
 def cmd_record_local_tests(args: argparse.Namespace) -> int:
     scorecard = empty_scorecard(
-        "Waiting for a real Google Cloud project ID and Desktop OAuth client JSON. Placeholder IDs are rejected."
+        "Project bt-intake-proof is named. Waiting for Desktop OAuth client JSON, then contactus@ read-only consent."
     )
     apply_local_contract_results(scorecard, bool(args.passed), args.output or "")
     write_scorecard(RESULTS / "scorecard.json", scorecard)
@@ -77,6 +91,7 @@ def main(argv: list[str] | None = None) -> int:
     rec.add_argument("--passed", action="store_true")
     rec.add_argument("--output", default="")
     rec.set_defaults(func=cmd_record_local_tests)
+    sub.add_parser("oauth-url").set_defaults(func=cmd_oauth_url)
     args = parser.parse_args(argv)
     return args.func(args)
 
