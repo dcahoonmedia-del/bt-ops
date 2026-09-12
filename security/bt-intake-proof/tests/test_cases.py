@@ -251,6 +251,34 @@ class CaseLayerTests(unittest.TestCase):
         self.assertEqual(self.cases.get_case(opened["case_id"])["approval_state"], APPROVAL_APPROVED)
         self.assertFalse(applied[0]["send_triggered"])
 
+    def test_review_packet_body_does_not_self_approve(self) -> None:
+        row = self._commit(lead_receipt("m-review-only"))[0]
+        opened = self.cases.upsert_from_receipt(row)
+        self.cases.save_draft(
+            opened["case_id"],
+            {
+                "classification": "lead",
+                "known_facts": [],
+                "missing_info": [],
+                "recommended_next_step": "review",
+                "proposed_response": "Thanks.",
+                "channel": "email",
+            },
+            "nonce-review-only",
+        )
+        email = format_review_email(self.cases.review_packet(opened["case_id"]))
+        self._commit(
+            lead_receipt(
+                "m-review-copy",
+                thread_id="thr-review-copy",
+                test_marker=MARKER_REVIEW,
+                subject=email["subject"],
+                body_text=email["body"],
+            )
+        )
+        self.cases.sync_eligible_receipts(MAILBOX)
+        self.assertNotEqual(self.cases.get_case(opened["case_id"])["approval_state"], APPROVAL_APPROVED)
+
     def test_trusted_rules_are_separate_from_external_payload(self) -> None:
         rules = trusted_rules_text()
         self.assertIn("TRUSTED_APPLICATION_CONTEXT", rules)

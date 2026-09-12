@@ -503,7 +503,11 @@ class CaseLayer:
         for receipt in self.store.eligible_receipts(mailbox):
             marker = str(receipt.get("test_marker") or "")
             kind = marker_kind(marker)
-            parsed = parse_decision(receipt.get("subject"), receipt.get("body_text"))
+            subject = str(receipt.get("subject") or "")
+            if MARKER_REVIEW in subject and not subject.lower().startswith(("re:", "fwd:")):
+                results.append({"skipped": True, "reason": "review_packet"})
+                continue
+            parsed = parse_decision(subject, receipt.get("body_text"))
             if parsed and parsed.get("case_id") and parsed.get("decision"):
                 applied = self.apply_decision(
                     parsed["case_id"],
