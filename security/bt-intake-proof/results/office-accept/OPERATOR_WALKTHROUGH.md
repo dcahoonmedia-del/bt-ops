@@ -3,9 +3,12 @@
 This is a **simulation**. ChatGPT is not running. No phone or Mac-off proof is claimed.
 The backend still does not parse Daniel's speech. Exact bound operations already exist.
 
-Daniel talks naturally. ChatGPT would choose one structured intent and send a
-private control email that Daniel should never see. The pack below applies that
-same bound operation on a throwaway SQLite file.
+Daniel talks naturally. ChatGPT chooses one structured intent and sends a
+control email from daniel@ to contactus@. Keep technical fields (case id,
+nonce, hash, draft version) out of spoken summaries. That is not a promise
+that the transport is invisible: the iPhone Mail or Gmail app may still show
+a sent-mail confirmation. Do not claim we can suppress that UI. The pack
+below applies the same bound operation on a throwaway SQLite file.
 
 ## 1. New inquiry
 

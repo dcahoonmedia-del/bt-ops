@@ -1,7 +1,7 @@
 """Gmail control bridge: ChatGPT sends structured mail; the backend authorizes.
 
 Daniel speaks to ChatGPT. ChatGPT chooses one existing desk intent and sends a
-private control message from daniel@ to contactus@. This module parses that
+control message from daniel@ to contactus@. This module parses that
 mail, validates the packet binding, and calls submit_desk_action.
 
 It does not interpret natural language.
