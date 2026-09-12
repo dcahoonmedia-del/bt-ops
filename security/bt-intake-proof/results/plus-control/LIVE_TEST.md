@@ -27,7 +27,7 @@ Work or iPhone execution unless that path is independently evidenced.
 | Claim | Status |
 | --- | --- |
 | Sent-message proof (MCP send exists in Daniel SENT) | Observed earlier; do not replay |
-| Offline authorization (unit tests / local inspect) | Implemented in this PR; not host runtime |
+| Offline authorization (unit tests / local inspect) | **PASS** 295 tests, 1 skipped on the corrected source; not host runtime |
 | Deployed on GCE | **No.** Deployment is held. “Backend accepts” means this branch’s code, not `/opt/bt-intake-proof` |
 | Saved live case / new draft version | **No.** Host SQLite was not reached |
 | Result delivery to Work | **None live.** Offline path writes one plus-result intent; live send needs a separate daniel@ send-only token and host activation |
