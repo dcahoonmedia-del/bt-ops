@@ -1,9 +1,9 @@
 {
   "overall": "BLOCKED",
-  "stopped_at": "enable_compute_engine_api",
-  "reason": "Daniel authorized e2-small in us-east1. serviceusage.enable was denied for this Cloud login. No VM or JSON key created.",
+  "stopped_at": "compute_instances_create_denied",
+  "reason": "Compute Engine API is enabled. This Cloud login lacks compute.instances.create/list. No VM or JSON key created.",
   "gates": {
-    "mac_independent_operation": {"result": "BLOCKED", "detail": "Waiting for Compute Engine API enable in console."},
+    "mac_independent_operation": {"result": "BLOCKED", "detail": "Waiting for console-created e2-small bt-intake-cloud in us-east1."},
     "automatic_service_startup": {"result": "BLOCKED", "detail": "systemd unit packaged, not installed."},
     "pubsub_delivery": {"result": "BLOCKED", "detail": "Cloud host not running yet."},
     "gmail_history_recovery": {"result": "BLOCKED", "detail": "Cloud host not running yet."},
@@ -17,6 +17,7 @@
   "vm_created": false,
   "region": "us-east1",
   "machine": "e2-small",
-  "authorized_to_enable_apis": true,
-  "api_enable_result": "PERMISSION_DENIED"
+  "compute_engine_api": "enabled_or_reachable",
+  "billing_read": "PERMISSION_DENIED",
+  "create_permission": "DENIED"
 }

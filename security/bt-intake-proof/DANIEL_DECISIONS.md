@@ -1,5 +1,3 @@
-# Stopped for Daniel — enable Compute Engine API
+# Stopped for Daniel — create the e2-small VM
 
-You authorized the e2-small VM and enabling Compute Engine / Cloud Billing APIs. This Cloud login cannot enable them (permission denied).
-
-Follow `CLOUD_HOST_GUIDE.md` steps 1–3, then reply **apis on**.
+APIs are on. This Cloud login cannot create Compute instances. Follow `CLOUD_HOST_GUIDE.md`, then reply **vm up** with the External IP.
