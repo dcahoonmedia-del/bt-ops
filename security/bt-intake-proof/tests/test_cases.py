@@ -182,6 +182,19 @@ class CaseLayerTests(unittest.TestCase):
         self.assertEqual(_label_draft_not_sent("Thanks for writing."), f"{DRAFT_NOT_SENT}\n\nThanks for writing.")
         self.assertEqual(_label_draft_not_sent("DRAFT — NOT SENT\n\nHi"), f"{DRAFT_NOT_SENT}\n\nHi")
 
+    def test_phase_b_markers_do_not_become_cases(self) -> None:
+        row = self._commit(
+            lead_receipt(
+                "m-cloud",
+                test_marker="BT-INTAKE-PROOF-CLOUD-NEW-E9A8-7F3C",
+                subject="BT-INTAKE-PROOF-CLOUD-NEW-E9A8-7F3C leftover",
+            )
+        )[0]
+        result = self.cases.upsert_from_receipt(row)
+        self.assertTrue(result["skipped"])
+        self.assertEqual(result["reason"], "other")
+        self.assertEqual(self.cases.cases_needing_draft(), [])
+
     def test_failed_draft_leaves_case_pending(self) -> None:
         row = self._commit(lead_receipt("m-fail"))[0]
         opened = self.cases.upsert_from_receipt(row)

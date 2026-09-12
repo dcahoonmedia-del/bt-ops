@@ -80,7 +80,7 @@ def marker_kind(marker: str | None) -> str:
         return "decision_changes"
     if MARKER_NONE in text:
         return "decision_none"
-    if text.startswith(MARKER_CASEMGR) or text.startswith("BT-INTAKE-PROOF-"):
+    if text.startswith(MARKER_CASEMGR):
         return "lead"
     return "other"
 
