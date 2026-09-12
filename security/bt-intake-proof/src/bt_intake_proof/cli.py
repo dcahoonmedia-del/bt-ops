@@ -223,6 +223,47 @@ def cmd_write_dispatch_payload(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_phasee_execute(args: argparse.Namespace) -> int:
+    from .bounded_send import execute_action
+    from .cases import CaseLayer
+    from .contactus_send import configured_send_transport
+    from .send_bind import ensure_send_tables
+
+    RESULTS.mkdir(parents=True, exist_ok=True)
+    store = _live_store()
+    try:
+        layer = CaseLayer(store)
+        ensure_send_tables(layer)
+        result = execute_action(layer, int(args.action_id), configured_send_transport())
+    finally:
+        store.close()
+    dest = RESULTS / "live" / "phasee-execute.json"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps(result, indent=2, default=str) + "\n", encoding="utf-8")
+    _print(result)
+    return 0 if result.get("ok") else 2
+
+
+def cmd_phasee_verify(args: argparse.Namespace) -> int:
+    from .cases import CaseLayer
+    from .send_bind import ensure_send_tables
+    from .send_verify import ContactusReadonlySentVerify, verify_sent
+
+    RESULTS.mkdir(parents=True, exist_ok=True)
+    store = _live_store()
+    try:
+        layer = CaseLayer(store)
+        ensure_send_tables(layer)
+        result = verify_sent(layer, int(args.action_id), ContactusReadonlySentVerify(contactus_gmail()))
+    finally:
+        store.close()
+    dest = RESULTS / "live" / "phasee-verify-sent.json"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps(result, indent=2, default=str) + "\n", encoding="utf-8")
+    _print(result)
+    return 0 if result.get("ok") else 2
+
+
 def cmd_record_local_tests(args: argparse.Namespace) -> int:
     scorecard = empty_scorecard(
         "contactus@ Gmail read-only consent passed. Pub/Sub create is blocked on Cloud admin credentials or console-created topic."
@@ -257,6 +298,12 @@ def main(argv: list[str] | None = None) -> int:
     disp.add_argument("--nonce", default="")
     disp.set_defaults(func=cmd_write_dispatch_payload)
     sub.add_parser("recover").set_defaults(func=cmd_recover)
+    pe = sub.add_parser("phasee-execute")
+    pe.add_argument("action_id", type=int, help="stored case_send_actions.id; does not auto-select")
+    pe.set_defaults(func=cmd_phasee_execute)
+    pv = sub.add_parser("phasee-verify")
+    pv.add_argument("action_id", type=int, help="stored case_send_actions.id")
+    pv.set_defaults(func=cmd_phasee_verify)
     args = parser.parse_args(argv)
     return args.func(args)
 

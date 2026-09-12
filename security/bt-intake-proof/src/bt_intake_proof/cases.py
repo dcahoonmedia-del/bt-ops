@@ -349,13 +349,22 @@ class CaseLayer:
         self.add_event(case_id, "case_opened", gmail_message_id=message_id, inbound_class=inbound_class)
         return {"case_id": case_id, "created": True, "reopened": False, "approval_superseded": False}
 
-    def save_draft(self, case_id: str, draft: dict[str, Any], nonce: str) -> dict[str, Any]:
+    def save_draft(
+        self,
+        case_id: str,
+        draft: dict[str, Any],
+        nonce: str,
+        *,
+        label_not_sent: bool = True,
+    ) -> dict[str, Any]:
         case = self.get_case(case_id)
         if not case:
             raise ValueError(f"unknown case {case_id}")
         version = int(case.get("draft_version") or 0) + 1
-        proposed = _label_draft_not_sent(str(draft.get("proposed_response") or "").strip())
-        labeled = 1
+        raw_proposed = str(draft.get("proposed_response") or "").strip()
+        # Phase C customer drafts stay labeled. Phase E stores the exact send body.
+        proposed = _label_draft_not_sent(raw_proposed) if label_not_sent else raw_proposed
+        labeled = 1 if label_not_sent else 0
         now = utc_now()
         self.conn.execute(
             "UPDATE case_drafts SET status = ? WHERE case_id = ? AND status = ?",

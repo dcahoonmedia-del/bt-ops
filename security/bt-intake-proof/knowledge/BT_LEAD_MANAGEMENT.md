@@ -11,7 +11,17 @@ This test: captured receipt → durable case → READ-ONLY Fieldwork match → C
 Phase C intake, cases, review packets, approval-state, and stale-approval invalidation stay as proven.
 Do not send. Do not create Gmail drafts. Do not write Fieldwork. Do not access LSA or CTM native.
 Do not run an Auditor, scheduling write, or Astra escalation.
-Approval is recorded state only. A newer inbound on the same thread supersedes any prior approval.
+Approval is recorded state only, except the one Phase E internal send test after exact version-bound approval.
+A newer inbound on the same thread supersedes any prior approval.
+
+## Phase E limits (2026-09-12 assignment)
+
+Phase E proves one version-bound internal send: contactus@ → daniel@ only, after Daniel approves the exact packet on iPhone.
+Bind approval to case ID, draft version, source mailbox, exact recipient, Gmail thread, subject, full body/signature, no attachments/links, immediate supervised timing, and latest inbound message ID.
+A generic or stale approval must not send. Newer inbound, recipient change, body change, or case/draft version change invalidates the old approval.
+Codex/drafting has no Gmail send authority. A separate sender may execute only one stored, valid, unconsumed approval and must not modify the payload.
+A sender API return is not verified delivery. Independent Sent search and optional daniel@ receipt inspection stay separate. Timeout/unknown does not auto-resend.
+Do not contact real customers. Do not access or write Fieldwork. Do not add LSA/CTM native sends. Do not add the Independent Auditor.
 If drafting fails, the inbound and case stay pending and visible. Do not drop the event.
 
 Fieldwork matching in this Phase D slice uses the historical fixture PHASE-D-MATT-001 from the Sept 10 migration audit. Label those facts FIELDWORK_FIXTURE_VERIFIED. Do not label them LIVE_FIELDWORK_VERIFIED. Live HQ OAuth is blocked and is not this test.

@@ -10,7 +10,7 @@ Test 0 isolation stays unchanged. Codex delivery reuses `security/codex-external
 
 ## Current gate
 
-Phase A intake proof: **PASS.** Phase B cloud host: **PASS.** Phase C Case Manager: **PASS** (`results/PHASEC.md`). Customer sending remains off.
+Phase A intake proof: **PASS.** Phase B cloud host: **PASS.** Phase C Case Manager: **PASS** (`results/PHASEC.md`). Phase D matching/context: **PASS**; live Fieldwork **BLOCKED**. Phase E logic: **PASS**; live contactus send **BLOCKED** (`results/PHASEE.md`). Customer sending remains off except the one Phase E internal test after exact approval.
 
 The Cursor Gmail MCP is `daniel@btpestcontrol.com` and can send/modify mail. Phase C used it only to send marked internal tests and Daniel's review packets. It is not a watch/Pub/Sub substitute.
 

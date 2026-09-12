@@ -1,0 +1,30 @@
+{
+  "phase": "E",
+  "scope": "exact_approval_bounded_send_independent_verify",
+  "overall_logic": "PASS",
+  "live_contactus_send": "BLOCKED",
+  "live_blocked_reason": "contactus_send_token_not_configured",
+  "intake_readonly_untouched": true,
+  "fieldwork_activity": "none",
+  "real_customer_mail": "none",
+  "lsa_ctm_native": "none",
+  "auditor": "none",
+  "unit_tests": "68 passed",
+  "gates": {
+    "exact_approval_binding": "PASS",
+    "stale_superseded_rejection": "PASS",
+    "changed_payload_rejection": "PASS",
+    "single_use_approval": "PASS",
+    "direct_bounded_gmail_send": "BLOCKED",
+    "no_agent_to_agent_send_delegation": "PASS",
+    "sender_cannot_modify_approved_content": "PASS",
+    "independent_sent_verification": "BLOCKED",
+    "recipient_receipt_verification": "BLOCKED",
+    "duplicate_prevention": "PASS",
+    "ambiguous_send_no_auto_retry": "PASS",
+    "sqlite_restart_persistence": "PASS",
+    "live_vm_restart_after_send": "BLOCKED",
+    "zero_real_customer_communication": "PASS",
+    "zero_fieldwork_activity": "PASS"
+  }
+}

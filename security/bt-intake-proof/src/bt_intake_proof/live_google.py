@@ -76,6 +76,12 @@ class HttpReadOnlyGmail:
             f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}?format={fmt}"
         )
 
+    def search_messages(self, query: str, max_results: int = 10) -> list[dict[str, Any]]:
+        params = {"q": query, "maxResults": max(1, min(int(max_results), 20))}
+        url = "https://gmail.googleapis.com/gmail/v1/users/me/messages?" + urlencode(params)
+        page = self._get(url)
+        return list(page.get("messages") or [])
+
     def get_thread_message_ids(self, thread_id: str) -> list[str]:
         thread = self._get(
             f"https://gmail.googleapis.com/gmail/v1/users/me/threads/{thread_id}?format=minimal"

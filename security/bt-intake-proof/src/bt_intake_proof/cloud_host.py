@@ -130,6 +130,16 @@ def run_once(store: ReceiptStore) -> dict[str, Any]:
                 {k: item.get(k) for k in ("case_id", "status", "version", "reason")}
                 for item in cases.get("drafted") or []
             ],
+            "phasee_queued": [
+                {
+                    "ok": item.get("ok"),
+                    "reason": item.get("reason"),
+                    "skipped": item.get("skipped"),
+                    "action_id": (item.get("action") or {}).get("id"),
+                    "status": (item.get("action") or {}).get("status"),
+                }
+                for item in cases.get("phasee_queued") or []
+            ],
         },
     }
 
@@ -175,7 +185,7 @@ def serve(interval: float = 2.0) -> int:
                 )
             dispatch_pending(store)
             cases = process_cases(store)
-            if cases.get("synced") or cases.get("drafted"):
+            if cases.get("synced") or cases.get("drafted") or cases.get("phasee_queued"):
                 safe_log(
                     "case_manager",
                     synced=[
@@ -185,6 +195,15 @@ def serve(interval: float = 2.0) -> int:
                     drafted=[
                         {k: item.get(k) for k in ("case_id", "status", "version", "reason")}
                         for item in cases.get("drafted") or []
+                    ],
+                    phasee_queued=[
+                        {
+                            "ok": item.get("ok"),
+                            "reason": item.get("reason"),
+                            "action_id": (item.get("action") or {}).get("id"),
+                            "status": (item.get("action") or {}).get("status"),
+                        }
+                        for item in cases.get("phasee_queued") or []
                     ],
                 )
             time.sleep(interval)
