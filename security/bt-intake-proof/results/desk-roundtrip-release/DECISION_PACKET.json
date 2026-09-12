@@ -1,0 +1,28 @@
+{
+  "status": "AWAITING_DANIEL_EXACT_DECISION",
+  "generic_go_is_not_approval": true,
+  "approve_send_recorded": false,
+  "proof_reply_sent": false,
+  "case_id": "BTC-contactus-desk-roundtrip-e9a8-20260912",
+  "draft_version": 1,
+  "nonce": "bt-case-BTC-contactus-desk-roundtrip-e9a8-20260912-rdesk-rt-inbound-e9a8-20260912",
+  "packet_hash": "2bde7c099b67793a261cd46de79a3f7fd37ad744a958c5ae2a159f9dcf9f142c",
+  "hold": false,
+  "office_owner": null,
+  "exact_internal_send": {
+    "from": "contactus@btpestcontrol.com",
+    "to": "daniel@btpestcontrol.com",
+    "cc": "",
+    "subject": "BT-DESK-ROUNDTRIP-SEND-E9A8 internal send test",
+    "body": "BT-DESK-ROUNDTRIP-SEND-E9A8\n\nThis is an isolated internal Lead Desk round-trip send test only.\nIt is not customer mail and does not book, price, or promise service.\n\nB&T office",
+    "timing": "immediate_supervised",
+    "marker": "BT-DESK-ROUNDTRIP-SEND-E9A8",
+    "kind": "proof_reply_not_sent"
+  },
+  "human": "This is the exact isolated internal message that would be sent once if Daniel approves this version. A generic go is not approval. Do not send until this exact recipient, subject, and body are decided.",
+  "not_this_packet": {
+    "phase_e_case_id": "BTC-contactus-1a093f8e919b8787",
+    "phase_e_reusable": false,
+    "desk_case_queue_health": "separate_internal_desk_packets"
+  }
+}

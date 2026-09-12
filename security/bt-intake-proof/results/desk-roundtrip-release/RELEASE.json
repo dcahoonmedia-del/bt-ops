@@ -1,0 +1,11 @@
+{
+  "package": "bt-intake-desk-roundtrip",
+  "source_commit": "e808820450c6866bccee7cf5e0a28f4411dced8b",
+  "tree_sha256": "940c48490df961c04ee356b52793ffdf39967687447da821e8d625c778fbd728",
+  "tree_hash_excludes": ["RELEASE.json", "secrets/", "*.pyc"],
+  "isolation": "isolated_test",
+  "customer_sends": "off",
+  "broad_capture": "off",
+  "proof_reply": "not_included_not_sent",
+  "secrets_included": false
+}

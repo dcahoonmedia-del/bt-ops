@@ -1,0 +1,36 @@
+# Non-secret browser-SSH transfer card. No tokens or client JSON.
+
+FILE=bt-intake-desk-roundtrip.tar.gz
+SHA256=a2f534bba41b9599ac33caf041e56bd9e1d42bdc27efe672f60424d1bbd6ff6e
+SOURCE_COMMIT=e808820450c6866bccee7cf5e0a28f4411dced8b
+ARTIFACT_COMMIT=50ec9ccf36a1b7d4dafa903f23ff98e7d5c4d03b
+RAW=https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/50ec9ccf36a1b7d4dafa903f23ff98e7d5c4d03b/security/bt-intake-proof/results/desk-roundtrip-release/bt-intake-desk-roundtrip.tar.gz
+DEST=/tmp/bt-intake-desk-roundtrip.tar.gz
+
+# On the VM (Google Cloud SSH-in-browser). Keep secrets on the host.
+# Deploy transaction only. Do not send BT-DESK-ROUNDTRIP-SEND-E9A8.
+# Do not reset SQLite. Do not prepare/deliver mail in this command.
+
+curl -fsSLo /tmp/bt-intake-desk-roundtrip.tar.gz https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/50ec9ccf36a1b7d4dafa903f23ff98e7d5c4d03b/security/bt-intake-proof/results/desk-roundtrip-release/bt-intake-desk-roundtrip.tar.gz
+echo "a2f534bba41b9599ac33caf041e56bd9e1d42bdc27efe672f60424d1bbd6ff6e  /tmp/bt-intake-desk-roundtrip.tar.gz" | sha256sum -c
+rm -rf /tmp/bt-intake-desk-roundtrip-src
+mkdir -p /tmp/bt-intake-desk-roundtrip-src
+tar -xzf /tmp/bt-intake-desk-roundtrip.tar.gz -C /tmp/bt-intake-desk-roundtrip-src
+test ! -e /tmp/bt-intake-desk-roundtrip-src/bt-intake-proof/secrets
+python3 /tmp/bt-intake-desk-roundtrip-src/bt-intake-proof/scripts/verify_release.py /tmp/bt-intake-desk-roundtrip-src/bt-intake-proof
+sudo bash /tmp/bt-intake-desk-roundtrip-src/bt-intake-proof/scripts/guarded_desk_roundtrip_deploy.sh
+
+# Manual rollback restores code/env/unit only, never receipts or approvals:
+# sudo bash /opt/bt-intake-proof/scripts/rollback_to_predeploy.sh
+
+# After deploy + health PASS, inspect failed action 2 only (no send, no re-queue):
+# sudo -u btintake bash /opt/bt-intake-proof/scripts/recover_failed_desk_send.sh \
+#   --action-id 2 --case-id BTC-contactus-desk-roundtrip-e9a8-20260912
+#
+# If dry-run reports recovery_authorized=true, omit_gmail_thread_id=true,
+# sent_check exact_matches=0, and host_loop_would_select=false, one attempt:
+# sudo -u btintake bash /opt/bt-intake-proof/scripts/recover_failed_desk_send.sh \
+#   --action-id 2 --case-id BTC-contactus-desk-roundtrip-e9a8-20260912 --execute
+#
+# Do not reset SQLite, reissue approval, mutate thread_id/payload_sha256, or
+# set status back to queued. Do not send from Cursor/Gmail MCP.

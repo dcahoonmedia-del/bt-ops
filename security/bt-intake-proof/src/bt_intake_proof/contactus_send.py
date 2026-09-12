@@ -10,7 +10,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 from .bounded_send import MissingContactusSendTransport, raw_b64
-from .constants import MAILBOX
+from .constants import DESK_PACKET_MARKERS, MAILBOX, MARKER_DESK_CTRL
 from .eligibility import normalize_email
 from .gates import project_id, send_token_path, token_path
 from .gmail_readonly import GmailAuthError
@@ -22,6 +22,14 @@ from .oauth_consent import (
     redirect_uri,
 )
 from .phasee_constants import PHASEE_FROM, PHASEE_TO
+from .send_bind import LINK_RE, is_authorized_internal_send_body, provider_gmail_thread_id
+
+_INVALID_THREAD_PHRASES = (
+    "invalid threadid",
+    "invalid thread_id",
+    "invalid thread id",
+    "invalid id value",
+)
 
 GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
 SEND_TOKEN_ALLOWED_SCOPES = {
@@ -219,6 +227,23 @@ def refresh_send_token() -> dict[str, Any]:
     return record
 
 
+def gmail_send_request_payload(binding: dict[str, Any]) -> dict[str, Any]:
+    """JSON body posted to users.messages.send. Omits non-provider thread ids."""
+    payload: dict[str, Any] = {"raw": raw_b64(binding)}
+    thread = provider_gmail_thread_id(binding.get("thread_id"))
+    if thread:
+        payload["threadId"] = thread
+    return payload
+
+
+def classify_gmail_http_error(code: int, detail: str | None) -> str:
+    if int(code) == 400:
+        blob = str(detail or "").lower()
+        if any(phrase in blob for phrase in _INVALID_THREAD_PHRASES):
+            return "invalid_gmail_thread_id"
+    return f"http_{code}"
+
+
 class HttpContactusSendGmail:
     """Submit only the stored Phase E MIME. Does not rewrite subject, body, or recipients."""
 
@@ -228,12 +253,8 @@ class HttpContactusSendGmail:
         self.email = MAILBOX
         self.scopes = list(scopes)
 
-    def send_exact(self, binding: dict[str, Any]) -> dict[str, Any]:
-        if binding.get("from_addr") != PHASEE_FROM or binding.get("to_addr") != PHASEE_TO:
-            return {"ok": False, "unknown": False, "reason": "payload_not_phasee"}
-        payload: dict[str, Any] = {"raw": raw_b64(binding)}
-        if binding.get("thread_id"):
-            payload["threadId"] = binding["thread_id"]
+    def _submit_raw(self, binding: dict[str, Any]) -> dict[str, Any]:
+        payload = gmail_send_request_payload(binding)
         request = urllib.request.Request(
             "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
             data=json.dumps(payload).encode("utf-8"),
@@ -250,9 +271,10 @@ class HttpContactusSendGmail:
             return {"ok": False, "unknown": True, "reason": "timeout"}
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
+            reason = classify_gmail_http_error(exc.code, detail)
             if exc.code >= 500:
-                return {"ok": False, "unknown": True, "reason": f"http_{exc.code}", "detail": detail}
-            return {"ok": False, "unknown": False, "reason": f"http_{exc.code}", "detail": detail}
+                return {"ok": False, "unknown": True, "reason": reason}
+            return {"ok": False, "unknown": False, "reason": reason}
         except urllib.error.URLError as exc:
             return {"ok": False, "unknown": True, "reason": f"urlerror:{exc.reason}"}
         mid = str(body.get("id") or "")
@@ -265,6 +287,40 @@ class HttpContactusSendGmail:
             "provider_thread_id": body.get("threadId"),
             "label_ids": body.get("labelIds") or [],
         }
+
+    def send_exact(self, binding: dict[str, Any]) -> dict[str, Any]:
+        if binding.get("from_addr") != PHASEE_FROM or binding.get("to_addr") != PHASEE_TO:
+            return {"ok": False, "unknown": False, "reason": "payload_not_phasee"}
+        if not is_authorized_internal_send_body(binding.get("body")):
+            return {"ok": False, "unknown": False, "reason": "payload_not_phasee"}
+        return self._submit_raw(binding)
+
+    def send_internal_desk(self, mail: dict[str, Any]) -> dict[str, Any]:
+        """contactus → daniel desk packets only. Never a DESK-CTRL and never customer mail."""
+        from_addr = mail.get("from_addr") or mail.get("from") or PHASEE_FROM
+        to_addr = mail.get("to_addr") or mail.get("to") or ""
+        subject = str(mail.get("subject") or "")
+        body = str(mail.get("body") or "")
+        blob = f"{subject}\n{body}"
+        if normalize_email(from_addr) != PHASEE_FROM or normalize_email(to_addr) != PHASEE_TO:
+            return {"ok": False, "unknown": False, "reason": "desk_packet_not_internal"}
+        if MARKER_DESK_CTRL in blob:
+            return {"ok": False, "unknown": False, "reason": "desk_ctrl_loop_forbidden"}
+        if not any(marker in blob for marker in DESK_PACKET_MARKERS):
+            return {"ok": False, "unknown": False, "reason": "not_desk_packet"}
+        if LINK_RE.search(body):
+            return {"ok": False, "unknown": False, "reason": "links_present"}
+        if mail.get("cc") or mail.get("bcc") or mail.get("attachments"):
+            return {"ok": False, "unknown": False, "reason": "desk_packet_extras"}
+        return self._submit_raw(
+            {
+                "from_addr": PHASEE_FROM,
+                "to_addr": PHASEE_TO,
+                "subject": subject,
+                "body": body,
+                "thread_id": mail.get("thread_id") or "",
+            }
+        )
 
 
 def configured_send_transport():

@@ -92,7 +92,22 @@ def decode_raw_message(raw_b64: str) -> dict[str, Any]:
         "body_text": body,
         "raw_message": raw.decode("utf-8", errors="surrogateescape"),
         "gmail_received_at": received_iso,
+        "headers": ordered_headers(parsed),
     }
+
+
+def ordered_headers(parsed: Any) -> list[tuple[str, str]]:
+    """Preserve first-seen header order, including duplicate Authentication-Results."""
+    headers: list[tuple[str, str]] = []
+    seen: list[str] = []
+    for key in parsed.keys():
+        low = str(key).lower()
+        if low in seen:
+            continue
+        seen.append(low)
+        for value in parsed.get_all(key) or []:
+            headers.append((str(key), str(value)))
+    return headers
 
 
 def gmail_internal_date(message: dict[str, Any]) -> str | None:

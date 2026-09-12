@@ -340,7 +340,9 @@ class PhaseETests(unittest.TestCase):
         self.assertNotIn("execute_action", inspect.getsource(process_cases))
         self.assertNotIn("execute_due_sends", inspect.getsource(process_cases))
         self.assertNotIn("execute_action", inspect.getsource(run_once))
+        self.assertNotIn("execute_due_sends", inspect.getsource(run_once))
         self.assertNotIn("execute_due_sends", inspect.getsource(serve))
+        self.assertNotIn("execute_action", inspect.getsource(serve))
 
     def test_phase_c_review_still_says_approval_does_not_send(self) -> None:
         self.store.commit_notification(
