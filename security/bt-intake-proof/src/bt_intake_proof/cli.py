@@ -423,6 +423,24 @@ def cmd_desk_action(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_recover_initial_case_review(args: argparse.Namespace) -> int:
+    """Plan or enqueue one allow-listed missed CASEMGR review. Does not send or redraft."""
+    from .cases import CaseLayer
+    from .desk_bridge import recover_initial_review_for_inbound
+
+    store = ReceiptStore(Path(args.store) if args.store else store_path())
+    try:
+        layer = CaseLayer(store)
+        payload = recover_initial_review_for_inbound(layer, args.gmail_id, enqueue=bool(args.enqueue))
+    finally:
+        store.close()
+    payload["send"] = False
+    _print(payload)
+    if not payload.get("ok"):
+        return 2
+    return 0
+
+
 def cmd_record_local_tests(args: argparse.Namespace) -> int:
     scorecard = empty_scorecard(
         "contactus@ Gmail read-only consent passed. Pub/Sub create is blocked on Cloud admin credentials or console-created topic."
@@ -496,6 +514,18 @@ def main(argv: list[str] | None = None) -> int:
     di.add_argument("--last-question", default="", help="offer_send | review_wording | ask_owner")
     di.add_argument("--owner", default="daniel")
     di.set_defaults(func=cmd_desk_intent)
+    rec_init = sub.add_parser(
+        "recover-initial-case-review",
+        help="Bounded recovery for one missed initial CASEMGR CASE packet. Dry-run unless --enqueue. Does not send.",
+    )
+    rec_init.add_argument("--gmail-id", required=True, help="contactus inbound Gmail id; only 1a096ffa404426f1 is allowed")
+    rec_init.add_argument("--store", default="", help="SQLite path; defaults to BT_INTAKE_STORE")
+    rec_init.add_argument(
+        "--enqueue",
+        action="store_true",
+        help="Write one current CASE packet to the durable outbox. Still does not send.",
+    )
+    rec_init.set_defaults(func=cmd_recover_initial_case_review)
     args = parser.parse_args(argv)
     return args.func(args)
 

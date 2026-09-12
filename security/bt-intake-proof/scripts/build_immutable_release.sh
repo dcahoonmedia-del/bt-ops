@@ -76,6 +76,8 @@ sudo bash /tmp/bt-intake-desk-roundtrip-src/bt-intake-proof/scripts/guarded_desk
 # Do not recover --execute. Do not resend BT-DESK-ROUNDTRIP-SEND-E9A8.
 # Do not repeat action 2 --verify-recipient. Do not send mail from this deploy.
 # Do not touch or replay BTC-contactus-1a096d60643b3b1a.
+# Do not resend BT-INTAKE-PROOF-CASEMGR-PHONE-7C92 / 1a096ffa404426f1.
+# Do not run recover-initial-case-review from this deploy.
 # Do not reset SQLite or reissue approval.
 # Keep customer sends and broad capture OFF.
 EOF

@@ -137,6 +137,10 @@ def run_once(store: ReceiptStore) -> dict[str, Any]:
                 {k: item.get(k) for k in ("case_id", "status", "version", "reason")}
                 for item in cases.get("drafted") or []
             ],
+            "initial_reviews": [
+                {k: item.get(k) for k in ("ok", "case_id", "kind", "status", "reason", "skipped", "stale")}
+                for item in cases.get("initial_reviews") or []
+            ],
             "phasee_queued": [
                 {
                     "ok": item.get("ok"),
@@ -238,7 +242,7 @@ def serve(interval: float = 2.0) -> int:
                         for item in desk.get("verified") or []
                     ],
                 )
-            if cases.get("synced") or cases.get("drafted") or cases.get("phasee_queued"):
+            if cases.get("synced") or cases.get("drafted") or cases.get("phasee_queued") or cases.get("initial_reviews"):
                 safe_log(
                     "case_manager",
                     synced=[
@@ -248,6 +252,10 @@ def serve(interval: float = 2.0) -> int:
                     drafted=[
                         {k: item.get(k) for k in ("case_id", "status", "version", "reason")}
                         for item in cases.get("drafted") or []
+                    ],
+                    initial_reviews=[
+                        {k: item.get(k) for k in ("ok", "case_id", "kind", "status", "reason", "skipped")}
+                        for item in cases.get("initial_reviews") or []
                     ],
                     phasee_queued=[
                         {
