@@ -81,6 +81,44 @@ class ContactusReadonlySentVerify:
         return []
 
 
+class DanielReadonlyInboxVerify:
+    """Search daniel@ with the existing readonly token. Does not send or change labels."""
+
+    def __init__(self, gmail: Any | None = None) -> None:
+        self.gmail = gmail
+
+    def _client(self) -> Any:
+        if self.gmail is not None:
+            return self.gmail
+        from .desk_sent_proof import _daniel_readonly_gmail
+
+        return _daniel_readonly_gmail()
+
+    def search_sent(self, marker: str) -> list[dict[str, Any]]:
+        return []
+
+    def search_inbox(self, marker: str) -> list[dict[str, Any]]:
+        hits = self._client().search_messages(f'"{marker}"', max_results=10)
+        found = []
+        for hit in hits:
+            raw = self._client().get_message(hit["id"], "raw")
+            found.append(found_from_raw_gmail(raw))
+        return found
+
+
+def configured_daniel_inbox_verify():
+    """Existing daniel@ gmail.readonly only. Fail closed. No new OAuth."""
+    try:
+        from .desk_sent_proof import diagnose_daniel_sent_access
+
+        access = diagnose_daniel_sent_access()
+        if not access.get("available"):
+            return None
+        return DanielReadonlyInboxVerify()
+    except Exception:
+        return None
+
+
 class RecordedInboxVerify:
     """Recipient-side results collected on a separate authorized path. Does not mutate labels."""
 
@@ -154,10 +192,29 @@ def count_exact_outbound(
     }
 
 
+def count_exact_inbox(
+    binding: dict[str, Any],
+    transport: VerifyTransport,
+) -> dict[str, Any]:
+    """Count recipient-mailbox hits for this exact payload. Does not log raw mail."""
+    marker = outbound_marker(binding.get("body"))
+    found = [
+        item
+        for item in transport.search_inbox(marker)
+        if str(item.get("subject") or "") == binding["subject"]
+    ]
+    matches = [item for item in found if not compare_outbound(binding, item, require_thread=False)]
+    return {
+        "subject_hits": len(found),
+        "exact_matches": len(matches),
+        "ambiguous": bool(found) and not matches,
+    }
+
+
 def verify_sent(layer: CaseLayer, action_id: int, transport: VerifyTransport) -> dict[str, Any]:
     action = action_row(layer, action_id)
     if not action:
-        return {"ok": False, "reason": "unknown_action"}
+        return {"ok": False, "reason": "unknown_action", "action_id": action_id}
     binding = binding_from_action(action)
     marker = outbound_marker(binding.get("body"))
     found = [
@@ -167,15 +224,15 @@ def verify_sent(layer: CaseLayer, action_id: int, transport: VerifyTransport) ->
     ]
     if len(found) == 0:
         record_verification(layer, action_id, "contactus_sent", "missing", detail={"count": 0})
-        return {"ok": False, "reason": "no_matching_outbound", "count": 0}
+        return {"ok": False, "reason": "no_matching_outbound", "count": 0, "action_id": action_id}
     if len(found) > 1:
         record_verification(layer, action_id, "contactus_sent", "duplicate", detail={"count": len(found)})
-        return {"ok": False, "reason": "more_than_one_outbound", "count": len(found)}
+        return {"ok": False, "reason": "more_than_one_outbound", "count": len(found), "action_id": action_id}
     message = found[0]
     mismatches = compare_outbound(binding, message)
     if mismatches:
         record_verification(layer, action_id, "contactus_sent", "mismatch", detail={"mismatches": mismatches})
-        return {"ok": False, "reason": "content_mismatch", "mismatches": mismatches}
+        return {"ok": False, "reason": "content_mismatch", "mismatches": mismatches, "action_id": action_id}
     mark_action(layer, action_id, status=STATUS_SENT_VERIFIED)
     record_verification(
         layer,
@@ -191,13 +248,14 @@ def verify_sent(layer: CaseLayer, action_id: int, transport: VerifyTransport) ->
         "status": STATUS_SENT_VERIFIED,
         "provider_message_id": message.get("id") or message.get("provider_message_id"),
         "count": 1,
+        "action_id": action_id,
     }
 
 
 def verify_recipient(layer: CaseLayer, action_id: int, transport: VerifyTransport) -> dict[str, Any]:
     action = action_row(layer, action_id)
     if not action:
-        return {"ok": False, "reason": "unknown_action"}
+        return {"ok": False, "reason": "unknown_action", "action_id": action_id}
     binding = binding_from_action(action)
     marker = outbound_marker(binding.get("body"))
     found = [
@@ -207,13 +265,13 @@ def verify_recipient(layer: CaseLayer, action_id: int, transport: VerifyTranspor
     ]
     if len(found) != 1:
         record_verification(layer, action_id, "daniel_inbox", "missing" if not found else "duplicate", detail={"count": len(found)})
-        return {"ok": False, "reason": "recipient_count", "count": len(found)}
+        return {"ok": False, "reason": "recipient_count", "count": len(found), "action_id": action_id}
     message = found[0]
     # Gmail thread IDs are per-mailbox; do not require the contactus thread id on daniel@.
     mismatches = compare_outbound(binding, message, require_thread=False)
     if mismatches:
         record_verification(layer, action_id, "daniel_inbox", "mismatch", detail={"mismatches": mismatches})
-        return {"ok": False, "reason": "content_mismatch", "mismatches": mismatches}
+        return {"ok": False, "reason": "content_mismatch", "mismatches": mismatches, "action_id": action_id}
     unread = "UNREAD" in (message.get("label_ids") or message.get("labels") or [])
     mark_action(layer, action_id, status=STATUS_RECEIPT_VERIFIED)
     record_verification(
@@ -225,4 +283,4 @@ def verify_recipient(layer: CaseLayer, action_id: int, transport: VerifyTranspor
         detail={"unread_preserved": unread, "labels_untouched": True},
     )
     layer.add_event(action["case_id"], "phasee_receipt_verified", unread_preserved=unread)
-    return {"ok": True, "status": STATUS_RECEIPT_VERIFIED, "unread_preserved": unread, "count": 1}
+    return {"ok": True, "status": STATUS_RECEIPT_VERIFIED, "unread_preserved": unread, "count": 1, "action_id": action_id}

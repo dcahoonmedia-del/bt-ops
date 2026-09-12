@@ -1,8 +1,8 @@
 # Desk round-trip scorecard
 
 Reviewed baseline: `378ffcf` / PR #14
-This revision: worker + guarded deploy on `cursor/bt-intake-roundtrip-e9a8` (see `results/desk-roundtrip-release/`).
-Installed host worker revision: **UNKNOWN** (not read this run). Codex installed OAuth helper `db53477` only. No worker restart observed.
+This revision: outcome reporting on `cursor/bt-intake-desk-notify-e9a8` (PR #16), stacked on the send-repair artifact `a2f534bb…`.
+Installed host worker (Codex-observed): send-repair `a2f534bb…`; backup `20260912T173409Z-83e59a2e`. This notify artifact is not live until Codex deploys it.
 
 Isolation: BT-INTAKE-PROOF on. Real-customer sends OFF. Broad/shadow capture OFF.
 This milestone is **not** an approval row and does **not** reuse Phase E action 1 / `BT-PHASE-E-SEND-E9A8-C4F1`.
@@ -30,12 +30,14 @@ Evidence labels: **unit** / **fixture** / **runtime** / **real-phone**.
 | Rollback restores env/unit, not SQLite | **PASS** (sandbox) | unique backups; approvals preserved |
 | Full identity PASS | **FAIL / not claimed** | Sent match is mailbox corroboration, not human identity |
 | Runtime daniel@ Sent lookup | **BLOCKED** | token exists on host (Codex-observed); this VM cannot run as `btintake` |
-| Runtime Gmail RESULT/CTRL/send | **PENDING** | worker not deployed from this run |
-| Exact approved internal send | **PENDING** | awaiting Daniel's decision on the exact packet |
+| Runtime Gmail RESULT/CTRL/send | **PASS** (runtime) | Action 2 provider `1a096afc3df71472`; Sent 1 / Daniel 1 |
+| Exact approved internal send | **PASS** (runtime) | Existing approval reused once; no further send authorized |
+| Backend recipient receipt | **FAIL / not recorded** | Inbox copy observed; status remains `sent_verified` |
+| Outcome reporting deploy | **BLOCKED** | this VM; Codex deploys PR #16 artifact |
 | Real iPhone / Mac-off | **PENDING** | do not claim |
-| Live worker deploy | **BLOCKED** | no SSH key / no gcloud on this VM; `Permission denied (publickey)` to `35.243.167.73` |
+| Live worker deploy | **BLOCKED** | no SSH key / no gcloud on this VM |
 
-**Unit:** `PYTHONPATH=src python3 -m unittest discover -s tests` → 178 passed, 1 skipped.
+**Unit:** `PYTHONPATH=src python3 -m unittest discover -s tests` → 203 passed, 1 skipped.
 
 ## Deployment
 

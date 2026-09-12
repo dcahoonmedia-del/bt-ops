@@ -259,19 +259,35 @@ def recover_failed_desk_send(
         requeued=False,
     )
     executed = execute_action(layer, action_id, send_transport, owner="desk-recover-once")
-    from .desk_bridge import enqueue_send_followup
+    from .desk_bridge import enqueue_send_followup, enqueue_send_outcome
+    from .send_verify import verify_sent
 
     enqueue_send_followup(layer, executed)
+    verified = None
+    if executed.get("ok") and verify_transport is not None:
+        verified = verify_sent(layer, action_id, verify_transport)
+        enqueue_send_outcome(layer, action_id)
     after = action_row(layer, action_id)
     inspection["mode"] = "execute"
     inspection["executed"] = True
+    from .desk_outcome import action_send_stage, stage_claims
+
+    stage = action_send_stage(after, executed=executed)
+    claims = stage_claims(stage)
     inspection["execute_result"] = {
         "ok": executed.get("ok"),
         "reason": executed.get("reason"),
-        "status": executed.get("status"),
+        "status": executed.get("status") or (after or {}).get("status"),
         "unknown": executed.get("unknown"),
         "provider_message_id": executed.get("provider_message_id"),
         "consumed": executed.get("consumed"),
+        "send_stage": stage,
+        "provider_accepted": claims["provider_accepted"],
+        "sent_verified": claims["sent_verified"],
+        "recipient_receipt_verified": claims["recipient_receipt_verified"],
+        "verified": None
+        if verified is None
+        else {"ok": verified.get("ok"), "status": verified.get("status"), "reason": verified.get("reason")},
     }
     inspection["ok"] = bool(executed.get("ok"))
     inspection["binding_preserved"] = bool(

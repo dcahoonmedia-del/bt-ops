@@ -248,6 +248,10 @@ def format_result_email(result: dict[str, Any]) -> dict[str, str]:
         f"EXECUTE_SEND={'yes' if result.get('execute_send') else 'no'}",
         f"SEND_QUEUED={'yes' if result.get('send_queued') else 'no'}",
         f"SEND_STATUS={result.get('send_status') or ''}",
+        f"SEND_STAGE={result.get('send_stage') or ''}",
+        f"PROVIDER_ACCEPTED={'yes' if result.get('provider_accepted') else 'no'}",
+        f"SENT_VERIFIED={'yes' if result.get('sent_verified') else 'no'}",
+        f"RECIPIENT_RECEIPT={'yes' if result.get('recipient_receipt_verified') else 'no'}",
         f"PROVIDER_ID={result.get('provider_message_id') or ''}",
     ]
     return {
@@ -1238,52 +1242,109 @@ def reconcile_sending_outbox(layer: CaseLayer, sent_records: list[dict[str, Any]
     return out
 
 
-def enqueue_send_followup(layer: CaseLayer, executed: dict[str, Any]) -> None:
+def _result_stage_token(body: str | None) -> str:
+    for line in str(body or "").splitlines():
+        if line.startswith("SEND_STAGE="):
+            return line.split("=", 1)[1].strip()
+    return ""
+
+
+def _next_result_kind_suffix(layer: CaseLayer, control_id: str) -> str:
+    rows = layer.conn.execute(
+        "SELECT kind, status FROM desk_result_outbox WHERE control_gmail_id = ? AND kind LIKE 'result%'",
+        (control_id,),
+    ).fetchall()
+    used = {str(row["kind"]) for row in rows if str(row["status"] or "") in {"sent", "unknown", "sending", "pending"}}
+    if "result" not in used:
+        return ""
+    if "result_send" not in used:
+        return "_send"
+    return "_outcome"
+
+
+def enqueue_send_outcome(
+    layer: CaseLayer,
+    action_id: int | None,
+    *,
+    executed: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """One accurate current-stage result. Does not claim recipient receipt from API success."""
+    from .desk_outcome import STAGE_QUEUED, outcome_payload
+
     ensure_bridge_tables(layer)
-    action_id = executed.get("action_id")
     if not action_id:
-        return
+        return {"ok": False, "reason": "missing_action"}
     action = layer.conn.execute("SELECT * FROM case_send_actions WHERE id = ?", (action_id,)).fetchone()
     if not action:
-        return
-    control_id = action["control_gmail_id"]
-    if not control_id:
-        return
-    if executed.get("ok"):
-        human = "The isolated internal message was submitted once. Independent verify is still required."
-    elif executed.get("unknown"):
-        human = "The isolated internal send outcome is unknown. It will not be retried automatically."
-    else:
-        human = "The isolated internal send did not complete. Nothing further was retried."
-    payload = {
-        "ok": bool(executed.get("ok")),
-        "intent": INTENT_APPROVE_SEND,
-        "case_id": action["case_id"],
-        "draft_version": action["draft_version"],
-        "control_gmail_id": control_id,
-        "send_queued": True,
-        "execute_send": True,
-        "send_status": executed.get("status") or executed.get("reason"),
-        "provider_message_id": executed.get("provider_message_id"),
-        "reason": executed.get("reason"),
-        "human": human,
-    }
+        return {"ok": False, "reason": "unknown_action"}
+    action = dict(action)
+    if not action.get("control_gmail_id"):
+        return {"ok": False, "reason": "missing_control"}
+    extra = dict(executed or {})
+    if not extra.get("provider_message_id"):
+        prior = layer.conn.execute(
+            """
+            SELECT provider_message_id FROM case_send_attempts
+            WHERE action_id = ? AND provider_message_id IS NOT NULL
+            ORDER BY id DESC LIMIT 1
+            """,
+            (action_id,),
+        ).fetchone()
+        if prior:
+            extra["provider_message_id"] = prior["provider_message_id"]
+    payload = outcome_payload(action, executed=extra or None)
+    if payload.get("send_stage") == STAGE_QUEUED:
+        return {"ok": True, "deferred": True, "send_stage": STAGE_QUEUED, "enqueued": False}
     payload["result_email"] = format_result_email(payload)
-    control_key = str(control_id)
+    control_key = str(action["control_gmail_id"])
     _supersede_pending_control_mail(layer, control_key, ("case",))
-    pending_result = layer.conn.execute(
+    pending = layer.conn.execute(
         """
-        SELECT id FROM desk_result_outbox
-        WHERE control_gmail_id = ? AND kind = 'result' AND status = 'pending'
+        SELECT id, body FROM desk_result_outbox
+        WHERE control_gmail_id = ? AND kind LIKE 'result%' AND status = 'pending'
+        ORDER BY id DESC LIMIT 1
         """,
         (control_key,),
     ).fetchone()
-    if pending_result:
-        mail = payload["result_email"]
+    if pending:
         layer.conn.execute(
             "UPDATE desk_result_outbox SET subject = ?, body = ? WHERE id = ? AND status = 'pending'",
-            (mail["subject"], mail["body"], pending_result["id"]),
+            (payload["result_email"]["subject"], payload["result_email"]["body"], pending["id"]),
         )
-        return
-    suffix = _followup_kind_suffix(layer, control_key)
+        return {
+            "ok": True,
+            "updated_pending": True,
+            "send_stage": payload["send_stage"],
+            "kind": "result",
+            "recipient_receipt_verified": False if not payload["recipient_receipt_verified"] else True,
+        }
+    same = layer.conn.execute(
+        """
+        SELECT id, body, kind FROM desk_result_outbox
+        WHERE control_gmail_id = ? AND kind LIKE 'result%' AND status IN ('sent', 'sending', 'unknown')
+        ORDER BY id DESC
+        """,
+        (control_key,),
+    ).fetchall()
+    if any(_result_stage_token(row["body"]) == payload["send_stage"] for row in same):
+        return {
+            "ok": True,
+            "already_reported": True,
+            "send_stage": payload["send_stage"],
+            "enqueued": False,
+        }
+    suffix = _next_result_kind_suffix(layer, control_key)
     enqueue_control_deliveries(layer, payload, kind_suffix=suffix, include_case=False)
+    return {
+        "ok": True,
+        "enqueued": True,
+        "send_stage": payload["send_stage"],
+        "kind": f"result{suffix}",
+        "provider_accepted": payload["provider_accepted"],
+        "sent_verified": payload["sent_verified"],
+        "recipient_receipt_verified": payload["recipient_receipt_verified"],
+    }
+
+
+def enqueue_send_followup(layer: CaseLayer, executed: dict[str, Any]) -> dict[str, Any]:
+    return enqueue_send_outcome(layer, executed.get("action_id"), executed=executed)
