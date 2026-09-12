@@ -20,7 +20,7 @@ Phase E proves one version-bound internal send: contactus@ → daniel@ only, aft
 
 ## Lead Desk control (2026-09-12)
 
-Daniel speaks naturally to ChatGPT. ChatGPT interprets intent and submits a small structured action. The backend validates the exact case, draft version, recipient, payload, and latest inbound, then executes narrowly. Do not ask Daniel for case IDs or a magic phrase. Do not grow Python phrase lists or model his speech in code. `normalize_desk_intent` is a temporary fallback only. Brenda and Ally are office owners; do not steal those cases or send as AI unless Daniel reassigns. ChatGPT never bypasses Phase E binding.
+Daniel speaks naturally to ChatGPT. ChatGPT interprets intent and sends a private Gmail control message. The backend validates the exact case, draft version, nonce, packet hash, recipient, payload, and latest inbound, then executes narrowly. Do not ask Daniel for case IDs or a magic phrase. Do not grow Python phrase lists or model his speech in code. `normalize_desk_intent` is a temporary fallback only. Brenda and Ally are office owners; do not steal those cases or send as AI unless Daniel reassigns. ChatGPT never bypasses Phase E binding.
 
 ## Production intake vs isolated test (2026-09-12)
 

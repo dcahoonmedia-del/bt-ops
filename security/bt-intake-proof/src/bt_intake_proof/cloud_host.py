@@ -51,6 +51,8 @@ def dispatch_pending(store: ReceiptStore) -> list[dict[str, Any]]:
         marker = str(receipt.get("test_marker") or "")
         if not marker.startswith(MARKER_PREFIX):
             continue
+        if "DESK-CTRL" in marker or str(receipt.get("classification") or "") == "desk_control":
+            continue
         nonce = f"bt-cloud-{receipt['gmail_message_id']}"
         constructor = build_constructor(receipt, nonce)
         payload_path = store.path.parent / f"dispatch-{receipt['gmail_message_id']}.json"

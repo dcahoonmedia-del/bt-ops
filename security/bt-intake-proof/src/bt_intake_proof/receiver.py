@@ -6,7 +6,7 @@ import json
 from typing import Any, Callable
 
 from . import eligibility
-from .constants import DETECTION_EVENT_DRIVEN, MAILBOX
+from .constants import CLASS_DESK_CONTROL, DETECTION_EVENT_DRIVEN, MAILBOX, MARKER_DESK_CTRL
 from .intake_mode import require_isolated_live_receiver
 from .gmail_readonly import added_message_ids, decode_raw_message, gmail_internal_date
 from .oauth_consent import OAuthClientError
@@ -47,6 +47,36 @@ def hydrate_receipt(
     recipients = decoded.get("recipients") or []
     subject = decoded.get("subject") or ""
     body = decoded.get("body_text") or ""
+    from .desk_bridge import inspect_inbound
+
+    inspection = inspect_inbound(sender, subject, body)
+    if inspection.get("shaped"):
+        return {
+            "eligible": False,
+            "reasons": (
+                ["desk_control_intercept"]
+                if inspection.get("sender_ok")
+                else ["control_imitation", "sender_not_verified_daniel"]
+            ),
+            "mailbox": mailbox,
+            "sender": sender,
+            "recipients": recipients,
+            "marker": MARKER_DESK_CTRL,
+            "classification": CLASS_DESK_CONTROL,
+            "gmail_message_id": message["id"],
+            "thread_id": message.get("threadId") or "",
+            "rfc_message_id": decoded.get("rfc_message_id"),
+            "subject": subject,
+            "gmail_received_at": decoded.get("gmail_received_at") or gmail_internal_date(message),
+            "detected_at": utc_now(),
+            "body_text": body,
+            "raw_message": decoded.get("raw_message"),
+            "labels_before": labels,
+            "labels_after": labels,
+            "detection_path": detection_path,
+            "test_marker": MARKER_DESK_CTRL,
+            "desk_control": inspection,
+        }
     decision = eligibility.evaluate_message(
         mailbox=mailbox,
         sender=sender,
@@ -111,6 +141,10 @@ def process_notification(
         labels_after = list((gmail.get_message(item["id"], fmt="metadata").get("labelIds") or []))
         receipt = hydrate_receipt(mailbox, message, thread_ids, detection_path)
         receipt["labels_after"] = labels_after
+        if receipt.get("classification") == CLASS_DESK_CONTROL:
+            from .desk_bridge import process_control_receipt
+
+            receipt["desk_control_result"] = process_control_receipt(store, receipt)
         receipts.append(receipt)
 
     new_history = str(history.get("historyId") or parsed["historyId"])

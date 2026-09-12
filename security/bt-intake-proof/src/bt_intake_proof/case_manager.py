@@ -235,7 +235,10 @@ def draft_pending_cases(store: ReceiptStore) -> list[dict[str, Any]]:
 
 
 def process_cases(store: ReceiptStore) -> dict[str, Any]:
+    from .desk_bridge import process_pending_controls
+
     synced = sync_cases(store)
+    controls = process_pending_controls(store)
     drafted = draft_pending_cases(store)
     queued = queue_approved_phasee_sends(CaseLayer(store))
-    return {"synced": synced, "drafted": drafted, "phasee_queued": queued}
+    return {"synced": synced, "controls": controls, "drafted": drafted, "phasee_queued": queued}

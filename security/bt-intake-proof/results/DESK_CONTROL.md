@@ -1,5 +1,7 @@
 # Lead Desk control
 
-**Contract/tests: PASS.** Structured ChatGPT actions are the primary path. The Python utterance helper is a temporary fallback and was not expanded. Conversational send is not a new live customer-send path.
+**Gmail bridge/tests: PASS.** ChatGPT interprets. Private control mail from daniel@ is the iPhone transport. Custom MCP was not opened. The Python utterance helper remains fallback only.
 
-ChatGPT interprets. The backend binds. Phase E mismatches, holds, and office ownership still block send.
+Valid current actions apply. Stale, wrong nonce/hash, customer imitation, and office holds fail. Revision creates a new draft version. Send still requires the exact Phase E packet and is queued, not auto-executed.
+
+Ready for a real ChatGPT iPhone test on internal cases only.

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .constants import ALLOWED_SENDER
+from .desk_bridge import compute_packet_binding, format_binding_block
 from .lead_desk import LeadDesk, db_fingerprint
 from .store import utc_now
 
@@ -22,9 +23,12 @@ DESK_MARKERS = (MARKER_QUEUE, MARKER_CASE, MARKER_HEALTH)
 HEADER = (
     "B&T Lead Desk packet (internal, read-only). "
     "Answer Daniel from this email, not from earlier chat memory. "
-    "Daniel may speak naturally. Interpret his intent and submit a structured desk action. "
-    "Do not ask him for case IDs, draft numbers, or a magic phrase. "
-    "This packet does not approve, revise, send, or change a case."
+    "Daniel may speak naturally. Interpret his intent and send one structured "
+    "control message from daniel@ to contactus@. "
+    "Copy the hidden machine binding from this packet. "
+    "Do not ask him for case IDs, draft numbers, hashes, or a magic phrase. "
+    "Do not read machine fields to Daniel. "
+    "This packet itself does not approve, revise, send, or change a case."
 )
 
 
@@ -101,6 +105,34 @@ def format_queue_email(listed: dict[str, Any], *, generated_at: str, fingerprint
         "kind": "queue",
         "marker": MARKER_QUEUE,
     }
+
+
+def _draft_body(detail: dict[str, Any]) -> str:
+    draft = detail.get("draft") or {}
+    proposed = draft.get("proposed_response")
+    if isinstance(proposed, dict):
+        return str(proposed.get("text") or "")
+    return "" if proposed is None else str(proposed)
+
+
+def _binding_for_detail(detail: dict[str, Any]) -> dict[str, Any] | None:
+    draft = detail.get("draft")
+    if not draft:
+        return None
+    inbound = detail.get("latest_inbound") or {}
+    return compute_packet_binding(
+        {
+            "case_id": detail.get("case_id"),
+            "draft_version": detail.get("draft_version"),
+            "latest_inbound_message_id": inbound.get("gmail_message_id") or "",
+            "mailbox": detail.get("mailbox"),
+        },
+        {
+            "version": draft.get("version"),
+            "nonce": draft.get("nonce") or "",
+            "proposed_response": _draft_body(detail),
+        },
+    )
 
 
 def format_case_email(detail: dict[str, Any], *, generated_at: str, fingerprint: str) -> dict[str, str]:
@@ -222,6 +254,9 @@ def format_case_email(detail: dict[str, Any], *, generated_at: str, fingerprint:
         "--- Event history ---",
         *event_lines,
     ]
+    binding = _binding_for_detail(detail)
+    if binding:
+        lines.extend(["", format_binding_block(binding)])
     return {
         "to": ALLOWED_SENDER,
         "cc": "",
@@ -230,6 +265,7 @@ def format_case_email(detail: dict[str, Any], *, generated_at: str, fingerprint:
         "kind": "case",
         "marker": MARKER_CASE,
         "case_id": detail.get("case_id"),
+        "binding": binding,
     }
 
 
@@ -311,7 +347,7 @@ def build_desk_packets(store_path: str | Path, *, case_id: str | None = None) ->
     try:
         listed = desk.list_cases(limit=50)
         latest_id = case_id or ((listed.get("cases") or [{}])[0].get("case_id") if listed.get("cases") else None)
-        detail = desk.get_case(latest_id) if latest_id else None
+        detail = desk.get_case(latest_id, debug=True) if latest_id else None
         health = desk.get_health()
     finally:
         desk.close()
