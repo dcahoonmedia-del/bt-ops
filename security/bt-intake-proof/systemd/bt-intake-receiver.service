@@ -1,0 +1,23 @@
+[Unit]
+Description=B&T contactus intake receiver (Gmail watch to Pub/Sub to SQLite to isolated Codex)
+After=network-online.target docker.service
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=btintake
+Group=btintake
+SupplementaryGroups=docker
+WorkingDirectory=/opt/bt-intake-proof
+EnvironmentFile=/etc/bt-intake-proof/env
+ExecStart=/usr/bin/python3 -m bt_intake_proof.cloud_host
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bt-intake-receiver
+
+[Install]
+WantedBy=multi-user.target

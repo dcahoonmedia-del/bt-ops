@@ -86,6 +86,11 @@ def cloud_token_path() -> Path:
     return Path(override) if override else SECRETS / "project_owner_cloud_token.json"
 
 
+def store_path() -> Path:
+    override = os.environ.get("BT_INTAKE_STORE", "").strip()
+    return Path(override) if override else ROOT / "results" / "live" / "receipts.sqlite"
+
+
 def _token_payload() -> dict[str, Any] | None:
     path = token_path()
     if not path.exists():

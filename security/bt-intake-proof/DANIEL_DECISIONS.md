@@ -1,3 +1,3 @@
-# Intake proof complete
+# Phase B is done
 
-No further marked emails are needed. Do not send more `BT-INTAKE-PROOF-*` messages for this proof.
+No more console clicks and no more marked test mail. The cloud-hosted intake proof passed. Stop here.

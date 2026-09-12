@@ -1,0 +1,36 @@
+{
+  "status": "PASS",
+  "vm": "bt-intake-cloud",
+  "external_ip": "35.243.167.73",
+  "machine": "e2-small",
+  "zone": "us-east1-c",
+  "boot_at": "2026-09-12T03:39:00Z",
+  "service_started_at": "2026-09-12T03:39:31Z",
+  "unit": "bt-intake-receiver",
+  "active": true,
+  "enabled": true,
+  "automatic_start": true,
+  "identity_source": "gce_metadata",
+  "service_account": "bt-intake-proof-receiver@bt-intake-proof.iam.gserviceaccount.com",
+  "matches_receiver_id": true,
+  "json_key_created": false,
+  "impersonation": false,
+  "startup_recover_ok": true,
+  "startup_recover_receipt_count": 0,
+  "start_history_id": "6008282",
+  "end_history_id": "6008282",
+  "cursor_preserved": true,
+  "store_receipts_after": 4,
+  "receipts_unchanged": [
+    "1a093a821986ef7b",
+    "1a093ad1d3545549",
+    "1a093ae78cd0ce80",
+    "1a093af31abefa63"
+  ],
+  "docker_image": "bt-ops-codex-isolation:0.154.0",
+  "docker_volume": "codex-iso-chatgpt-home",
+  "secrets_present": [
+    "contactus_gmail_readonly_token.json",
+    "gmail_oauth_client.json"
+  ]
+}

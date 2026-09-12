@@ -8,6 +8,7 @@ from typing import Any
 
 from .cloud_auth import refresh_cloud_token
 from .constants import MAILBOX
+from .gce_identity import metadata_access_token, metadata_available
 from .receiver import process_notification
 from .receiver_sa import acknowledge, impersonate_receiver, pull_subscription
 from .store import ReceiptStore, utc_now
@@ -94,3 +95,10 @@ def receive_once(store: ReceiptStore, gmail: Any, sa_token: str) -> dict[str, An
 def impersonated_receiver_token() -> str:
     record = refresh_cloud_token()
     return impersonate_receiver(str(record.get("access_token") or ""))
+
+
+def receiver_access_token() -> str:
+    """Attached GCE identity first. Impersonation only when metadata is absent."""
+    if metadata_available():
+        return metadata_access_token()
+    return impersonated_receiver_token()
