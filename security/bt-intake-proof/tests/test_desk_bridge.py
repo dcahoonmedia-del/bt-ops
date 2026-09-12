@@ -16,6 +16,7 @@ from bt_intake_proof.desk_bridge import (
     process_control_mail,
 )
 from bt_intake_proof.desk_origin import daniel_origin_evidence
+from bt_intake_proof.desk_sent_proof import fixture_sent_lookup, set_test_sent_lookup
 from bt_intake_proof.desk_control import (
     INTENT_APPROVE_SEND,
     INTENT_HOLD,
@@ -76,7 +77,14 @@ class FakeGmail:
         return [mid for mid, item in self.messages.items() if item["threadId"] == thread_id]
 
 
-def _raw(subject: str, body: str, sender: str = ALLOWED_SENDER, ar: str | None = None) -> str:
+def _raw(
+    subject: str,
+    body: str,
+    sender: str = ALLOWED_SENDER,
+    ar: str | None = None,
+    message_id: str = "<ctrl@bt>",
+    date: str = "Sat, 12 Sep 2026 14:00:00 +0000",
+) -> str:
     import base64
     from email.message import EmailMessage
 
@@ -100,7 +108,8 @@ def _raw(subject: str, body: str, sender: str = ALLOWED_SENDER, ar: str | None =
     msg["From"] = sender
     msg["To"] = MAILBOX
     msg["Subject"] = subject
-    msg["Message-ID"] = "<ctrl@bt>"
+    msg["Message-ID"] = message_id
+    msg["Date"] = date
     msg.set_content(body)
     return base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
 
@@ -114,6 +123,7 @@ class DeskBridgeTests(unittest.TestCase):
         ensure_send_tables(self.layer)
 
     def tearDown(self) -> None:
+        set_test_sent_lookup(None)
         self.store.close()
         self.tmp.cleanup()
 
@@ -136,16 +146,33 @@ class DeskBridgeTests(unittest.TestCase):
     def _apply(self, intent: str, binding: dict, **extra) -> dict:
         mail = format_control_mail(intent, binding, owner=extra.get("owner"), note=extra.get("note"))
         mid = extra.get("gmail_message_id", f"ctrl-{intent}")
+        body = extra.get("body", mail["body"])
+        rfc = extra.get("rfc_message_id", f"<{mid}@desk.btpestcontrol.com>")
+        received = extra.get("received_at", "2026-09-12T14:00:00+00:00")
         evidence = extra.get("provider_evidence")
         if evidence is None and extra.get("origin", True) and extra.get("sender", ALLOWED_SENDER) == ALLOWED_SENDER:
             evidence = daniel_origin_evidence(mid)
+        if evidence is not None:
+            evidence = {
+                **evidence,
+                "rfc_message_id": rfc,
+                "received_at": received,
+                "recipients": extra.get("recipients", [MAILBOX]),
+            }
+        lookup = extra.get("sent_lookup")
+        if lookup is None and extra.get("origin", True) and extra.get("sender", ALLOWED_SENDER) == ALLOWED_SENDER:
+            lookup = fixture_sent_lookup(mail["subject"], body, rfc_message_id=rfc, received_at=received)
         return process_control_mail(
             self.layer,
             sender=extra.get("sender", ALLOWED_SENDER),
             subject=mail["subject"],
-            body=mail["body"],
+            body=body,
             gmail_message_id=mid,
             provider_evidence=evidence,
+            rfc_message_id=rfc,
+            recipients=extra.get("recipients", [MAILBOX]),
+            received_at=received,
+            sent_lookup=lookup,
         )
 
     def test_control_mail_maps_to_structured_action(self) -> None:
@@ -168,9 +195,32 @@ class DeskBridgeTests(unittest.TestCase):
             provider_evidence=daniel_origin_evidence("inspect-1"),
         )
         self.assertTrue(inspection["shaped"])
-        self.assertTrue(inspection["sender_ok"])
-        self.assertFalse(inspection["becomes_case"])
-        self.assertFalse(inspection["eligible_for_codex"])
+        self.assertFalse(inspection["sender_ok"])
+        self.assertIn(
+            inspection["reason"],
+            {"rfc_message_id_missing", "sent_mailbox_access_blocked", "inbound_timing_missing"},
+        )
+        rfc = "<inspect-1@desk.btpestcontrol.com>"
+        received = "2026-09-12T14:00:00+00:00"
+        proven = inspect_inbound(
+            ALLOWED_SENDER,
+            mail["subject"],
+            mail["body"],
+            provider_evidence={
+                **daniel_origin_evidence("inspect-1"),
+                "rfc_message_id": rfc,
+                "received_at": received,
+                "recipients": [MAILBOX],
+            },
+            rfc_message_id=rfc,
+            recipients=[MAILBOX],
+            received_at=received,
+            sent_lookup=fixture_sent_lookup(mail["subject"], mail["body"], rfc_message_id=rfc, received_at=received),
+        )
+        self.assertTrue(proven["sender_ok"], proven)
+        self.assertFalse(proven["origin"]["full_identity_pass"])
+        self.assertFalse(proven["becomes_case"])
+        self.assertFalse(proven["eligible_for_codex"])
 
     def test_valid_current_hold_succeeds(self) -> None:
         case_id, binding = self._open_phasee()
@@ -321,6 +371,14 @@ class DeskBridgeTests(unittest.TestCase):
     def test_receiver_intercepts_control_and_skips_case(self) -> None:
         case_id, binding = self._open_phasee("pe-recv")
         mail = format_control_mail(INTENT_HOLD, binding)
+        set_test_sent_lookup(
+            fixture_sent_lookup(
+                mail["subject"],
+                mail["body"],
+                rfc_message_id="<ctrl@bt>",
+                received_at="2026-09-12T14:00:00+00:00",
+            )
+        )
         self.store.upsert_watch(MAILBOX, history_id="8000", expiration="1", topic="topic")
         gmail = FakeGmail(
             {

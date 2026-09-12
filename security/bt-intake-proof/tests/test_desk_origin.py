@@ -50,8 +50,10 @@ class DeskOriginParseTests(unittest.TestCase):
                 )
             ]
         )
-        self.assertTrue(mailbox["accepted"])
+        self.assertFalse(mailbox["accepted"])
+        self.assertTrue(mailbox["mailbox_bound"])
         self.assertEqual(mailbox["identity_level"], "mailbox_bound_provider_result")
+        self.assertEqual(mailbox["reason"], "mailbox_bound_provider_result_not_authorization")
         self.assertFalse(mailbox["full_identity_pass"])
 
     def test_domain_dkim_is_not_mailbox_identity(self) -> None:
@@ -80,8 +82,10 @@ class DeskOriginParseTests(unittest.TestCase):
                 )
             ]
         )
-        self.assertTrue(result["accepted"])
+        self.assertFalse(result["accepted"])
+        self.assertTrue(result["mailbox_bound"])
         self.assertTrue(result["spf_mailbox_ok"])
+        self.assertEqual(result["reason"], "mailbox_bound_provider_result_not_authorization")
         self.assertFalse(result["full_identity_pass"])
 
     def test_lookalike_domains_fail(self) -> None:

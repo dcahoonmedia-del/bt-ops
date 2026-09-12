@@ -14,18 +14,20 @@ Identity is not proven by:
   domain signed, not that the mailbox was daniel@)
 - an arbitrary string `mx.google.com` in a header we did not fetch
 
-Mailbox-bound provider result (what this module can claim)
-----------------------------------------------------------
+Mailbox-bound provider result (prerequisite, not authorization)
+--------------------------------------------------------------
 
-A Gmail-fetched first `Authentication-Results` header may authorize only
-when a *method-specific* result is bound to daniel@ itself:
+A Gmail-fetched first `Authentication-Results` header may record
+`mailbox_bound=True` only when a *method-specific* result binds to
+daniel@ itself:
 
 - `spf=pass` on the same spec as `smtp.mailfrom=daniel@btpestcontrol.com`
 - `dkim=pass` on the same spec as `header.i=daniel@btpestcontrol.com`
 
-`dkim=pass header.i=@btpestcontrol.com` is recorded as domain evidence
-only. It does not authorize. contactus@, brenda@, ally@, and daniel@
-share that organizational DKIM identity.
+`accepted` is never set from this module. Authorization requires
+`desk_sent_proof.authorize_control_sender` (mailbox-bound AR plus an
+exact daniel@ Sent match). `dkim=pass header.i=@btpestcontrol.com` is
+domain evidence only.
 
 This is not full human-identity proof. It does not survive compromise of
 daniel@ or of the contactus Gmail API token.
@@ -47,14 +49,14 @@ that mailbox.
 
 authserv-id must be exactly `mx.google.com` (no lookalike suffix).
 
-Missing capability for a stronger origin claim
-----------------------------------------------
+Sender-mailbox corroboration (required to authorize)
+----------------------------------------------------
 
-A Message-ID match against daniel@ Sent would prove the control was
-submitted from that mailbox independently of AR parsing. That path is
-not available on this agent (no daniel read token on the VM; Cursor
-Gmail MCP is not the host). Until that exists, authorization stays at
-mailbox-bound SPF/DKIM method results, not "full identity PASS".
+`desk_sent_proof` must find exactly one authenticated daniel@ Sent
+message matching recipient, canonical control payload, and timing — not
+Message-ID alone. Missing/ambiguous/mismatched evidence fails closed.
+A versioned proof row may re-attest that same control message only.
+See `results/DESK_ORIGIN_EVIDENCE.md`.
 """
 
 from __future__ import annotations
@@ -211,6 +213,7 @@ def authenticate_control_origin(
         "dkim_mailbox_ok": False,
         "dkim_domain_ok": False,
         "spf_mailbox_ok": False,
+        "mailbox_bound": False,
         "identity_level": IDENTITY_LEVEL_NONE,
         "trusted_from_header_only": False,
         "trusted_packet_hash_as_identity": False,
@@ -234,6 +237,7 @@ def authenticate_control_origin(
             "dkim_mailbox_ok": judged["dkim_mailbox_ok"],
             "dkim_domain_ok": judged["dkim_domain_ok"],
             "spf_mailbox_ok": judged["spf_mailbox_ok"],
+            "mailbox_bound": False,
             "identity_level": judged["identity_level"],
             "dkim_pass_identities": judged["dkim_pass_identities"],
             "spf_pass_mailfrom": judged["spf_pass_mailfrom"],
@@ -247,8 +251,9 @@ def authenticate_control_origin(
         return {**base, "reason": "from_not_daniel"}
     return {
         **base,
-        "accepted": True,
-        "reason": "mailbox_bound_provider_result",
+        "accepted": False,
+        "mailbox_bound": True,
+        "reason": "mailbox_bound_provider_result_not_authorization",
         "full_identity_pass": False,
     }
 

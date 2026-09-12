@@ -61,7 +61,16 @@ def hydrate_receipt(
         "gmail_message_id": message.get("id"),
         "headers": decoded.get("headers") or [],
     }
-    inspection = inspect_inbound(sender, subject, body, provider_evidence=evidence)
+    inspection = inspect_inbound(
+        sender,
+        subject,
+        body,
+        provider_evidence=evidence,
+        headers=decoded.get("headers") or [],
+        rfc_message_id=decoded.get("rfc_message_id"),
+        recipients=recipients,
+        received_at=decoded.get("gmail_received_at") or gmail_internal_date(message),
+    )
     if inspection.get("shaped"):
         return {
             "eligible": False,

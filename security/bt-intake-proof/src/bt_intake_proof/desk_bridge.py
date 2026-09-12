@@ -42,7 +42,14 @@ from .desk_control import (
     SOURCE_CHATGPT,
     submit_desk_action,
 )
-from .desk_origin import authenticate_control_origin, unquoted_control_text
+from .desk_origin import unquoted_control_text
+from .desk_sent_proof import (
+    PROOF_VERSION,
+    REASON_LEGACY,
+    authorize_control_sender,
+    configured_sent_lookup,
+    inbound_control_view,
+)
 from .eligibility import normalize_email
 from .phasee_constants import PHASEE_TO
 from .send_bind import (
@@ -266,6 +273,11 @@ def inspect_inbound(
     *,
     provider_evidence: dict[str, Any] | None = None,
     headers: Any = None,
+    rfc_message_id: str | None = None,
+    recipients: list[str] | None = None,
+    received_at: str | None = None,
+    sent_lookup: Any = None,
+    persisted_proof: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Classify an inbound before ordinary intake. Origin is fail-closed."""
     if not looks_like_control_mail(subject, body):
@@ -273,7 +285,23 @@ def inspect_inbound(
     sender_n = normalize_email(sender)
     unquoted = unquoted_control_text(body)
     parsed = parse_control_mail(subject, unquoted)
-    origin = authenticate_control_origin(headers, sender_n, provider_evidence)
+    inbound = inbound_control_view(
+        subject=subject,
+        body=body,
+        rfc_message_id=rfc_message_id,
+        recipients=recipients,
+        received_at=received_at,
+        headers=headers,
+        provider_evidence=provider_evidence,
+    )
+    origin = authorize_control_sender(
+        headers,
+        sender_n,
+        provider_evidence,
+        inbound,
+        sent_lookup=sent_lookup if sent_lookup is not None else configured_sent_lookup(),
+        persisted_proof=persisted_proof,
+    )
     quoted_only = bool(
         MARKER_CTRL in str(body or "")
         and MARKER_CTRL not in unquoted
@@ -293,6 +321,7 @@ def inspect_inbound(
         "sender_ok": sender_ok,
         "sender": sender_n,
         "origin": origin,
+        "inbound": inbound,
         "parsed": parsed if parsed.get("ok") and parsed.get("intent") else None,
         "reason": reason,
         "quoted_only": quoted_only,
@@ -355,6 +384,39 @@ def ensure_bridge_tables(layer: CaseLayer) -> None:
         layer.conn.execute(
             "ALTER TABLE desk_control_inbox ADD COLUMN origin_authenticated INTEGER NOT NULL DEFAULT 0"
         )
+    for name, spec in (
+        ("subject", "TEXT"),
+        ("body", "TEXT"),
+        ("rfc_message_id", "TEXT"),
+        ("inbound_at", "TEXT"),
+        ("recipients_json", "TEXT"),
+        ("headers_json", "TEXT"),
+    ):
+        if name not in inbox_cols:
+            layer.conn.execute(f"ALTER TABLE desk_control_inbox ADD COLUMN {name} {spec}")
+            inbox_cols.add(name)
+    if "provider_evidence_json" not in inbox_cols:
+        layer.conn.execute("ALTER TABLE desk_control_inbox ADD COLUMN provider_evidence_json TEXT")
+        inbox_cols.add("provider_evidence_json")
+    names = _table_names(layer)
+    if "desk_origin_proof" not in names:
+        layer.conn.executescript(
+            """
+        CREATE TABLE IF NOT EXISTS desk_origin_proof (
+            id INTEGER PRIMARY KEY,
+            proof_version TEXT NOT NULL,
+            control_gmail_id TEXT NOT NULL UNIQUE,
+            rfc_message_id TEXT NOT NULL,
+            payload_hash TEXT NOT NULL,
+            recipient TEXT NOT NULL,
+            inbound_at TEXT,
+            sent_at TEXT,
+            sent_gmail_id TEXT,
+            verdict TEXT NOT NULL,
+            verified_at TEXT NOT NULL
+        );
+            """
+        )
 
 
 def record_control_inbox(
@@ -364,14 +426,23 @@ def record_control_inbox(
     sender: str,
     parsed: dict[str, Any],
     origin_authenticated: bool = False,
+    subject: str | None = None,
+    body: str | None = None,
+    rfc_message_id: str | None = None,
+    inbound_at: str | None = None,
+    recipients: list[str] | None = None,
+    headers: Any = None,
+    provider_evidence: dict[str, Any] | None = None,
 ) -> None:
     ensure_bridge_tables(layer)
     layer.conn.execute(
         """
         INSERT OR IGNORE INTO desk_control_inbox (
-            gmail_message_id, sender, parsed_json, created_at, processed, origin_authenticated
+            gmail_message_id, sender, parsed_json, created_at, processed, origin_authenticated,
+            subject, body, rfc_message_id, inbound_at, recipients_json, headers_json,
+            provider_evidence_json
         )
-        VALUES (?, ?, ?, ?, 0, ?)
+        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             gmail_message_id,
@@ -379,8 +450,52 @@ def record_control_inbox(
             json.dumps(parsed, sort_keys=True, default=str),
             utc_now(),
             1 if origin_authenticated else 0,
+            subject,
+            body,
+            rfc_message_id,
+            inbound_at,
+            json.dumps(recipients or [], sort_keys=True) if recipients is not None else None,
+            json.dumps(headers, sort_keys=True, default=str) if headers is not None else None,
+            json.dumps(provider_evidence, sort_keys=True, default=str) if provider_evidence is not None else None,
         ),
     )
+
+
+def persist_origin_proof(layer: CaseLayer, inbound: dict[str, Any], origin: dict[str, Any]) -> None:
+    ensure_bridge_tables(layer)
+    control_id = str(inbound.get("control_gmail_id") or "")
+    if not control_id or not origin.get("accepted"):
+        return
+    layer.conn.execute(
+        """
+        INSERT OR REPLACE INTO desk_origin_proof (
+            proof_version, control_gmail_id, rfc_message_id, payload_hash, recipient,
+            inbound_at, sent_at, sent_gmail_id, verdict, verified_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'exact_match', ?)
+        """,
+        (
+            PROOF_VERSION,
+            control_id,
+            str(inbound.get("rfc_message_id") or ""),
+            str(inbound.get("payload_hash") or ""),
+            MAILBOX,
+            inbound.get("received_at"),
+            (origin.get("sent_corroboration") or {}).get("sent_at") or origin.get("sent_at"),
+            origin.get("sent_gmail_id"),
+            utc_now(),
+        ),
+    )
+
+
+def load_origin_proof(layer: CaseLayer, control_gmail_id: str | None) -> dict[str, Any] | None:
+    if not control_gmail_id:
+        return None
+    ensure_bridge_tables(layer)
+    row = layer.conn.execute(
+        "SELECT * FROM desk_origin_proof WHERE control_gmail_id = ?",
+        (control_gmail_id,),
+    ).fetchone()
+    return dict(row) if row else None
 
 
 def _mark_inbox(layer: CaseLayer, gmail_message_id: str | None, result: dict[str, Any]) -> None:
@@ -637,20 +752,56 @@ def process_control_mail(
     gmail_message_id: str | None = None,
     provider_evidence: dict[str, Any] | None = None,
     headers: Any = None,
-    origin_already_authenticated: bool = False,
+    rfc_message_id: str | None = None,
+    recipients: list[str] | None = None,
+    received_at: str | None = None,
+    sent_lookup: Any = None,
 ) -> dict[str, Any]:
     """Authorize one control message. Never interprets speech. Does not execute a send."""
     ensure_bridge_tables(layer)
     ensure_send_tables(layer)
+    evidence = dict(provider_evidence or {})
+    if gmail_message_id and not evidence.get("gmail_message_id"):
+        evidence["gmail_message_id"] = gmail_message_id
+    inbound_preview = inbound_control_view(
+        subject=subject,
+        body=body,
+        rfc_message_id=rfc_message_id,
+        recipients=recipients,
+        received_at=received_at,
+        headers=headers,
+        provider_evidence=evidence,
+    )
+    if gmail_message_id:
+        already = layer.conn.execute(
+            "SELECT result_json, processed FROM desk_control_inbox WHERE gmail_message_id = ? AND processed = 1",
+            (gmail_message_id,),
+        ).fetchone()
+        if already and already["result_json"]:
+            cached = json.loads(already["result_json"])
+            proof = load_origin_proof(layer, gmail_message_id)
+            if cached.get("ok") and not persisted_proof_usable(inbound_preview, proof):
+                result = _fail(
+                    REASON_LEGACY,
+                    human="Only verified Daniel mail can control the desk.",
+                )
+                return _finish_control_result(layer, result, gmail_message_id=gmail_message_id)
+            cached["result_email"] = format_result_email(cached)
+            cached["replayed"] = True
+            return cached
+    persisted = load_origin_proof(layer, gmail_message_id)
     inspection = inspect_inbound(
         sender,
         subject,
         body,
-        provider_evidence=provider_evidence,
+        provider_evidence=evidence,
         headers=headers,
+        rfc_message_id=inbound_preview.get("rfc_message_id"),
+        recipients=inbound_preview.get("recipients"),
+        received_at=inbound_preview.get("received_at"),
+        sent_lookup=sent_lookup,
+        persisted_proof=persisted,
     )
-    if origin_already_authenticated and inspection.get("shaped"):
-        inspection = {**inspection, "sender_ok": True, "reason": None}
     if not inspection.get("shaped"):
         result = _fail("not_control_mail")
         return _finish_control_result(layer, result, gmail_message_id=gmail_message_id, enqueue=False)
@@ -665,6 +816,13 @@ def process_control_mail(
             sender=normalize_email(sender),
             parsed={"imitation": True, "reason": result["reason"]},
             origin_authenticated=False,
+            subject=subject,
+            body=body,
+            rfc_message_id=inbound_preview.get("rfc_message_id"),
+            inbound_at=inbound_preview.get("received_at"),
+            recipients=inbound_preview.get("recipients"),
+            headers=headers or evidence.get("headers"),
+            provider_evidence=evidence or None,
         )
         return _finish_control_result(layer, result, gmail_message_id=gmail_message_id)
 
@@ -677,21 +835,20 @@ def process_control_mail(
         return _finish_control_result(layer, result, gmail_message_id=gmail_message_id, nonce=parsed.get("nonce"))
 
     if gmail_message_id:
-        already = layer.conn.execute(
-            "SELECT result_json, processed FROM desk_control_inbox WHERE gmail_message_id = ? AND processed = 1",
-            (gmail_message_id,),
-        ).fetchone()
-        if already and already["result_json"]:
-            cached = json.loads(already["result_json"])
-            cached["result_email"] = format_result_email(cached)
-            cached["replayed"] = True
-            return cached
+        persist_origin_proof(layer, inspection.get("inbound") or inbound_preview, inspection.get("origin") or {})
         record_control_inbox(
             layer,
             gmail_message_id=gmail_message_id,
             sender=ALLOWED_SENDER,
             parsed=parsed,
             origin_authenticated=True,
+            subject=subject,
+            body=body,
+            rfc_message_id=inbound_preview.get("rfc_message_id"),
+            inbound_at=inbound_preview.get("received_at"),
+            recipients=inbound_preview.get("recipients"),
+            headers=headers or evidence.get("headers"),
+            provider_evidence=evidence or None,
         )
 
     parsed = {**parsed, "control_gmail_id": gmail_message_id}
@@ -778,16 +935,32 @@ def process_control_mail(
     return _finish_control_result(layer, applied, gmail_message_id=gmail_message_id, nonce=parsed.get("nonce"))
 
 
+def persisted_proof_usable(inbound: dict[str, Any], proof: dict[str, Any] | None) -> bool:
+    from .desk_sent_proof import persisted_proof_matches
+
+    return bool(proof) and persisted_proof_matches(inbound, proof)
+
+
 def process_control_receipt(store: ReceiptStore, receipt: dict[str, Any]) -> dict[str, Any]:
     layer = CaseLayer(store)
+    evidence = dict(receipt.get("_provider_evidence") or receipt.get("provider_evidence") or {})
+    if receipt.get("rfc_message_id"):
+        evidence.setdefault("rfc_message_id", receipt.get("rfc_message_id"))
+    if receipt.get("gmail_received_at"):
+        evidence.setdefault("received_at", receipt.get("gmail_received_at"))
+    if receipt.get("recipients"):
+        evidence.setdefault("recipients", receipt.get("recipients"))
     return process_control_mail(
         layer,
         sender=receipt.get("sender"),
         subject=receipt.get("subject"),
         body=receipt.get("body_text"),
         gmail_message_id=receipt.get("gmail_message_id"),
-        provider_evidence=receipt.get("_provider_evidence") or receipt.get("provider_evidence"),
+        provider_evidence=evidence,
         headers=receipt.get("_headers") or receipt.get("headers"),
+        rfc_message_id=receipt.get("rfc_message_id"),
+        recipients=receipt.get("recipients"),
+        received_at=receipt.get("gmail_received_at"),
     )
 
 
@@ -800,30 +973,42 @@ def process_pending_controls(store: ReceiptStore) -> list[dict[str, Any]]:
     results = []
     for row in rows:
         parsed = json.loads(row["parsed_json"])
-        if parsed.get("imitation") or not int(row["origin_authenticated"] if "origin_authenticated" in row.keys() else 0):
+        keys = set(row.keys())
+        subject = row["subject"] if "subject" in keys else None
+        body = row["body"] if "body" in keys else None
+        rfc = row["rfc_message_id"] if "rfc_message_id" in keys else None
+        inbound_at = row["inbound_at"] if "inbound_at" in keys else None
+        headers = None
+        recipients = None
+        evidence = None
+        if "headers_json" in keys and row["headers_json"]:
+            headers = json.loads(row["headers_json"])
+        if "recipients_json" in keys and row["recipients_json"]:
+            recipients = json.loads(row["recipients_json"])
+        if "provider_evidence_json" in keys and row["provider_evidence_json"]:
+            evidence = json.loads(row["provider_evidence_json"])
+        if parsed.get("imitation"):
             result = _fail(str(parsed.get("reason") or "sender_not_verified_daniel"))
             _finish_control_result(layer, result, gmail_message_id=row["gmail_message_id"])
             results.append(result)
             continue
-        fake_body = format_control_mail(
-            str(parsed.get("intent") or ""),
-            {
-                "case_id": parsed.get("case_id"),
-                "draft_version": parsed.get("draft_version"),
-                "nonce": parsed.get("nonce"),
-                "packet_hash": parsed.get("packet_hash"),
-            },
-            owner=parsed.get("owner"),
-            note=parsed.get("note"),
-        )["body"]
+        if not subject or body is None or not rfc:
+            result = _fail("legacy_inbox_lacks_inbound_snapshot")
+            _finish_control_result(layer, result, gmail_message_id=row["gmail_message_id"])
+            results.append(result)
+            continue
         results.append(
             process_control_mail(
                 layer,
                 sender=row["sender"],
-                subject=MARKER_CTRL,
-                body=fake_body,
+                subject=subject,
+                body=body,
                 gmail_message_id=row["gmail_message_id"],
-                origin_already_authenticated=True,
+                provider_evidence=evidence,
+                headers=headers,
+                rfc_message_id=rfc,
+                recipients=recipients,
+                received_at=inbound_at,
             )
         )
     return results

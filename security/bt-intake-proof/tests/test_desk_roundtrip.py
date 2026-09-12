@@ -34,6 +34,7 @@ from bt_intake_proof.desk_bridge import (
 )
 from bt_intake_proof.desk_control import INTENT_APPROVE_SEND, INTENT_HOLD, INTENT_REVISE
 from bt_intake_proof.desk_origin import authenticate_control_origin, daniel_origin_evidence, unquoted_control_text
+from bt_intake_proof.desk_sent_proof import fixture_sent_lookup, set_test_sent_lookup
 from bt_intake_proof.desk_runtime import finish_desk_roundtrip
 from bt_intake_proof.phasee import install_phasee_draft
 from bt_intake_proof.phasee_constants import PHASEE_CASE_MARKER, STATUS_ATTEMPTED, STATUS_QUEUED, STATUS_UNKNOWN
@@ -76,6 +77,7 @@ class DeskRoundtripTests(unittest.TestCase):
         ensure_send_tables(self.layer)
 
     def tearDown(self) -> None:
+        set_test_sent_lookup(None)
         self.store.close()
         self.tmp.cleanup()
 
@@ -97,13 +99,31 @@ class DeskRoundtripTests(unittest.TestCase):
     def _apply(self, intent: str, binding: dict, **extra) -> dict:
         mail = format_control_mail(intent, binding, owner=extra.get("owner"), note=extra.get("note"))
         mid = extra.get("gmail_message_id", f"ctrl-{intent}-{binding.get('nonce')}")
+        body = extra.get("body", mail["body"])
+        rfc = extra.get("rfc_message_id", f"<{mid}@desk.btpestcontrol.com>")
+        received = extra.get("received_at", "2026-09-12T14:00:00+00:00")
+        evidence = extra.get("provider_evidence", daniel_origin_evidence(mid))
+        if evidence is not None:
+            evidence = {
+                **evidence,
+                "rfc_message_id": rfc,
+                "received_at": received,
+                "recipients": extra.get("recipients", [MAILBOX]),
+            }
+        lookup = extra.get("sent_lookup")
+        if lookup is None and extra.get("sender", ALLOWED_SENDER) == ALLOWED_SENDER:
+            lookup = fixture_sent_lookup(mail["subject"], body, rfc_message_id=rfc, received_at=received)
         return process_control_mail(
             self.layer,
             sender=extra.get("sender", ALLOWED_SENDER),
             subject=mail["subject"],
-            body=extra.get("body", mail["body"]),
+            body=body,
             gmail_message_id=mid,
-            provider_evidence=extra.get("provider_evidence", daniel_origin_evidence(mid)),
+            provider_evidence=evidence,
+            rfc_message_id=rfc,
+            recipients=extra.get("recipients", [MAILBOX]),
+            received_at=received,
+            sent_lookup=lookup,
         )
 
     def test_from_alone_and_forged_ar_fail_closed(self) -> None:
@@ -154,13 +174,24 @@ class DeskRoundtripTests(unittest.TestCase):
         self.assertIn("packet_hash_invalid", bad.get("blocks") or [])
         mail = format_control_mail("not_an_intent", binding)
         mid = "bad-intent"
+        rfc = f"<{mid}@desk.btpestcontrol.com>"
+        received = "2026-09-12T14:00:00+00:00"
         result = process_control_mail(
             self.layer,
             sender=ALLOWED_SENDER,
             subject=mail["subject"],
             body=mail["body"],
             gmail_message_id=mid,
-            provider_evidence=daniel_origin_evidence(mid),
+            provider_evidence={
+                **daniel_origin_evidence(mid),
+                "rfc_message_id": rfc,
+                "received_at": received,
+                "recipients": [MAILBOX],
+            },
+            rfc_message_id=rfc,
+            recipients=[MAILBOX],
+            received_at=received,
+            sent_lookup=fixture_sent_lookup(mail["subject"], mail["body"], rfc_message_id=rfc, received_at=received),
         )
         self.assertFalse(result["ok"])
         self.assertEqual(result["reason"], "unsupported_bridge_intent")
@@ -367,6 +398,8 @@ class DeskRoundtripTests(unittest.TestCase):
             layer = CaseLayer(store)
             ensure_send_tables(layer)
             mail = format_control_mail(INTENT_HOLD, binding)
+            rfc = f"<{mid}@desk.btpestcontrol.com>"
+            received = "2026-09-12T14:00:00+00:00"
             barrier.wait()
             try:
                 results[index] = process_control_mail(
@@ -375,7 +408,18 @@ class DeskRoundtripTests(unittest.TestCase):
                     subject=mail["subject"],
                     body=mail["body"],
                     gmail_message_id=mid,
-                    provider_evidence=daniel_origin_evidence(mid),
+                    provider_evidence={
+                        **daniel_origin_evidence(mid),
+                        "rfc_message_id": rfc,
+                        "received_at": received,
+                        "recipients": [MAILBOX],
+                    },
+                    rfc_message_id=rfc,
+                    recipients=[MAILBOX],
+                    received_at=received,
+                    sent_lookup=fixture_sent_lookup(
+                        mail["subject"], mail["body"], rfc_message_id=rfc, received_at=received
+                    ),
                 )
             except Exception as exc:  # noqa: BLE001
                 results[index] = exc
