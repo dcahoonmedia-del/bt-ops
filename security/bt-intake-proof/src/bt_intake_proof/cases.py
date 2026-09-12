@@ -87,13 +87,14 @@ def marker_kind(marker: str | None) -> str:
 
 def parse_decision(subject: str | None, body: str | None) -> dict[str, Any] | None:
     blob = f"{subject or ''}\n{body or ''}"
-    kind = marker_kind(blob)
-    decision = {
-        "decision_approve": DECISION_APPROVE,
-        "decision_changes": DECISION_CHANGES,
-        "decision_none": DECISION_NONE,
-    }.get(kind)
-    if not decision:
+    # Decision markers win over a quoted CASE-REVIEW subject from an iPhone reply.
+    if MARKER_APPROVE in blob:
+        decision = DECISION_APPROVE
+    elif MARKER_CHANGES in blob:
+        decision = DECISION_CHANGES
+    elif MARKER_NONE in blob:
+        decision = DECISION_NONE
+    else:
         return None
     case_match = _CASE_REF.search(blob)
     draft_match = _DRAFT_REF.search(blob)
@@ -502,11 +503,8 @@ class CaseLayer:
         for receipt in self.store.eligible_receipts(mailbox):
             marker = str(receipt.get("test_marker") or "")
             kind = marker_kind(marker)
-            if kind.startswith("decision_"):
-                parsed = parse_decision(receipt.get("subject"), receipt.get("body_text"))
-                if not parsed or not parsed.get("case_id"):
-                    results.append({"skipped": True, "reason": "decision_missing_case_ref", "gmail_message_id": receipt.get("gmail_message_id")})
-                    continue
+            parsed = parse_decision(receipt.get("subject"), receipt.get("body_text"))
+            if parsed and parsed.get("case_id") and parsed.get("decision"):
                 applied = self.apply_decision(
                     parsed["case_id"],
                     parsed["decision"],
@@ -516,6 +514,9 @@ class CaseLayer:
                     note=parsed.get("note"),
                 )
                 results.append(applied)
+                continue
+            if parsed and parsed.get("decision") and not parsed.get("case_id"):
+                results.append({"skipped": True, "reason": "decision_missing_case_ref", "gmail_message_id": receipt.get("gmail_message_id")})
                 continue
             if kind == "review_packet":
                 results.append({"skipped": True, "reason": "review_packet"})

@@ -10,6 +10,7 @@ from bt_intake_proof.cases import (
     DECISION_APPROVE,
     DRAFT_NOT_SENT,
     MARKER_APPROVE,
+    MARKER_REVIEW,
     _label_draft_not_sent,
     case_id_for,
     parse_decision,
@@ -211,6 +212,44 @@ class CaseLayerTests(unittest.TestCase):
         self.assertIn("Request changes", email["body"])
         self.assertIn("No response needed", email["body"])
         self.assertEqual(email["to"], "daniel@btpestcontrol.com")
+        reply_parsed = parse_decision(
+            f"Re: {MARKER_REVIEW} BTC-x v1",
+            f"{MARKER_APPROVE}\nCASE=BTC-x DRAFT=1",
+        )
+        assert reply_parsed is not None
+        self.assertEqual(reply_parsed["decision"], DECISION_APPROVE)
+        self.assertEqual(reply_parsed["case_id"], "BTC-x")
+        self.assertEqual(reply_parsed["draft_version"], 1)
+
+    def test_iphone_reply_to_review_records_approval(self) -> None:
+        row = self._commit(lead_receipt("m-iphone"))[0]
+        opened = self.cases.upsert_from_receipt(row)
+        self.cases.save_draft(
+            opened["case_id"],
+            {
+                "classification": "lead",
+                "known_facts": [],
+                "missing_info": [],
+                "recommended_next_step": "review",
+                "proposed_response": "Thanks.",
+                "channel": "email",
+            },
+            "nonce-iphone",
+        )
+        self._commit(
+            lead_receipt(
+                "m-iphone-approve",
+                thread_id="thr-review-reply",
+                test_marker=MARKER_REVIEW,
+                subject=f"Re: {MARKER_REVIEW} {opened['case_id']} v1",
+                body_text=f"{MARKER_APPROVE}\nCASE={opened['case_id']} DRAFT=1",
+            )
+        )
+        synced = self.cases.sync_eligible_receipts(MAILBOX)
+        applied = [item for item in synced if item.get("decision") == DECISION_APPROVE]
+        self.assertTrue(applied)
+        self.assertEqual(self.cases.get_case(opened["case_id"])["approval_state"], APPROVAL_APPROVED)
+        self.assertFalse(applied[0]["send_triggered"])
 
     def test_trusted_rules_are_separate_from_external_payload(self) -> None:
         rules = trusted_rules_text()

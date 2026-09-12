@@ -223,6 +223,38 @@ def cmd_write_dispatch_payload(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_phasee_send_oauth_url(_args: argparse.Namespace) -> int:
+    from .contactus_send import send_authorization_url
+
+    RESULTS.mkdir(parents=True, exist_ok=True)
+    try:
+        payload = send_authorization_url()
+    except OAuthClientError as exc:
+        payload = {"status": "BLOCKED", "authorization_url": None, "error": str(exc)}
+        _print(payload)
+        return 2
+    (RESULTS / "phasee-send-oauth-url.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    (RESULTS / "SEND_AUTH_URL.txt").write_text(str(payload.get("authorization_url") or "") + "\n", encoding="utf-8")
+    _print(payload)
+    return 0
+
+
+def cmd_phasee_send_oauth_exchange(args: argparse.Namespace) -> int:
+    from .contactus_send import exchange_send_code
+
+    RESULTS.mkdir(parents=True, exist_ok=True)
+    try:
+        payload = exchange_send_code(args.redirect)
+    except (OAuthClientError, Exception) as exc:
+        payload = {"status": "FAIL", "error": str(exc)}
+        _print(payload)
+        return 1
+    safe = {k: v for k, v in payload.items() if k != "token_path"}
+    (RESULTS / "phasee-send-consent.json").write_text(json.dumps(safe, indent=2) + "\n", encoding="utf-8")
+    _print(safe)
+    return 0
+
+
 def cmd_phasee_execute(args: argparse.Namespace) -> int:
     from .bounded_send import execute_action
     from .cases import CaseLayer
@@ -298,6 +330,10 @@ def main(argv: list[str] | None = None) -> int:
     disp.add_argument("--nonce", default="")
     disp.set_defaults(func=cmd_write_dispatch_payload)
     sub.add_parser("recover").set_defaults(func=cmd_recover)
+    sub.add_parser("phasee-send-oauth-url").set_defaults(func=cmd_phasee_send_oauth_url)
+    pex = sub.add_parser("phasee-send-oauth-exchange")
+    pex.add_argument("redirect", help="localhost redirect URL or code from contactus send-only consent")
+    pex.set_defaults(func=cmd_phasee_send_oauth_exchange)
     pe = sub.add_parser("phasee-execute")
     pe.add_argument("action_id", type=int, help="stored case_send_actions.id; does not auto-select")
     pe.set_defaults(func=cmd_phasee_execute)

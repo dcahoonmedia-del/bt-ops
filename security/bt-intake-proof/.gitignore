@@ -1,5 +1,7 @@
 secrets/
 results/AUTH_URL.txt
+results/SEND_AUTH_URL.txt
+results/phasee-send-oauth-url.json
 results/live/
 results/*.sqlite
 results/*.sqlite-journal
