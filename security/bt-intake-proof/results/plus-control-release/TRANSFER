@@ -4,7 +4,7 @@ FILE=bt-intake-plus-control.tar.gz
 SHA256=100823dcdcd8fe68f87e9f8eb40ac57ac78b50b466964a970943176fae252510
 SOURCE_COMMIT=3e67a45ecd9abccc4c8d6bf7865166c5089e1fa5
 TREE_SHA256=7fdab6783b4505e4b75a9901649f92dfef0634f6d83d7a520aa31885d246ddd0
-RAW=https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/3e67a45ecd9abccc4c8d6bf7865166c5089e1fa5/security/bt-intake-proof/results/plus-control-release/bt-intake-plus-control.tar.gz
+RAW=https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/11a19a31e870244ff7381897c68b0cf7a07a491b/security/bt-intake-proof/results/plus-control-release/bt-intake-plus-control.tar.gz
 DEST=/tmp/bt-intake-plus-control.tar.gz
 
 # On the VM (Google Cloud SSH-in-browser). Keep secrets on the host.
@@ -13,7 +13,7 @@ DEST=/tmp/bt-intake-plus-control.tar.gz
 # until the project lead enables them after preflight.
 # Do not send live mail. Do not reset SQLite. Do not mint credentials.
 
-curl -fsSLo /tmp/bt-intake-plus-control.tar.gz https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/3e67a45ecd9abccc4c8d6bf7865166c5089e1fa5/security/bt-intake-proof/results/plus-control-release/bt-intake-plus-control.tar.gz
+curl -fsSLo /tmp/bt-intake-plus-control.tar.gz https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/11a19a31e870244ff7381897c68b0cf7a07a491b/security/bt-intake-proof/results/plus-control-release/bt-intake-plus-control.tar.gz
 echo "100823dcdcd8fe68f87e9f8eb40ac57ac78b50b466964a970943176fae252510  /tmp/bt-intake-plus-control.tar.gz" | sha256sum -c
 rm -rf /tmp/bt-intake-plus-control-src
 mkdir -p /tmp/bt-intake-plus-control-src
