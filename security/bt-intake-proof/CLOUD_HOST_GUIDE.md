@@ -1,29 +1,54 @@
-# Phase B — fix the existing VM, then I install
+# Phase B — delete the messed-up VM and create one e2-small
 
-SSH to `35.243.167.73` works. I did **not** install the receiver. Current VM is off-spec:
+Do this in project **bt-intake-proof**. Do not download a JSON key. Do not enable HTTP.
 
-| Setting | Found | Required |
-| --- | --- | --- |
-| Zone | `us-east1-c` | OK |
-| Machine | **e2-medium** | **e2-small** |
-| Service account | **default compute** `1028131400538-compute@` | `bt-intake-proof-receiver@...` |
-| Scopes | logging/monitoring/storage, **no Pub/Sub** | **Cloud Pub/Sub only** |
-| Boot disk | **10 GB** | **20 GB** |
-
-I will not use the default compute service account (it is broader than the proof) or keep the larger e2-medium.
-
-## Fix on this same VM
+## 1. Delete the current VM and its disk
 
 https://console.cloud.google.com/compute/instances?project=bt-intake-proof
 
-1. Select `instance-20260912-024540` → **Stop** → wait until stopped.
-2. **Edit**
-3. Machine type → **e2-small**
-4. **Service account** → `bt-intake-proof-receiver@bt-intake-proof.iam.gserviceaccount.com`  
-   If missing: grant yourself **Service Account User** on that SA, refresh, try again.
-5. Access scopes → **Set access for each API** → enable **Cloud Pub/Sub** only.
-6. Boot disk → resize to **20 GB** (same disk, do not add a second disk).
-7. HTTP/HTTPS stay **unchecked**.
-8. **Save** → **Start**
+1. Check the box next to `instance-20260912-024540`.
+2. Click **Delete**.
+3. Confirm it will delete the **boot disk** too. If there is a checkbox **Delete boot disk**, leave it **checked**.
+4. Delete. Wait until the VM disappears from the list.
 
-Reply **vm fixed**. I will SSH again, confirm the receiver SA, then install. No JSON key.
+If a disk is left behind: **Compute Engine → Disks** → delete the disk named like `instance-20260912-024540`.
+
+## 2. If the receiver SA is missing later, do this first
+
+https://console.cloud.google.com/iam-admin/serviceaccounts/details/bt-intake-proof-receiver@bt-intake-proof.iam.gserviceaccount.com/permissions?project=bt-intake-proof
+
+**Grant Access** → principal: the Google account you are using now → role: **Service Account User** → Save.
+
+## 3. Create the replacement VM
+
+https://console.cloud.google.com/compute/instancesAdd?project=bt-intake-proof
+
+Set these **before** you click Create:
+
+- **Name:** `bt-intake-cloud`
+- **Region:** `us-east1 (South Carolina)`
+- **Zone:** `us-east1-c` (or `us-east1-b` if `-c` is greyed out)
+- **Series:** E2
+- **Machine type:** **e2-small** (2 vCPU, 2 GB). Not e2-medium.
+- **Boot disk → Change:** Debian 12, size **20**, type Balanced. Confirm.
+- **Firewall:** **Allow HTTP** and **Allow HTTPS** both **unchecked**
+- **Management / Security / Disks / Networking / Sole tenancy** (or **Advanced**):
+  - **Identity and API access**
+    - Service account: `bt-intake-proof-receiver@bt-intake-proof.iam.gserviceaccount.com`
+    - Access scopes: **Set access for each API** → **Cloud Pub/Sub = Enabled**. Everything else Disabled.
+  - **Networking** → Network interface → External IPv4: **Ephemeral** (not None)
+  - **Security** → **Manage access** / SSH keys → add this **one** line:
+
+```
+btadmin:ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIC/DKOmrbwVG08WuDE4IREYQoVVmgXy5coIYC3pxPbzu bt-intake-cloud-e9a8
+```
+
+Click **Create**. Wait until Status is **Running**.
+
+## 4. Send me these three values from the new VM details page
+
+- Name (should be `bt-intake-cloud`)
+- Machine type (should be `e2-small`)
+- External IP (search the page for `Network interfaces`)
+
+Reply **vm up** and the External IP. I will SSH as `btadmin` and install. No JSON key.
