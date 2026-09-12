@@ -16,7 +16,6 @@ from .gates import project_id, send_token_path, token_path
 from .gmail_readonly import GmailAuthError
 from .oauth_consent import (
     OAuthClientError,
-    _get_json,
     _post_form,
     extract_auth_code,
     load_desktop_client,
@@ -99,6 +98,22 @@ def assert_send_credentials(scopes: list[str], email: str, path) -> None:
         raise GmailAuthError("refusing to use the intake readonly token for send")
 
 
+def lookup_token_email(access_token: str) -> str:
+    request = urllib.request.Request(
+        "https://oauth2.googleapis.com/tokeninfo",
+        data=urlencode({"access_token": access_token}).encode("utf-8"),
+        method="POST",
+    )
+    request.add_header("Content-Type", "application/x-www-form-urlencoded")
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            info = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise OAuthClientError(f"tokeninfo HTTP {exc.code}: {detail}") from exc
+    return normalize_email(str(info.get("email") or ""))
+
+
 def exchange_send_code(redirect_or_code: str) -> dict[str, Any]:
     dest = send_token_path()
     readonly = token_path()
@@ -120,9 +135,19 @@ def exchange_send_code(redirect_or_code: str) -> dict[str, Any]:
     access = str(token.get("access_token") or "")
     if not access:
         raise OAuthClientError("send token response missing access_token")
-    profile = _get_json("https://gmail.googleapis.com/gmail/v1/users/me/profile", access)
-    email = normalize_email(str(profile.get("emailAddress") or ""))
-    assert_send_credentials(scopes, email, dest)
+    extras = extra_gmail_scopes(scopes)
+    if GMAIL_SEND_SCOPE not in scopes:
+        raise OAuthClientError("send token does not include gmail.send")
+    if extras:
+        raise OAuthClientError(f"send token must be send-only; extra scopes: {extras}")
+    email = lookup_token_email(access)
+    if email and email != MAILBOX:
+        raise OAuthClientError(f"authenticated mailbox is {email}, expected {MAILBOX}")
+    if not email:
+        email = MAILBOX
+        mailbox_via = "login_hint_and_later_sent_verify"
+    else:
+        mailbox_via = "tokeninfo"
     record = {
         "token_uri": client.get("token_uri") or "https://oauth2.googleapis.com/token",
         "client_id": client["client_id"],
@@ -135,6 +160,7 @@ def exchange_send_code(redirect_or_code: str) -> dict[str, Any]:
         "email": email,
         "account": email,
         "purpose": "phasee_bounded_send_only",
+        "mailbox_verified_via": mailbox_via,
     }
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
@@ -142,15 +168,18 @@ def exchange_send_code(redirect_or_code: str) -> dict[str, Any]:
     if readonly.exists() and dest.resolve() != readonly.resolve():
         ro = json.loads(readonly.read_text(encoding="utf-8"))
         if GMAIL_SEND_SCOPE in list(ro.get("scopes") or []):
+            dest.unlink(missing_ok=True)
             raise OAuthClientError("intake readonly token unexpectedly contains gmail.send")
     return {
         "status": "PASS",
         "email": email,
         "scopes": scopes,
-        "send_only": scopes == [GMAIL_SEND_SCOPE] or extra_gmail_scopes(scopes) == [],
+        "send_only": True,
+        "mailbox_verified_via": mailbox_via,
         "refresh_token_present": bool(token.get("refresh_token")),
         "token_path": str(dest),
         "readonly_token_untouched": True,
+        "gmail_profile_not_used": True,
     }
 
 
@@ -195,9 +224,6 @@ class HttpContactusSendGmail:
 
     def __init__(self, access_token: str, email: str, scopes: list[str], path) -> None:
         assert_send_credentials(scopes, email, path)
-        profile = _get_json("https://gmail.googleapis.com/gmail/v1/users/me/profile", access_token)
-        if normalize_email(str(profile.get("emailAddress") or "")) != MAILBOX:
-            raise GmailAuthError("send token is not signed in as contactus@")
         self.access_token = access_token
         self.email = MAILBOX
         self.scopes = list(scopes)

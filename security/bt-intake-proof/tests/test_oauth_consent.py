@@ -80,6 +80,39 @@ class OAuthConsentTests(unittest.TestCase):
         self.assertNotEqual(payload["token_file"], payload["readonly_token_file"])
         self.assertNotIn("gmail.send", readonly["authorization_url"])
 
+    def test_send_exchange_does_not_call_gmail_profile(self) -> None:
+        from bt_intake_proof.contactus_send import exchange_send_code
+
+        token_response = {
+            "access_token": "ya29.send-only",
+            "refresh_token": "1//refresh",
+            "token_type": "Bearer",
+            "scope": GMAIL_SEND_SCOPE,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "contactus_gmail_send_token.json"
+            readonly = Path(tmp) / "contactus_gmail_readonly_token.json"
+            readonly.write_text(json.dumps({"email": MAILBOX, "scopes": [GMAIL_READONLY_SCOPE]}), encoding="utf-8")
+            client = {
+                "client_id": "123.apps.googleusercontent.com",
+                "client_secret": "secret",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "redirect_uris": ["http://localhost"],
+            }
+            with mock.patch("bt_intake_proof.contactus_send.load_desktop_client", return_value=client):
+                with mock.patch("bt_intake_proof.contactus_send.redirect_uri", return_value="http://localhost"):
+                    with mock.patch("bt_intake_proof.contactus_send._post_form", return_value=token_response):
+                        with mock.patch("bt_intake_proof.contactus_send.lookup_token_email", return_value=MAILBOX):
+                            with mock.patch("bt_intake_proof.contactus_send.send_token_path", return_value=dest):
+                                with mock.patch("bt_intake_proof.contactus_send.token_path", return_value=readonly):
+                                    payload = exchange_send_code("http://localhost/?code=4/abc&scope=" + GMAIL_SEND_SCOPE)
+                                    stored = json.loads(dest.read_text(encoding="utf-8"))
+                                    ro_after = json.loads(readonly.read_text(encoding="utf-8"))
+        self.assertEqual(payload["status"], "PASS")
+        self.assertTrue(payload["gmail_profile_not_used"])
+        self.assertEqual(stored["scopes"], [GMAIL_SEND_SCOPE])
+        self.assertEqual(ro_after["scopes"], [GMAIL_READONLY_SCOPE])
+
     def test_rejects_web_client(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "client.json"
