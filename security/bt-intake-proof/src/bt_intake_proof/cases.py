@@ -222,6 +222,22 @@ class CaseLayer:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def _inbound_already_applied(self, case_id: str, message_id: str) -> bool:
+        if not message_id:
+            return False
+        rows = self.conn.execute(
+            """
+            SELECT payload_json FROM case_events
+            WHERE case_id = ? AND event_type IN ('case_opened', 'inbound_reopened')
+            """,
+            (case_id,),
+        ).fetchall()
+        for row in rows:
+            payload = _loads(row["payload_json"] if "payload_json" in row.keys() else row[0])
+            if isinstance(payload, dict) and payload.get("gmail_message_id") == message_id:
+                return True
+        return False
+
     def upsert_from_receipt(self, receipt: dict[str, Any]) -> dict[str, Any]:
         """Create or reopen one case per mailbox+thread. Never a silent finished duplicate."""
         mailbox = receipt.get("mailbox") or MAILBOX
@@ -233,6 +249,8 @@ class CaseLayer:
             return {"skipped": True, "reason": kind}
         case_id = case_id_for(mailbox, thread_id)
         existing = self.get_case(case_id)
+        if existing and self._inbound_already_applied(case_id, message_id):
+            return {"skipped": True, "reason": "already_applied", "case_id": case_id}
         now = utc_now()
         inbound_class = "reply" if receipt.get("classification") == CLASS_REPLY or existing else "new_lead"
         contact = {

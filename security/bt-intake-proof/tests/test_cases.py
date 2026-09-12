@@ -78,6 +78,48 @@ class CaseLayerTests(unittest.TestCase):
         self.assertEqual(case["latest_inbound_message_id"], "m1")
         self.assertEqual(len(self.cases.list_events(case["case_id"])), 1)
 
+    def test_older_inbound_is_not_reapplied_after_reply(self) -> None:
+        first = self._commit(lead_receipt("m-old"))[0]
+        opened = self.cases.upsert_from_receipt(first)
+        self.cases.save_draft(
+            opened["case_id"],
+            {
+                "classification": "lead",
+                "known_facts": ["ants"],
+                "missing_info": ["phone"],
+                "recommended_next_step": "ask for phone",
+                "proposed_response": "We can help.",
+                "channel": "email",
+                "judgment_needed": None,
+                "reasoning_summary": "need phone",
+            },
+            "nonce-old",
+        )
+        self.cases.apply_decision(
+            opened["case_id"],
+            DECISION_APPROVE,
+            draft_version=1,
+            actor="daniel@btpestcontrol.com",
+            gmail_message_id="approve-old",
+        )
+        reply = self._commit(
+            lead_receipt(
+                "m-new",
+                classification=CLASS_REPLY,
+                test_marker="BT-INTAKE-PROOF-CASEMGR-REPLY-E9A8",
+                subject="Re: kitchen ants BT-INTAKE-PROOF-CASEMGR-REPLY-E9A8",
+                body_text="Bathroom too. BT-INTAKE-PROOF-CASEMGR-REPLY-E9A8",
+            )
+        )[0]
+        self.assertTrue(self.cases.upsert_from_receipt(reply)["reopened"])
+        self.assertEqual(self.cases.get_case(opened["case_id"])["latest_inbound_message_id"], "m-new")
+        again = self.cases.upsert_from_receipt(first)
+        self.assertTrue(again.get("skipped"))
+        self.assertEqual(again.get("reason"), "already_applied")
+        self.assertEqual(self.cases.get_case(opened["case_id"])["latest_inbound_message_id"], "m-new")
+        reopens = [event for event in self.cases.list_events(opened["case_id"]) if event["event_type"] == "inbound_reopened"]
+        self.assertEqual(len(reopens), 1)
+
     def test_same_thread_reopens_and_supersedes_approval(self) -> None:
         first = self._commit(lead_receipt("m1"))[0]
         opened = self.cases.upsert_from_receipt(first)
