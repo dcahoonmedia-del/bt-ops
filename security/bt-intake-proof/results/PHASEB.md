@@ -1,20 +1,13 @@
 # Phase B — cloud-hosted intake proof
 
-VM `bt-intake-cloud` is on-spec (e2-small, us-east1-c, receiver SA, 20 GB). No JSON key.
+VM `bt-intake-cloud` is on-spec (e2-small, us-east1-c, receiver SA, 20 GB). No JSON key. Mail is sent from Gmail, not the Mac.
 
-## CLOUD-NEW — PASS
-
-Sent from Gmail (`daniel@` → `contactus@`), not from the Mac.
-
-| Check | Result |
+| Test | Result |
 | --- | --- |
-| Event-driven capture | PASS — 6.19s, marker `BT-INTAKE-PROOF-CLOUD-NEW-E9A8-7F3C` |
-| Labels | UNREAD / INBOX unchanged |
-| Isolated Codex ExternalMessage | PASS — `treated_as=external_untrusted`, no authorization |
-| systemd dispatch | PASS after Docker uid/payload mode fix |
+| CLOUD-NEW | PASS — 6.19s event-driven, UNREAD/INBOX unchanged, Codex ExternalMessage PASS |
+| CLOUD-REPLY | PASS — 3.6s on existing `BT-PILOT-0911-TEST02` thread `1a09243262a6a145`, classified `reply`, Codex PASS |
 
 ## Still needed
 
-- CLOUD-REPLY on the existing internal `BT-PILOT-0911-TEST02` thread
+- Recovery: stop receiver, send CLOUD-RECOVERY, start, history catch-up, no duplicate
 - VM restart persistence (blocked until Edit → SSH keys Username=`btadmin`, Key without `btadmin:`)
-- Recovery: stop receiver, send CLOUD-RECOVERY marker, start, no duplicate
