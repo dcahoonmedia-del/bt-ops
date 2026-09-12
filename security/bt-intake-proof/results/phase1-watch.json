@@ -1,0 +1,12 @@
+{
+  "status": "PASS",
+  "project_id": "bt-intake-proof",
+  "mailbox": "contactus@btpestcontrol.com",
+  "topic": "projects/bt-intake-proof/topics/bt-intake-proof-contactus",
+  "subscription": "projects/bt-intake-proof/subscriptions/bt-intake-proof-contactus-sub",
+  "history_id": "6007776",
+  "expiration_ms": "1789782754594",
+  "expiration_utc": "2026-09-19T01:52:34.594000+00:00",
+  "gmail_scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+  "daniel_mailbox_used": false
+}

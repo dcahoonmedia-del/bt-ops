@@ -1,9 +1,7 @@
-# Stopped for Daniel — create the three Pub/Sub resources in Console
+# Watch PASS — do not create another subscription
 
-Daniel chose option 1: create the authorized Pub/Sub resources in Cloud Console.
+The Create subscription page said `bt-intake-proof-contactus-sub` already exists. Leave that page. Do not pick a new ID.
 
-`contactus@` Gmail read-only consent is already done. Watch is not registered yet.
+`users.watch` is registered. See `RESULTS.md` for project, mailbox, topic, subscription, historyId, and expiration.
 
-Follow `PUBSUB_CONSOLE_GUIDE.md`. If billing is required, stop and tell me.
-
-Do not send `BT-INTAKE-PROOF-*` emails until watch is PASS.
+I still cannot **pull** that subscription with the Gmail read-only token. Before you send `BT-INTAKE-PROOF-*` mail, I need subscriber access on `bt-intake-proof-contactus-sub` only, or you authorize a Cloud login that can pull that one subscription.

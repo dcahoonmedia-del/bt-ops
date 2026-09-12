@@ -195,6 +195,41 @@ def exchange_code(redirect_or_code: str) -> dict[str, Any]:
     }
 
 
+def refresh_access_token() -> dict[str, Any]:
+    dest = token_path()
+    if not dest.exists():
+        raise OAuthClientError("contactus Gmail token is not present")
+    record = json.loads(dest.read_text(encoding="utf-8"))
+    refresh = str(record.get("refresh_token") or "")
+    if not refresh:
+        raise OAuthClientError("stored token has no refresh_token")
+    client = load_desktop_client()
+    token = _post_form(
+        str(record.get("token_uri") or client.get("token_uri") or "https://oauth2.googleapis.com/token"),
+        {
+            "client_id": str(record.get("client_id") or client["client_id"]),
+            "client_secret": str(record.get("client_secret") or client.get("client_secret") or ""),
+            "refresh_token": refresh,
+            "grant_type": "refresh_token",
+        },
+    )
+    access = str(token.get("access_token") or "")
+    if not access:
+        raise OAuthClientError("refresh response missing access_token")
+    scopes = str(token.get("scope") or " ".join(record.get("scopes") or [])).split()
+    forbidden = [scope for scope in scopes if scope in FORBIDDEN_GMAIL_SCOPES]
+    if forbidden:
+        raise OAuthClientError(f"refreshed token includes forbidden Gmail scopes: {forbidden}")
+    if scopes and GMAIL_READONLY_SCOPE not in scopes:
+        raise OAuthClientError("refreshed token does not include gmail.readonly")
+    record["access_token"] = access
+    if scopes:
+        record["scopes"] = scopes
+    dest.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    dest.chmod(0o600)
+    return record
+
+
 def blocked_oauth_url() -> dict[str, Any]:
     return {
         "status": "BLOCKED",

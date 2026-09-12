@@ -17,7 +17,7 @@ from .constants import (
 from .eligibility import normalize_email
 from .gates import allow_resource_create, project_id, token_path
 from .gmail_readonly import GmailAuthError, assert_readonly_credentials
-from .oauth_consent import OAuthClientError, _get_json
+from .oauth_consent import OAuthClientError, _get_json, refresh_access_token
 from .setup_google import subscription_path, topic_path
 from .store import ReceiptStore
 
@@ -118,6 +118,51 @@ def try_authorized_pubsub(access_token: str, pid: str) -> dict[str, Any]:
         "gmail_publisher_member": member,
         "gmail_publisher_granted": True,
     }
+
+
+def register_watch_on_existing_topic(store: ReceiptStore) -> dict[str, Any]:
+    """Register users.watch only. Does not create Cloud resources."""
+    pid = project_id()
+    token = refresh_access_token()
+    access = str(token.get("access_token") or "")
+    profile = gmail_profile(access)
+    topic = topic_path(pid, DEFAULT_TOPIC_ID)
+    sub = subscription_path(pid, DEFAULT_SUBSCRIPTION_ID)
+    evidence: dict[str, Any] = {
+        "project_id": pid,
+        "mailbox": MAILBOX,
+        "topic": topic,
+        "subscription": sub,
+        "gmail_consent": {
+            "email": token.get("email"),
+            "scopes": token.get("scopes"),
+            "readonly_only": True,
+            "profile_history_id": str(profile.get("historyId") or ""),
+        },
+    }
+    try:
+        watch = gmail_watch(access, topic)
+    except OAuthClientError as exc:
+        evidence["status"] = "BLOCKED"
+        evidence["blocked_on"] = "gmail_watch"
+        evidence["error"] = str(exc)
+        return evidence
+    store.upsert_watch(
+        MAILBOX,
+        history_id=str(watch.get("historyId") or profile.get("historyId") or ""),
+        expiration=str(watch.get("expiration") or ""),
+        topic=topic,
+    )
+    evidence["watch"] = {
+        "status": "PASS" if watch.get("historyId") else "FAIL",
+        "history_id": str(watch.get("historyId") or ""),
+        "expiration": str(watch.get("expiration") or ""),
+        "topic": topic,
+        "mailbox": MAILBOX,
+        "subscription": sub,
+    }
+    evidence["status"] = evidence["watch"]["status"]
+    return evidence
 
 
 def run_authorized_setup(store: ReceiptStore) -> dict[str, Any]:
