@@ -117,10 +117,12 @@ recreate or change Daniel's filters, routing, labels, or permissions.
 
 ## Offline proof
 
-Focused plus-loop + plus-control + deploy unit tests, then the full
-`unittest discover -s tests` suite. Counts are recorded on the
-regenerated release after this correction. GCE and iPhone proof remain
-unrun.
+`PYTHONPATH=src python3 -m unittest tests.test_desk_plus_control tests.test_desk_plus_loop tests.test_desk_deploy_txn` → 59 passed.
+
+`PYTHONPATH=src python3 -m unittest discover -s tests` → 295 passed, 1 skipped.
+
+GCE and iPhone proof remain unrun. Source commit for this package is
+`35c4db5f771fbe063c8ee0713787a4271eb2c238`.
 
 See `tests/test_desk_plus_loop.py` for the six review regressions:
 implicit-commit rollback, lost-discovery checkpoint, lease reclaim,

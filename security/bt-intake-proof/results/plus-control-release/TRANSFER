@@ -1,10 +1,10 @@
 # Non-secret browser-SSH transfer card. No tokens or client JSON.
 
 FILE=bt-intake-plus-control.tar.gz
-SHA256=100823dcdcd8fe68f87e9f8eb40ac57ac78b50b466964a970943176fae252510
-SOURCE_COMMIT=3e67a45ecd9abccc4c8d6bf7865166c5089e1fa5
-TREE_SHA256=7fdab6783b4505e4b75a9901649f92dfef0634f6d83d7a520aa31885d246ddd0
-RAW=https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/11a19a31e870244ff7381897c68b0cf7a07a491b/security/bt-intake-proof/results/plus-control-release/bt-intake-plus-control.tar.gz
+SHA256=dd29a5db6844d7099a2c951a8a604c9cbb0b1c392b018ce91d7a077a17c25744
+SOURCE_COMMIT=35c4db5f771fbe063c8ee0713787a4271eb2c238
+TREE_SHA256=061e30c941931501d8496a7a2fae2cd12ca84a9f8b3a18a88fbfcc9ea34acef5
+RAW=https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/35c4db5f771fbe063c8ee0713787a4271eb2c238/security/bt-intake-proof/results/plus-control-release/bt-intake-plus-control.tar.gz
 DEST=/tmp/bt-intake-plus-control.tar.gz
 
 # On the VM (Google Cloud SSH-in-browser). Keep secrets on the host.
@@ -13,8 +13,8 @@ DEST=/tmp/bt-intake-plus-control.tar.gz
 # until the project lead enables them after preflight.
 # Do not send live mail. Do not reset SQLite. Do not mint credentials.
 
-curl -fsSLo /tmp/bt-intake-plus-control.tar.gz https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/11a19a31e870244ff7381897c68b0cf7a07a491b/security/bt-intake-proof/results/plus-control-release/bt-intake-plus-control.tar.gz
-echo "100823dcdcd8fe68f87e9f8eb40ac57ac78b50b466964a970943176fae252510  /tmp/bt-intake-plus-control.tar.gz" | sha256sum -c
+curl -fsSLo /tmp/bt-intake-plus-control.tar.gz https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/35c4db5f771fbe063c8ee0713787a4271eb2c238/security/bt-intake-proof/results/plus-control-release/bt-intake-plus-control.tar.gz
+echo "dd29a5db6844d7099a2c951a8a604c9cbb0b1c392b018ce91d7a077a17c25744  /tmp/bt-intake-plus-control.tar.gz" | sha256sum -c
 rm -rf /tmp/bt-intake-plus-control-src
 mkdir -p /tmp/bt-intake-plus-control-src
 tar -xzf /tmp/bt-intake-plus-control.tar.gz -C /tmp/bt-intake-plus-control-src
