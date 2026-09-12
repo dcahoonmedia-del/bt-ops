@@ -178,12 +178,24 @@ def draft_pending_cases(store: ReceiptStore) -> list[dict[str, Any]]:
                 }
             )
             continue
-        fieldwork = match_and_context(grok_bot_client(), receipt)
-        layer.save_fieldwork(case["case_id"], fieldwork, receipt.get("gmail_message_id"))
         if is_phasee_receipt(receipt):
+            layer.save_fieldwork(
+                case["case_id"],
+                {
+                    "status": "not_run",
+                    "source_label": "FIELDWORK_NOT_ACCESSED",
+                    "live": False,
+                    "read_only": True,
+                    "writes_allowed": False,
+                    "reason": "phase_e_internal_send_test",
+                },
+                receipt.get("gmail_message_id"),
+            )
             saved = install_phasee_draft(layer, case["case_id"], nonce)
             ran = {"ok": True, "empty_user_input": True, "content_in_user_input": False}
         else:
+            fieldwork = match_and_context(grok_bot_client(), receipt)
+            layer.save_fieldwork(case["case_id"], fieldwork, receipt.get("gmail_message_id"))
             payload_path = store.path.parent / f"case-draft-{case['case_id']}.json"
             payload_path.write_text(json.dumps(build_case_payload(case, receipt, nonce, fieldwork), indent=2) + "\n", encoding="utf-8")
             payload_path.chmod(0o644)

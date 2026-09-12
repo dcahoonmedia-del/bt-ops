@@ -188,7 +188,12 @@ def serve(interval: float = 2.0) -> int:
                     processed=received.get("processed"),
                 )
             dispatch_pending(store)
-            cases = process_cases(store)
+            try:
+                cases = process_cases(store)
+            except Exception as exc:  # noqa: BLE001
+                safe_log("case_manager", error=type(exc).__name__, detail=str(exc)[:200])
+                time.sleep(interval)
+                continue
             if cases.get("synced") or cases.get("drafted") or cases.get("phasee_queued"):
                 safe_log(
                     "case_manager",

@@ -110,6 +110,7 @@ class PhaseETests(unittest.TestCase):
         self.assertIn("Exact body:", email["body"])
         self.assertIn(PHASEE_BODY.strip(), email["body"])
         self.assertIn("authorizes one bounded send", email["body"])
+        self.assertIn("FIELDWORK_NOT_ACCESSED", email["body"])
 
     def test_superseded_draft_cannot_send(self) -> None:
         action = self._open_approved()
