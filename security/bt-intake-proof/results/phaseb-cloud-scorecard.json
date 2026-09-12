@@ -1,20 +1,23 @@
 {
   "overall": "IN_PROGRESS",
-  "stopped_at": "cloud_reply",
-  "reason": "CLOUD-NEW PASS on the GCE host (event-driven capture + isolated ExternalMessage). CLOUD-REPLY is next. VM reboot test still needs the btadmin SSH key in the correct Edit-page columns.",
+  "stopped_at": "vm_restart",
+  "reason": "Mac-off NEW, REPLY, recovery, watch renew, and Codex ExternalMessage all PASS. VM reboot proof is blocked until the persistent SSH key is in the correct Edit-page columns.",
   "json_key_created": false,
   "mac_off_tests_started": true,
   "mac_required_for_send": false,
   "gates": {
-    "mac_independent_operation": "IN_PROGRESS",
+    "mac_independent_operation": "PASS",
     "automatic_service_startup": "PASS",
     "pubsub_delivery": "PASS",
-    "gmail_history_recovery": "NOT_YET",
-    "watch_renewal": "NOT_YET",
+    "gmail_history_recovery": "PASS",
+    "watch_renewal": "PASS",
     "durable_persistence_across_vm_restart": "BLOCKED_SSH_KEY_COLUMNS",
-    "deduplication": "NOT_YET",
+    "deduplication": "PASS",
     "codex_authentication_persistence": "PASS",
     "external_message_authority_boundary": "PASS"
   },
-  "cloud_new": "PASS"
+  "cloud_new": "PASS",
+  "cloud_reply": "PASS",
+  "cloud_recovery": "PASS",
+  "watch_renew": "PASS"
 }
