@@ -97,6 +97,17 @@ without requesting `gmail.settings`, discovery readiness, sender
 readiness, and activation blockers. It does not recreate or change
 Daniel's filters, routing, labels, or permissions.
 
+## Offline proof
+
+`PYTHONPATH=src python3 -m unittest tests.test_desk_plus_control tests.test_desk_plus_loop` → 39 passed.
+
+`PYTHONPATH=src python3 -m unittest discover -s tests` → 281 passed, 1 skipped.
+
+See `tests/test_desk_plus_loop.py` for history, label-added, expired
+recovery, stale controls, envelope, intents, concurrency, rollback,
+crash recovery, uncertain send, result loops, missing credentials,
+and zero contactus traffic.
+
 ## What this assignment does not do
 
 - No live mail send

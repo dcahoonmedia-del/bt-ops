@@ -21,7 +21,12 @@ from bt_intake_proof.constants import (
     STALE_PLUS_CONTROL_ID,
     TRANSPORT_PLUS,
 )
-from bt_intake_proof.desk_bridge import compute_packet_binding, format_control_mail, process_control_mail
+from bt_intake_proof.desk_bridge import (
+    compute_packet_binding,
+    ensure_bridge_tables,
+    format_control_mail,
+    process_control_mail,
+)
 from bt_intake_proof.desk_control import INTENT_HOLD, INTENT_REVISE
 from bt_intake_proof.desk_plus_discover import (
     PlusHistoryExpired,
@@ -54,11 +59,71 @@ from bt_intake_proof.gmail_readonly import ReadOnlyGmail
 from bt_intake_proof.phasee_constants import PHASEE_CASE_MARKER
 from bt_intake_proof.send_bind import ensure_send_tables
 from bt_intake_proof.store import ReceiptStore, body_hash
-from test_desk_plus_control import FakeDanielPlusClient, _raw_plus_message, _receipt
 
 
 def _ms(value: datetime) -> str:
     return str(int(value.timestamp() * 1000))
+
+
+def _receipt(message_id: str) -> dict:
+    body = f"Internal plus-path inbound. {PHASEE_CASE_MARKER}"
+    return {
+        "eligible": True,
+        "mailbox": MAILBOX,
+        "gmail_message_id": message_id,
+        "thread_id": f"thr-{message_id}",
+        "rfc_message_id": f"<{message_id}@bt>",
+        "sender": ALLOWED_SENDER,
+        "recipients": [MAILBOX],
+        "subject": PHASEE_CASE_MARKER,
+        "gmail_received_at": "2026-09-12T06:00:00+00:00",
+        "detected_at": "2026-09-12T06:00:05+00:00",
+        "body_text": body,
+        "raw_message": body,
+        "body_hash": body_hash(body),
+        "labels_before": ["INBOX"],
+        "labels_after": ["INBOX"],
+        "classification": "new_message",
+        "test_marker": PHASEE_CASE_MARKER,
+        "reasons": [],
+    }
+
+
+def _raw_plus_message(
+    message_id: str,
+    *,
+    subject: str,
+    body: str,
+    sender: str = ALLOWED_SENDER,
+    to: str = LEAD_DESK_PLUS_MAILBOX,
+    internal: datetime,
+    labels: list[str] | None = None,
+) -> dict:
+    msg = EmailMessage()
+    msg["From"] = sender
+    msg["To"] = to
+    msg["Subject"] = subject
+    msg["Message-ID"] = f"<{message_id}@desk.btpestcontrol.com>"
+    msg["Date"] = "Sat, 12 Sep 2026 21:00:00 +0000"
+    msg.set_content(body)
+    return {
+        "id": message_id,
+        "labelIds": list(labels if labels is not None else ["SENT"]),
+        "internalDate": _ms(internal),
+        "raw": base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii"),
+    }
+
+
+class FakeDanielPlusClient:
+    def __init__(self, *, profile_email: str = ALLOWED_SENDER, messages: dict | None = None) -> None:
+        self.profile_email = profile_email
+        self.messages = dict(messages or {})
+
+    def get_profile(self) -> dict:
+        return {"emailAddress": self.profile_email}
+
+    def get_message(self, message_id: str, fmt: str = "raw") -> dict:
+        return dict(self.messages[message_id])
 
 
 def _meta(message_id: str, *, labels: list[str], headers: list[tuple[str, str]], subject: str = "") -> dict:
@@ -134,6 +199,7 @@ class DeskPlusLoopTests(unittest.TestCase):
         self.store = ReceiptStore(self.path)
         self.layer = CaseLayer(self.store)
         ensure_send_tables(self.layer)
+        ensure_bridge_tables(self.layer)
         self.store.commit_notification(
             mailbox=MAILBOX,
             history_id="cu-1",
@@ -244,7 +310,10 @@ class DeskPlusLoopTests(unittest.TestCase):
             },
         ]
 
+        seen_urls: list[str] = []
+
         def _get(url: str, _token: str) -> dict:
+            seen_urls.append(url)
             if "pageToken=p2" in url:
                 return pages[1]
             return pages[0]
@@ -255,7 +324,10 @@ class DeskPlusLoopTests(unittest.TestCase):
         ids = extract_plus_history_ids(merged)
         self.assertEqual([item["id"] for item in ids], ["page-a", "page-b"])
         self.assertEqual(merged["historyId"], "3")
-        self.assertIn("historyTypes=messageAdded", plus_history_query() or "in:sent")
+        self.assertEqual(len(seen_urls), 2)
+        self.assertIn("historyTypes=messageAdded", seen_urls[0])
+        self.assertIn("historyTypes=labelAdded", seen_urls[0])
+        self.assertIn("pageToken=p2", seen_urls[1])
 
     def test_expired_history_reconciles_sent_control_not_inbox(self) -> None:
         client = FakePlusLoopClient()
