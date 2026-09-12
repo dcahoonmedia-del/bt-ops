@@ -158,14 +158,18 @@ def serve(interval: float = 2.0) -> int:
             )
         gmail = contactus_gmail()
         token = receiver_access_token()
-        recover = recover_from_cursor(store, gmail)
-        safe_log(
-            "startup_recover",
-            ok=recover.get("ok"),
-            receipt_count=recover.get("receipt_count"),
-            start_history_id=recover.get("start_history_id"),
-            end_history_id=recover.get("end_history_id"),
-        )
+        try:
+            recover = recover_from_cursor(store, gmail)
+            safe_log(
+                "startup_recover",
+                ok=recover.get("ok"),
+                receipt_count=recover.get("receipt_count"),
+                skipped_missing=recover.get("skipped_missing"),
+                start_history_id=recover.get("start_history_id"),
+                end_history_id=recover.get("end_history_id"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            safe_log("startup_recover", ok=False, error=type(exc).__name__, detail=str(exc)[:200])
         last_refresh = time.time()
         while True:
             if time.time() - last_refresh > 45 * 60:

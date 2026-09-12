@@ -8,7 +8,13 @@ from typing import Any, Callable
 from . import eligibility
 from .constants import DETECTION_EVENT_DRIVEN, MAILBOX
 from .gmail_readonly import added_message_ids, decode_raw_message, gmail_internal_date
+from .oauth_consent import OAuthClientError
 from .store import ReceiptStore, should_ack, utc_now
+
+
+def is_missing_gmail_entity(exc: BaseException) -> bool:
+    text = str(exc)
+    return "HTTP 404" in text or "Requested entity was not found" in text
 
 
 def parse_gmail_notification(data: dict[str, Any] | str | bytes) -> dict[str, Any]:
@@ -89,8 +95,15 @@ def process_notification(
     history = gmail.history(start_history)
     added = added_message_ids(history)
     receipts: list[dict[str, Any]] = []
+    skipped_missing = []
     for item in added:
-        message = gmail.get_message(item["id"], fmt="raw")
+        try:
+            message = gmail.get_message(item["id"], fmt="raw")
+        except OAuthClientError as exc:
+            if is_missing_gmail_entity(exc):
+                skipped_missing.append(item["id"])
+                continue
+            raise
         thread_ids = gmail.get_thread_message_ids(message.get("threadId") or item.get("threadId") or "")
         # Re-read labels after hydration to prove we did not mutate Gmail.
         labels_after = list((gmail.get_message(item["id"], fmt="metadata").get("labelIds") or []))
@@ -131,6 +144,7 @@ def process_notification(
         "receipt_count": len(receipts),
         "eligible": [item for item in receipts if item.get("eligible")],
         "ineligible": [item["gmail_message_id"] for item in receipts if not item.get("eligible")],
+        "skipped_missing": skipped_missing,
         "start_history_id": start_history,
         "end_history_id": new_history,
         "detection_path": detection_path,
