@@ -12,9 +12,12 @@ PYTHONPATH=src python3 -m unittest tests.test_desk_control_codec tests.test_desk
 PYTHONPATH=src python3 -m unittest discover -s tests
 ```
 
-`tests.test_desk_control_codec` reconstructs the Sent-vs-delivered NOTE wrap
-(after `ants.` and `office`) and proves the old simple `NOTE=` form fails
-closed. It does not mark the live case PASS.
+`tests.test_desk_control_codec` uses a representative Sent-vs-delivered NOTE
+wrap (after `ants.` and `office`) and proves the old simple `NOTE=` form fails
+closed. It is not exact live wording and does not mark the live case PASS.
+
+Also: duplicate v1 JSON keys and non-string payload fields fail closed.
+Authorized `revise_draft` keeps exact trailing spaces on the save path.
 
 ## Host generate-only (read-only store)
 

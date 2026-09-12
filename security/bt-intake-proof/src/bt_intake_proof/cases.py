@@ -44,8 +44,8 @@ DRAFT_NOT_SENT = "DRAFT - NOT SENT"
 _DRAFT_PREFIXES = (DRAFT_NOT_SENT, "DRAFT — NOT SENT", "DRAFT -- NOT SENT")
 
 
-def _label_draft_not_sent(proposed: str) -> str:
-    text = (proposed or "").strip()
+def _label_draft_not_sent(proposed: str, *, exact: bool = False) -> str:
+    text = proposed if exact else (proposed or "").strip()
     for prefix in _DRAFT_PREFIXES:
         if text.startswith(prefix):
             return DRAFT_NOT_SENT + text[len(prefix) :]
@@ -362,14 +362,26 @@ class CaseLayer:
         nonce: str,
         *,
         label_not_sent: bool = True,
+        preserve_exact: bool = False,
     ) -> dict[str, Any]:
         case = self.get_case(case_id)
         if not case:
             raise ValueError(f"unknown case {case_id}")
         version = int(case.get("draft_version") or 0) + 1
-        raw_proposed = str(draft.get("proposed_response") or "").strip()
+        raw = draft.get("proposed_response")
+        if raw is None:
+            raw_proposed = ""
+        elif isinstance(raw, str):
+            raw_proposed = raw
+        else:
+            raw_proposed = str(raw)
+        if not preserve_exact:
+            raw_proposed = raw_proposed.strip()
         # Phase C customer drafts stay labeled. Phase E stores the exact send body.
-        proposed = _label_draft_not_sent(raw_proposed) if label_not_sent else raw_proposed
+        # Authorized revise_draft keeps exact paragraph/space boundaries.
+        proposed = (
+            _label_draft_not_sent(raw_proposed, exact=preserve_exact) if label_not_sent else raw_proposed
+        )
         labeled = 1 if label_not_sent else 0
         now = utc_now()
         self.conn.execute(

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
 import re
 import tempfile
 import unittest
@@ -19,10 +22,12 @@ from bt_intake_proof.desk_bridge import (
 from bt_intake_proof.desk_control import INTENT_HOLD, INTENT_REVISE
 from bt_intake_proof.desk_control_codec import (
     CTRL_ENC_VERSION,
+    SIMPLE_LINE,
     WIRE_LINE,
     decode_control_fields,
     note_fits_simple,
     serialize_control_body,
+    wrap_wire,
 )
 from bt_intake_proof.desk_origin import daniel_origin_evidence
 from bt_intake_proof.desk_packets import build_desk_packets, write_desk_packets
@@ -39,8 +44,9 @@ from bt_intake_proof.phasee_constants import PHASEE_CASE_MARKER
 from bt_intake_proof.send_bind import ensure_send_tables
 from bt_intake_proof.store import ReceiptStore, body_hash
 
-# Reconstructed from Codex-observed wrap of Daniel Sent 1a096d7c880b70fb /
-# contactus 1a096d7f837799a5. Not a live replay and not a model PASS.
+# Representative wrap of a long single-line NOTE (Codex-observed failure
+# mode: delivered hard-wrap after "ants." and "office"). Paraphrase of the
+# live wording, not an exact reconstruction, and not a model PASS.
 LIVE_WRAP_NOTE = (
     "DRAFT - NOT SENT Please share your name, a callback number, the service "
     "address, and details about the ants. Our office will follow up once we have that."
@@ -52,6 +58,23 @@ LIVE_WRAP_DELIVERED_NOTE = (
     "Our office\n"
     "will follow up once we have that."
 )
+
+
+def _v1_envelope(raw_json: str) -> str:
+    raw = raw_json.encode("utf-8")
+    digest = hashlib.sha256(raw).hexdigest()
+    payload = base64.b64encode(raw).decode("ascii")
+    lines = [
+        MARKER_DESK_CTRL,
+        f"CTRL-ENC={CTRL_ENC_VERSION}",
+        f"ENC_LEN={len(raw)}",
+        "ENC_SHA256",
+        digest,
+        "ENC_B64",
+        *wrap_wire(payload),
+        "ENC_B64_END",
+    ]
+    return "\n".join(lines) + "\n"
 
 
 def _mime_hard_wrap(text: str, width: int = 78) -> str:
@@ -336,6 +359,96 @@ class DeskControlCodecTests(unittest.TestCase):
         self.assertTrue((dest / "desk-control.txt").exists())
         kinds = {item["kind"] for item in payload["emails"]}
         self.assertEqual(kinds, {"queue", "case", "health"})
+
+    def _valid_payload(self, **overrides) -> dict:
+        payload = {
+            "case_id": self.binding["case_id"],
+            "draft_version": int(self.binding["draft_version"]),
+            "intent": INTENT_REVISE,
+            "nonce": self.binding["nonce"],
+            "note": "line1\nline2",
+            "owner": "",
+            "packet_hash": self.binding["packet_hash"],
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_duplicate_json_fields_fail_closed(self) -> None:
+        unique = json.dumps(self._valid_payload(), separators=(",", ":"), ensure_ascii=False)
+        bodies = {
+            "note": unique.replace('"note":"line1\\nline2"', '"note":"WRONG","note":"line1\\nline2"', 1),
+            "intent": unique.replace('"intent":"revise_draft"', '"intent":"hold","intent":"revise_draft"', 1),
+            "packet_hash": unique.replace(
+                f'"packet_hash":"{self.binding["packet_hash"]}"',
+                f'"packet_hash":"{"0"*64}","packet_hash":"{self.binding["packet_hash"]}"',
+                1,
+            ),
+            "nonce": unique.replace(
+                f'"nonce":"{self.binding["nonce"]}"',
+                f'"nonce":"wrong-nonce","nonce":"{self.binding["nonce"]}"',
+                1,
+            ),
+        }
+        for field, raw in bodies.items():
+            self.assertIn(f'"{field}":', raw)
+            self.assertGreater(raw.count(f'"{field}":'), 1, field)
+            parsed = decode_control_fields(MARKER_DESK_CTRL, _v1_envelope(raw))
+            self.assertFalse(parsed["ok"], field)
+            self.assertEqual(parsed["reason"], "duplicate_json_field", field)
+
+    def test_invalid_json_payload_types_fail_closed(self) -> None:
+        cases = {
+            "note_object": self._valid_payload(note={"x": 1}),
+            "intent_int": self._valid_payload(intent=1),
+            "hash_list": self._valid_payload(packet_hash=[self.binding["packet_hash"]]),
+            "version_str": self._valid_payload(draft_version="1"),
+            "version_bool": self._valid_payload(draft_version=True),
+            "owner_null": self._valid_payload(owner=None),
+        }
+        for name, payload in cases.items():
+            raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+            parsed = decode_control_fields(MARKER_DESK_CTRL, _v1_envelope(raw))
+            self.assertFalse(parsed["ok"], name)
+            self.assertEqual(parsed["reason"], "control_payload_type", name)
+
+    def test_authorized_revise_keeps_trailing_spaces_on_save(self) -> None:
+        note = "DRAFT - NOT SENT\n\nKeep this spacing.  \n"
+        mail = format_control_mail(INTENT_REVISE, self.binding, note=note)
+        parsed = parse_control_mail(mail["subject"], mail["body"])
+        self.assertEqual(parsed["note"], note)
+        result = self._process(mail, mid="ctrl-exact-space")
+        self.assertTrue(result["ok"], result)
+        draft = self.layer.latest_draft(self.case_id)
+        self.assertEqual(draft["proposed_response"], note)
+        self.assertTrue(str(draft["proposed_response"]).endswith("  \n"))
+        self.assertEqual(int(draft["labeled_not_sent"] or 0), 1)
+        self.assertTrue(draft["proposed_response"].startswith("DRAFT - NOT SENT"))
+
+    def test_encoding_uses_all_wire_line_lengths(self) -> None:
+        near = "N" * (SIMPLE_LINE - len("NOTE="))
+        self.assertEqual(len(f"NOTE={near}"), SIMPLE_LINE)
+        simple = format_control_mail(INTENT_REVISE, self.binding, note=near)
+        self.assertNotIn("CTRL-ENC=", simple["body"])
+        self.assertTrue(all(len(line) <= SIMPLE_LINE for line in simple["body"].splitlines()))
+
+        over = near + "X"
+        encoded = format_control_mail(INTENT_REVISE, self.binding, note=over)
+        self.assertIn(f"CTRL-ENC={CTRL_ENC_VERSION}", encoded["body"])
+
+        long_bind = {
+            **self.binding,
+            "case_id": "BTC-contactus-" + ("c" * 80),
+            "nonce": "nonce-" + ("n" * 90),
+        }
+        long_mail = format_control_mail(INTENT_HOLD, long_bind)
+        self.assertIn(f"CTRL-ENC={CTRL_ENC_VERSION}", long_mail["body"])
+        self.assertTrue(all(len(line) <= WIRE_LINE for line in long_mail["body"].splitlines()))
+        wrapped = _mime_hard_wrap(long_mail["body"], width=46)
+        delivered = parse_control_mail(long_mail["subject"], wrapped)
+        self.assertTrue(delivered["ok"], delivered)
+        self.assertEqual(delivered["case_id"], long_bind["case_id"])
+        self.assertEqual(delivered["nonce"], long_bind["nonce"])
+        self.assertEqual(delivered["packet_hash"], long_bind["packet_hash"])
 
 
 if __name__ == "__main__":

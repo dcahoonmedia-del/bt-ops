@@ -35,9 +35,14 @@ SIMPLE_KEYS = ("INTENT", "OWNER", "NOTE", "CASE_ID", "DRAFT_VERSION", "NONCE", "
 META_KEYS = (CTRL_ENC_FIELD, ENC_LEN_FIELD)
 KNOWN_KEYS = SIMPLE_KEYS + META_KEYS
 PAYLOAD_KEYS = ("intent", "owner", "note", "case_id", "draft_version", "nonce", "packet_hash")
+PAYLOAD_STRING_KEYS = ("intent", "owner", "note", "case_id", "nonce", "packet_hash")
 
 _KEY_LINE = re.compile(r"^([A-Z][A-Z0-9_-]*)=(.*)$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
+
+
+class DuplicateJsonField(ValueError):
+    """Raised when a JSON object repeats a key. json.loads last-key-wins is not used."""
 
 
 def note_fits_simple(note: str | None) -> bool:
@@ -45,6 +50,64 @@ def note_fits_simple(note: str | None) -> bool:
     if "\n" in text or "\r" in text:
         return False
     return len(f"NOTE={text}") <= SIMPLE_LINE
+
+
+def simple_control_lines(
+    *,
+    intent: str,
+    binding: dict[str, Any],
+    owner: str | None = None,
+    note: str | None = None,
+) -> list[str]:
+    text = "" if note is None else str(note)
+    return [
+        MARKER_DESK_CTRL,
+        f"INTENT={intent}",
+        f"OWNER={owner or ''}",
+        f"NOTE={text}",
+        f"CASE_ID={binding.get('case_id') or ''}",
+        f"DRAFT_VERSION={binding.get('draft_version') or ''}",
+        f"NONCE={binding.get('nonce') or ''}",
+        f"PACKET_HASH={binding.get('packet_hash') or ''}",
+    ]
+
+
+def simple_control_fits(lines: list[str], note: str | None) -> bool:
+    text = "" if note is None else str(note)
+    if "\n" in text or "\r" in text:
+        return False
+    return all(len(line) <= SIMPLE_LINE for line in lines)
+
+
+def _reject_duplicate_pairs(pairs: list[tuple[Any, Any]]) -> dict[Any, Any]:
+    seen: dict[Any, Any] = {}
+    for key, value in pairs:
+        if key in seen:
+            raise DuplicateJsonField(str(key))
+        seen[key] = value
+    return seen
+
+
+def parse_strict_json(raw: str) -> Any:
+    """Parse JSON objects without last-key-wins. Nested objects use the same rule."""
+    return json.loads(raw, object_pairs_hook=_reject_duplicate_pairs)
+
+
+def validate_control_payload(payload: Any) -> dict[str, Any] | None:
+    """Return a fail dict, or None if the payload types and keys are exact."""
+    if not isinstance(payload, dict):
+        return _fail("control_payload_type")
+    extra = set(payload) - set(PAYLOAD_KEYS)
+    missing = set(PAYLOAD_KEYS) - set(payload)
+    if extra or missing:
+        return _fail("control_payload_invalid")
+    for key in PAYLOAD_STRING_KEYS:
+        if not isinstance(payload[key], str):
+            return _fail("control_payload_type")
+    version = payload["draft_version"]
+    if version is not None and (isinstance(version, bool) or not isinstance(version, int)):
+        return _fail("control_payload_type")
+    return None
 
 
 def wrap_wire(text: str, width: int = WIRE_LINE) -> list[str]:
@@ -102,19 +165,10 @@ def serialize_control_body(
     owner: str | None = None,
     note: str | None = None,
 ) -> str:
-    """Build the control body. Empty/short single-line NOTE stays simple."""
+    """Build the control body. Simple KEY=value only when every wire line fits."""
     text = "" if note is None else str(note)
-    if note_fits_simple(text):
-        lines = [
-            MARKER_DESK_CTRL,
-            f"INTENT={intent}",
-            f"OWNER={owner or ''}",
-            f"NOTE={text}",
-            f"CASE_ID={binding.get('case_id') or ''}",
-            f"DRAFT_VERSION={binding.get('draft_version') or ''}",
-            f"NONCE={binding.get('nonce') or ''}",
-            f"PACKET_HASH={binding.get('packet_hash') or ''}",
-        ]
+    lines = simple_control_lines(intent=intent, binding=binding, owner=owner, note=text)
+    if simple_control_fits(lines, text):
         return "\n".join(lines) + "\n"
     payload = control_payload(intent=intent, binding=binding, owner=owner, note=text)
     return "\n".join([MARKER_DESK_CTRL, *encode_payload_v1(payload)]) + "\n"
@@ -228,22 +282,26 @@ def decode_control_fields(subject: str | None, body: str | None) -> dict[str, An
     if hashlib.sha256(raw).hexdigest() != sha_hex:
         return _fail("note_sha256_mismatch")
     try:
-        payload = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
         return _fail("note_not_utf8")
-    if not isinstance(payload, dict):
+    try:
+        payload = parse_strict_json(text)
+    except DuplicateJsonField:
+        return _fail("duplicate_json_field")
+    except json.JSONDecodeError:
         return _fail("note_not_utf8")
-    extra = set(payload) - set(PAYLOAD_KEYS)
-    missing = set(PAYLOAD_KEYS) - set(payload)
-    if extra or missing:
-        return _fail("control_payload_invalid")
+    typed = validate_control_payload(payload)
+    if typed:
+        return typed
+    version = payload["draft_version"]
     fields = {
-        "INTENT": str(payload.get("intent") or ""),
-        "OWNER": str(payload.get("owner") or ""),
-        "NOTE": "" if payload.get("note") is None else str(payload.get("note")),
-        "CASE_ID": str(payload.get("case_id") or ""),
-        "DRAFT_VERSION": "" if payload.get("draft_version") in (None, "") else str(payload.get("draft_version")),
-        "NONCE": str(payload.get("nonce") or ""),
-        "PACKET_HASH": str(payload.get("packet_hash") or ""),
+        "INTENT": payload["intent"],
+        "OWNER": payload["owner"],
+        "NOTE": payload["note"],
+        "CASE_ID": payload["case_id"],
+        "DRAFT_VERSION": "" if version is None else str(version),
+        "NONCE": payload["nonce"],
+        "PACKET_HASH": payload["packet_hash"],
     }
     return {"ok": True, "encoding": CTRL_ENC_VERSION, "fields": fields, "note": fields["NOTE"], "payload": payload}

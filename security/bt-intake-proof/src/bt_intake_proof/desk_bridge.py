@@ -669,6 +669,7 @@ def apply_authorized_action(
             },
             nonce=f"desk-revise-{case_id}-v{version}",
             label_not_sent=not is_phasee_body(new_body),
+            preserve_exact=True,
         )
         layer.add_event(case_id, "desk_revise", actor=ALLOWED_SENDER, from_version=version, to_version=saved["version"])
         return {

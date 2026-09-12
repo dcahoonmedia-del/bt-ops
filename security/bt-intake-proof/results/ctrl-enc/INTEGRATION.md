@@ -3,7 +3,9 @@
 | Item | Result | Notes |
 | --- | --- | --- |
 | Local codec / wrap / tamper tests | **PASS** (unit) | See `tests.test_desk_control_codec` |
-| Old long `NOTE=` wrap (live failure mode) | **FAIL closed** (unit) | Does not authorize folded simple NOTE |
+| Duplicate JSON keys / bad payload types | **FAIL closed** (unit) | Strict object pairs; no last-key-wins or type coercion |
+| Authorized revise trailing spaces | **PASS** (unit, save path) | `preserve_exact`; unrelated drafts still strip |
+| Old long `NOTE=` wrap (representative) | **FAIL closed** (unit) | Does not authorize folded simple NOTE |
 | 63-character hash | **FAIL closed** (unit) | `packet_hash_invalid` unchanged |
 | Live CASEMGR walkthrough | **PASS** (Codex-observed) | Recorded in `results/casemgr-draft/CODEX_OBSERVED_WALKTHROUGH.md` |
 | Phone / Mac-off | **BLOCKED** | Desktop-mediated only |

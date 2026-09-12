@@ -291,6 +291,9 @@ class CaseLayerTests(unittest.TestCase):
         self.assertEqual(case_id_for(MAILBOX, "abc"), "BTC-contactus-abc")
         self.assertEqual(_label_draft_not_sent("Thanks for writing."), f"{DRAFT_NOT_SENT}\n\nThanks for writing.")
         self.assertEqual(_label_draft_not_sent("DRAFT — NOT SENT\n\nHi"), f"{DRAFT_NOT_SENT}\n\nHi")
+        exact = "DRAFT - NOT SENT\n\nKeep this spacing.  \n"
+        self.assertEqual(_label_draft_not_sent(exact, exact=True), exact)
+        self.assertEqual(_label_draft_not_sent(exact), "DRAFT - NOT SENT\n\nKeep this spacing.")
 
     def test_same_decision_receipt_is_idempotent(self) -> None:
         row = self._commit(lead_receipt("m-dec"))[0]
