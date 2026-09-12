@@ -1,0 +1,11 @@
+{
+  "new_lead": "BT-INTAKE-PROOF-CASEMGR-NEW-E9A8",
+  "thread_reply": "BT-INTAKE-PROOF-CASEMGR-REPLY-E9A8",
+  "approve": "BT-INTAKE-PROOF-CASE-APPROVE-E9A8",
+  "request_changes": "BT-INTAKE-PROOF-CASE-CHANGES-E9A8",
+  "no_response": "BT-INTAKE-PROOF-CASE-NONE-E9A8",
+  "review_packet": "BT-INTAKE-PROOF-CASE-REVIEW-E9A8",
+  "from": "daniel@btpestcontrol.com",
+  "to": "contactus@btpestcontrol.com",
+  "do_not_send_customer_mail": true
+}

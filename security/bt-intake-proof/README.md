@@ -10,9 +10,9 @@ Test 0 isolation stays unchanged. Codex delivery reuses `security/codex-external
 
 ## Current gate
 
-Phase A intake proof: **PASS.** Phase B cloud host: **PASS.** See `results/PHASEB.md`. Do not send more `BT-INTAKE-PROOF-*` mail.
+Phase A intake proof: **PASS.** Phase B cloud host: **PASS.** Phase C Case Manager: **PASS** (`results/PHASEC.md`). Customer sending remains off.
 
-The Cursor Gmail MCP is `daniel@btpestcontrol.com` and can send/modify mail; it is not used here.
+The Cursor Gmail MCP is `daniel@btpestcontrol.com` and can send/modify mail. Phase C used it only to send marked internal tests and Daniel's review packets. It is not a watch/Pub/Sub substitute.
 
 ## Local contracts (no Google)
 
