@@ -2,6 +2,7 @@
   "package": "bt-intake-desk-roundtrip",
   "sha256": "3eb86d3e961c6a3cd8d8c5ac700e2ba727a1f12bf96e35e75d9adbca26458e6e",
   "source_commit": "c3c762929e597b6f5c58b5cc40d6b078bdb18ce7",
+  "artifact_commit": "1cd083a176e2a10fa47f63460643df90fcdeec51",
   "tree_sha256": "10467093648102ef19b18778fc5a03d07b8d99977966aa0b3feee6b2c65b7d8f",
   "isolation": "isolated_test",
   "customer_sends": "off",
