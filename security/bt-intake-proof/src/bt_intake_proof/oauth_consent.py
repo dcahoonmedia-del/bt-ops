@@ -91,6 +91,26 @@ def authorization_url(installed: dict[str, Any] | None = None) -> dict[str, Any]
     }
 
 
+def extract_auth_code(redirect_or_code: str) -> str:
+    text = (redirect_or_code or "").strip()
+    if not text:
+        raise OAuthClientError("empty authorization response")
+    if text.startswith("http://") or text.startswith("https://"):
+        from urllib.parse import parse_qs, urlparse
+
+        parsed = urlparse(text)
+        query = parse_qs(parsed.query)
+        if parsed.fragment:
+            query.update(parse_qs(parsed.fragment))
+        if query.get("error"):
+            raise OAuthClientError(f"Google returned error: {query['error']}")
+        codes = query.get("code") or []
+        if not codes:
+            raise OAuthClientError("redirect URL does not contain a code parameter")
+        return codes[0]
+    return text
+
+
 def blocked_oauth_url() -> dict[str, Any]:
     return {
         "status": "BLOCKED",

@@ -1,20 +1,13 @@
-# Stopped for Daniel — Desktop OAuth client
+# Stopped for Daniel — contactus Gmail read-only consent
 
-Authorized project: **bt-intake-proof**.
+Authorized project: **bt-intake-proof**. Desktop OAuth client JSON is present and matches that project. The client secret is stored only in gitignored `secrets/` and was not committed.
 
-You already allowed only these four later creates in that project:
+## Open this URL
 
-- Pub/Sub topic `bt-intake-proof-contactus`
-- Pub/Sub subscription `bt-intake-proof-contactus-sub`
-- Publisher on that topic for `gmail-api-push@system.gserviceaccount.com`
-- Gmail `users.watch` for `contactus@btpestcontrol.com`
+Sign in as **contactus@btpestcontrol.com** only. Approve **Gmail read-only** only. Decline if Google shows send, modify, or draft.
 
-I have not created those yet. I have no Cloud admin login here, and Gmail consent is not done. If creating the topic requires billing, I will stop instead of linking a billing account.
+https://accounts.google.com/o/oauth2/v2/auth?client_id=1028131400538-5r57fq95el2uhmmtp2m38m3lgab7loa8.apps.googleusercontent.com&redirect_uri=http%3A%2F%2Flocalhost&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fgmail.readonly&access_type=offline&prompt=consent&include_granted_scopes=false&login_hint=contactus%40btpestcontrol.com
 
-## Do this now
+After approve, the browser will try to open `http://localhost` and fail. Copy the **full address-bar URL** and send it back.
 
-Follow `OAUTH_CLIENT_GUIDE.md`, then reply with the Desktop OAuth client JSON.
-
-I cannot show the Gmail OAuth URL until that JSON is here. I will request **gmail.readonly** only, with login hint `contactus@btpestcontrol.com`.
-
-Do not send `BT-INTAKE-PROOF-*` emails until watch registration is PASS and I show project, mailbox, topic, subscription, history ID, and expiration.
+Do not sign in as daniel@. Do not send `BT-INTAKE-PROOF-*` emails yet.

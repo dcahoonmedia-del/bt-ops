@@ -9,6 +9,7 @@ from bt_intake_proof.oauth_consent import (
     OAuthClientError,
     authorization_url,
     blocked_oauth_url,
+    extract_auth_code,
     load_desktop_client,
 )
 
@@ -54,6 +55,13 @@ class OAuthConsentTests(unittest.TestCase):
             path.write_text(json.dumps({"web": {"client_id": "x"}}), encoding="utf-8")
             with self.assertRaises(OAuthClientError):
                 load_desktop_client(path)
+
+    def test_extracts_code_from_localhost_redirect(self) -> None:
+        code = extract_auth_code("http://localhost/?code=4/0Abc&scope=https://www.googleapis.com/auth/gmail.readonly")
+        self.assertEqual(code, "4/0Abc")
+        self.assertEqual(extract_auth_code("4/0Abc"), "4/0Abc")
+        with self.assertRaises(OAuthClientError):
+            extract_auth_code("http://localhost/?error=access_denied")
 
     def test_rejects_wrong_project(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
