@@ -21,7 +21,8 @@ Evidence labels: **unit** / **fixture** / **runtime** / **real-phone**.
 | Missing / ambiguous / mismatched Sent | **PASS** (fixture) | fail closed |
 | Pending replay / boolean / legacy flag | **PASS** (unit) | `origin_already_authenticated` removed; legacy `origin_authenticated` does not authorize; versioned `desk-sent-v1` proof is bound to this control message |
 | Full identity PASS | **FAIL / not claimed** | Sent match is mailbox corroboration, not human identity |
-| Runtime daniel@ Sent lookup | **BLOCKED** | no existing `BT_DANIEL_GMAIL_TOKEN` / `secrets/daniel_gmail_readonly_token.json` |
+| Runtime daniel@ Sent lookup | **BLOCKED** | token not written; bootstrap staged only |
+| Daniel readonly OAuth bootstrap | **STAGED** | `scripts/daniel_readonly_oauth.py`; consent not started |
 | Sequential replay / reopen | **PASS** (unit) | not concurrency |
 | Simultaneous nonce + execute/deliver | **PASS** (unit) | two connections/threads |
 | Crash after accept, before persist | **PASS** (unit) | reconcile; no duplicate / silent stick |
@@ -32,12 +33,12 @@ Evidence labels: **unit** / **fixture** / **runtime** / **real-phone**.
 | Real iPhone / Mac-off | **PENDING** | |
 | Live deploy | **BLOCKED** | existing-path blocker accepted; artifacts staged only |
 
-**Unit:** `PYTHONPATH=src python3 -m unittest discover -s tests` → 153 passed, 1 skipped.
+**Unit:** `PYTHONPATH=src python3 -m unittest discover -s tests` → 160 passed, 1 skipped.
 
 ## Two remaining access dependencies
 
 1. **Deploy SSH (accepted blocker).** Existing private key for `btadmin` / `bt-intake-cloud-e9a8` on `35.243.167.73` (project `bt-intake-proof`, VM `bt-intake-cloud`, zone `us-east1-c`). File previously `security/bt-intake-proof/secrets/bt-intake-cloud`. Do not mint a new key. Codex Mac: no `~/.ssh`, no `gcloud`.
-2. **daniel@ Sent readonly (origin gate).** Already-authorized `gmail.readonly` credential for `daniel@btpestcontrol.com` that can `users.messages.list/get` on label `SENT` (`in:sent rfc822msgid:<Message-ID>`). Path: `BT_DANIEL_GMAIL_TOKEN` or `security/bt-intake-proof/secrets/daniel_gmail_readonly_token.json`. Mailbox must be daniel@; scope `https://www.googleapis.com/auth/gmail.readonly` only. contactus@ tokens cannot read daniel@ Sent. Cursor Gmail MCP is not the host path. Do not request or grant new OAuth.
+2. **daniel@ Sent readonly (origin gate).** Daniel approved this separate `gmail.readonly` consent. Bootstrap is staged; Codex runs it on the host using the existing Desktop client. Token dest: `/opt/bt-intake-proof/secrets/daniel_gmail_readonly_token.json`. See `results/DANIEL_READONLY_OAUTH.md`. No send/modify. Contactus tokens stay untouched.
 
 ## Deployment handoff (staged, not executed)
 
@@ -75,8 +76,8 @@ sudo git -C /opt/bt-intake-proof rev-parse HEAD
 
 ## Next smallest unblock
 
-1. Place the existing daniel@ `gmail.readonly` token at the path above (no new consent).
-2. Restore the existing SSH key; run preflight; read the live revision; install only after origin proof is available on the host.
+1. Codex transfers and runs `scripts/daniel_readonly_oauth.py` on the live host (see `results/DANIEL_READONLY_OAUTH.md`). Daniel only completes the Google read-only screen.
+2. Do not deploy the new worker or restart the receiver until that token exists and this branch is reviewed.
 3. Then runtime Gmail RESULT evidence. Only then the exact send approval and phone test.
 
 ## Exact send packet
