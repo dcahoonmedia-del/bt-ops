@@ -1,5 +1,6 @@
 import json
 import os
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,9 +17,11 @@ from bt_intake_proof.fieldwork_live_read import (
     direct_read_bundle,
     fixture_client,
     load_manifest,
+    name_search_aliases,
     preflight,
     resolve_authorized,
     run_bounded_read,
+    scenario_receipt,
 )
 from bt_intake_proof.fieldwork_match import (
     MATCH_AMBIGUOUS,
@@ -183,6 +186,7 @@ class MatcherFailurePathTests(unittest.TestCase):
 
         client = ReadOnlyFieldworkClient(token="x", getter=getter, live=False)
         client.identity = {"label": LABEL_FIXTURE, "live": False}
+        client.work_order_query_supported = True
         evidence = match_and_context(
             client,
             {"sender": "shelley.fixture.syn@example.com", "subject": "x", "body_text": SHELLEY},
@@ -237,7 +241,8 @@ class LiveReadRunnerTests(unittest.TestCase):
         self.assertTrue(direct["ok"])
         self.assertEqual(direct["customer_id"], "77001")
         self.assertEqual(direct["location_id"], "66001")
-        compared = compare_to_direct(matcher, direct)
+        compared = compare_to_direct(matcher, direct, expected={"customer_id": "77001", "location_id": "66001"})
+        self.assertTrue(compared["identity_ok"], compared)
         self.assertTrue(compared["ok"], compared)
         self.assertNotIn("summary", compared)
 
@@ -250,24 +255,52 @@ class LiveReadRunnerTests(unittest.TestCase):
                 out_path=Path(tmp) / "manifest.json",
             )
         self.assertEqual(payload["status"], "BLOCKED")
-        self.assertTrue(all(item["hit_count"] == 0 for item in payload["authorized"]))
+        self.assertTrue(all(item.get("full_name_count") == 0 for item in payload["authorized"]))
+        self.assertTrue(all(item["reason"] in {"name_alone_is_not_identity", "authorized_name_no_candidates_after_aliases"} for item in payload["authorized"]))
+        self.assertTrue(all(not item["customer_id_present"] for item in payload["authorized"]))
 
     def test_resolve_synthetic_names_and_bounded_read(self) -> None:
         client = fixture_client()
+        labels = (
+            {
+                "key": "authorized_case_1",
+                "search_name": "Shelley Fixture",
+                "identifiers": {
+                    "names": ["Shelley Fixture"],
+                    "emails": ["shelley.fixture.syn@example.com"],
+                    "phones": ["9105557701"],
+                    "addresses": [{"street": "14 Oak Street", "city": "Holly Ridge", "zip": "28445"}],
+                },
+            },
+            {
+                "key": "authorized_case_2",
+                "search_name": "Jordan Fixture",
+                "identifiers": {
+                    "names": ["Jordan Fixture"],
+                    "emails": ["jordan.fixture.syn@example.com"],
+                    "phones": ["9105557703"],
+                    "addresses": [{"street": "88 Pine Drive", "city": "Hampstead", "zip": "28443"}],
+                },
+            },
+            {
+                "key": "authorized_case_3",
+                "search_name": "Mariah Fixture",
+                "identifiers": {
+                    "names": ["Mariah Fixture"],
+                    "emails": ["mariah.fixture.syn@example.com"],
+                    "phones": ["9105557704"],
+                    "addresses": [{"street": "5 Elm Court", "city": "Jacksonville", "zip": "28540"}],
+                },
+            },
+        )
         with tempfile.TemporaryDirectory() as tmp:
             manifest_path = Path(tmp) / "manifest.json"
-            resolved = resolve_authorized(
-                client,
-                labels=(
-                    {"key": "authorized_case_1", "search_name": "Shelley Fixture"},
-                    {"key": "authorized_case_2", "search_name": "Jordan Fixture"},
-                    {"key": "authorized_case_3", "search_name": "Mariah Fixture"},
-                ),
-                out_path=manifest_path,
-            )
+            resolved = resolve_authorized(client, labels=labels, out_path=manifest_path)
             self.assertEqual(resolved["status"], "PASS")
             self.assertTrue(all(item["customer_id_present"] for item in resolved["authorized"]))
+            self.assertTrue(all(item["location_id_present"] for item in resolved["authorized"]))
             self.assertEqual(resolved["authorized"][0]["location_count"], 2)
+            self.assertEqual(resolved["authorized"][0]["full_name_count"], 0)
             manifest = load_manifest(manifest_path)
             self.assertLessEqual(sum(1 for row in manifest["scenarios"] if row["kind"] == "authorized_identity"), 3)
             self.assertLessEqual(
@@ -290,6 +323,8 @@ class LiveReadRunnerTests(unittest.TestCase):
             dumped = json.dumps(private)
             self.assertNotIn("shelley.fixture.syn@example.com", dumped)
             self.assertNotIn("14 Oak Street", dumped)
+            self.assertEqual(stat.S_IMODE((Path(tmp) / "evidence").stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE((Path(tmp) / "evidence" / "authorized_case_1.json").stat().st_mode), 0o600)
 
     def test_example_manifest_fixture_run(self) -> None:
         client = fixture_client()
@@ -314,6 +349,120 @@ class LiveReadRunnerTests(unittest.TestCase):
         blob = json.loads(SYNTHETIC_CATALOG.read_text(encoding="utf-8"))
         self.assertTrue(blob["not_live"])
         self.assertEqual(blob["label"], LABEL_FIXTURE)
+
+
+class AcceptanceRegressionTests(unittest.TestCase):
+    def test_live_receipt_does_not_invent_identifiers(self) -> None:
+        receipt = scenario_receipt({"kind": "authorized_identity"}, {"name": "Known Person", "service_locations": []})
+        self.assertIsNone(receipt)
+        if receipt:
+            blob = json.dumps(receipt)
+            self.assertNotIn("auth.syn@example.com", blob)
+            self.assertNotIn("9105550001", blob)
+            self.assertNotIn("14 Fixture Lane", blob)
+
+    def test_compare_reproducer_does_not_pass(self) -> None:
+        matcher = {
+            "status": MATCH_EXISTING,
+            "customer_id": "1",
+            "customer_status": "active",
+            "location_id": "2",
+            "active_agreement": {"id": "A"},
+            "live": True,
+            "notes_ok": True,
+            "estimates_ok": True,
+            "appointments_ok": True,
+        }
+        direct = {
+            "ok": True,
+            "customer_id": "1",
+            "customer_status": "active",
+            "location_id": None,
+            "agreements_ok": True,
+            "active_agreement_present": False,
+            "live": True,
+            "date_window_applied": True,
+            "notes": {"ok": True},
+            "estimates": {"ok": True},
+            "appointments": {"ok": True},
+            "recent_service": {"status": "ok", "ok": True, "id": None},
+        }
+        compared = compare_to_direct(matcher, direct, expected={"customer_id": "1", "location_id": "2"})
+        self.assertFalse(compared["ok"])
+        self.assertNotEqual(compared["status"], "PASS")
+
+    def test_compare_wrong_ids_fail(self) -> None:
+        matcher = {"status": MATCH_EXISTING, "customer_id": "9", "customer_status": "active", "location_id": "2", "live": False, "notes_ok": True, "estimates_ok": True, "appointments_ok": True}
+        direct = {"ok": True, "customer_id": "1", "customer_status": "active", "location_id": "2", "live": False, "agreements_ok": True, "active_agreement_present": False, "date_window_applied": True, "notes": {"ok": True}, "estimates": {"ok": True}, "appointments": {"ok": True}, "recent_service": {"status": "ok", "ok": True}}
+        compared = compare_to_direct(matcher, direct, expected={"customer_id": "1", "location_id": "2"})
+        self.assertFalse(compared["identity_ok"])
+        self.assertEqual(compared["status"], "FAIL")
+
+    def test_compare_failed_direct_is_blocked(self) -> None:
+        compared = compare_to_direct(
+            {"status": MATCH_EXISTING, "customer_id": "1", "live": True},
+            {"ok": False, "reason": "http_401", "live": True},
+            expected={"customer_id": "1", "location_id": "2"},
+        )
+        self.assertEqual(compared["status"], "BLOCKED")
+        self.assertFalse(compared["ok"])
+
+    def test_compare_missing_property_is_incomplete(self) -> None:
+        matcher = {"status": MATCH_EXISTING, "customer_id": "1", "customer_status": "active", "location_id": "2", "live": False, "notes_ok": True, "estimates_ok": True, "appointments_ok": True}
+        direct = {"ok": True, "customer_id": "1", "customer_status": "active", "location_id": None, "location_reason": "location_schema_invalid", "live": False, "agreements_ok": True, "active_agreement_present": False, "date_window_applied": True, "notes": {"ok": True}, "estimates": {"ok": True}, "appointments": {"ok": True}, "recent_service": {"status": "ok", "ok": True}}
+        compared = compare_to_direct(matcher, direct, expected={"customer_id": "1", "location_id": "2"})
+        self.assertEqual(compared["status"], "INCOMPLETE")
+
+    def test_compare_agreement_disagreement_both_directions(self) -> None:
+        base_m = {"status": MATCH_EXISTING, "customer_id": "1", "customer_status": "active", "location_id": "2", "live": False, "notes_ok": True, "estimates_ok": True, "appointments_ok": True, "work_orders_ok": True}
+        base_d = {"ok": True, "customer_id": "1", "customer_status": "active", "location_id": "2", "live": False, "agreements_ok": True, "date_window_applied": True, "notes": {"ok": True}, "estimates": {"ok": True}, "appointments": {"ok": True}, "recent_service": {"status": "ok", "ok": True}, "work_orders": {"ok": True, "status": "ok"}}
+        left = compare_to_direct({**base_m, "active_agreement": {"id": "A"}}, {**base_d, "active_agreement_present": False}, expected={"customer_id": "1", "location_id": "2"})
+        right = compare_to_direct({**base_m, "active_agreement": None}, {**base_d, "active_agreement_present": True}, expected={"customer_id": "1", "location_id": "2"})
+        self.assertFalse(left["context_ok"])
+        self.assertFalse(right["context_ok"])
+        self.assertIn("active_agreement_presence", left["failed"])
+        self.assertIn("active_agreement_presence", right["failed"])
+
+    def test_direct_read_component_failure_is_not_context_complete(self) -> None:
+        inner = fixture_client()
+
+        def getter(path: str, params: dict):
+            if path == "/v3.1/service_agreement_setups" or path.endswith("/search") and "service_agreement" in path:
+                raise FieldworkReadError("http_500")
+            return inner._lookup(path, params)
+
+        client = ReadOnlyFieldworkClient(token="x", getter=getter, live=False)
+        client.work_order_query_supported = True
+        bundle = direct_read_bundle(client, "77001", "66001")
+        self.assertTrue(bundle["ok"])
+        self.assertFalse(bundle["agreements_ok"])
+        self.assertFalse(bundle["appointments_ok"])
+        self.assertEqual(bundle["appointments_reason"], "http_500")
+        self.assertTrue(bundle["date_window_applied"])
+        self.assertFalse(bundle["context_complete"])
+
+    def test_full_name_zero_is_not_absent_and_name_alone_is_not_identity(self) -> None:
+        client = fixture_client()
+        aliases = name_search_aliases("Shelley Fixture")
+        self.assertEqual(aliases[0]["form"], "full")
+        self.assertIn("surname", {item["form"] for item in aliases})
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = resolve_authorized(
+                client,
+                labels=({"key": "authorized_case_1", "search_name": "Shelley Fixture"},),
+                out_path=Path(tmp) / "manifest.json",
+            )
+        self.assertEqual(payload["status"], "BLOCKED")
+        self.assertEqual(payload["authorized"][0]["full_name_count"], 0)
+        self.assertGreater(payload["authorized"][0]["hit_count"], 0)
+        self.assertEqual(payload["authorized"][0]["reason"], "name_alone_is_not_identity")
+
+    def test_issue_key_command_removed(self) -> None:
+        from bt_intake_proof import cli
+
+        source = Path(cli.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("live-fw-issue-key", source)
+        self.assertNotIn("issue_key_to_file", source)
 
 
 class CaseManagerStillFixtureTests(unittest.TestCase):

@@ -24,7 +24,6 @@ from .fieldwork_live_read import (
     HOST_EVIDENCE,
     HOST_MANIFEST,
     client_for_mode,
-    issue_key_to_file,
     load_manifest,
     preflight,
     resolve_authorized,
@@ -458,12 +457,6 @@ def cmd_live_fw_preflight(args: argparse.Namespace) -> int:
     return 0 if payload.get("ok") else 2
 
 
-def cmd_live_fw_issue_key(args: argparse.Namespace) -> int:
-    payload = issue_key_to_file(args.file)
-    _print(payload)
-    return 0 if payload.get("ok") else 2
-
-
 def cmd_live_fw_resolve(args: argparse.Namespace) -> int:
     try:
         client = client_for_mode(args.mode)
@@ -496,14 +489,19 @@ def cmd_live_fw_read(args: argparse.Namespace) -> int:
         "enqueued": False,
         "sent": False,
         "receiver_unchanged": True,
+        "coverage": scorecard.get("coverage"),
         "scenarios": [
             {
                 "key": row.get("key"),
                 "kind": row.get("kind"),
+                "proof_class": row.get("proof_class"),
                 "result": row.get("result"),
                 "matcher_status": row.get("matcher_status"),
                 "reason": row.get("reason"),
                 "comparison_ok": row.get("comparison_ok"),
+                "identity_ok": row.get("identity_ok"),
+                "context_ok": row.get("context_ok"),
+                "inbound_matching_proof": row.get("inbound_matching_proof"),
                 "live": row.get("live"),
                 "source_label": row.get("source_label"),
             }
@@ -606,10 +604,7 @@ def main(argv: list[str] | None = None) -> int:
     lfp = sub.add_parser("live-fw-preflight", help="Bounded Fieldwork live-read preflight. Does not search customers or send mail.")
     lfp.add_argument("--mode", choices=("live", "fixture"), default="live")
     lfp.set_defaults(func=cmd_live_fw_preflight)
-    lfk = sub.add_parser("live-fw-issue-key", help="Host-only: write a Fieldwork API key to a 0600 file. Never prints the key.")
-    lfk.add_argument("--file", required=True, help="Destination path on the approved host secret boundary")
-    lfk.set_defaults(func=cmd_live_fw_issue_key)
-    lfr = sub.add_parser("live-fw-resolve", help="Resolve the 3 authorized labels to native IDs. Writes a private manifest. Does not send.")
+    lfr = sub.add_parser("live-fw-resolve", help="Resolve authorized labels after corroboration. Writes a private manifest. Does not send or mint credentials.")
     lfr.add_argument("--mode", choices=("live", "fixture"), default="live")
     lfr.add_argument("--out", default="", help="Private manifest path; default /var/lib/bt-intake-proof/live-fw-read/manifest.json")
     lfr.set_defaults(func=cmd_live_fw_resolve)

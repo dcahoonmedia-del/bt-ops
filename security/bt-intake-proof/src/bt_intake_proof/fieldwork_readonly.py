@@ -241,6 +241,7 @@ class ReadOnlyFieldworkClient:
         self.fetch_issues: list[dict[str, Any]] = []
         self.provider_token_scope_verified = False
         self.adapter_enforced_read_only = True
+        self.work_order_query_supported = False
 
     @classmethod
     def from_env(cls) -> "ReadOnlyFieldworkClient":

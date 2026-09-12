@@ -1,77 +1,59 @@
 # LIVE-FW-READ-1 — bounded Fieldwork identity/context read
 
-Offline matcher/adapter/runner: **PASS** (`PYTHONPATH=src python3 -m unittest discover -s tests` → 265 passed, 1 skipped).  
+Offline matcher/adapter/runner: **PASS** (`PYTHONPATH=src python3 -m unittest discover -s tests` → 274 passed, 1 skipped).  
 Live Fieldwork on this Cursor VM: **BLOCKED**.  
 Always-on receiver: **unchanged** (still `grok_bot_client()` fixture only).  
-Draft / enqueue / send: **not invoked**.
+Draft / enqueue / send: **not invoked**.  
+Credential minting: **removed** from this milestone.
 
-This is not a live HQ pass. Fixture results stay `FIELDWORK_FIXTURE_VERIFIED` / `live=false`. They are never relabeled live.
+This is not a live HQ pass. Fixture results stay `FIELDWORK_FIXTURE_VERIFIED` / `live=false`. They are never relabeled live. Synthetic fixture paths are labeled `synthetic_fixture` and are not independent inbound matching proof.
+
+## Coverage
+
+| Layer | Offline fixture | Live from this VM |
+| --- | --- | --- |
+| Identity (manifest customer/property vs matcher vs direct read) | PASS on synthetic catalog | **BLOCKED** — no host credential |
+| Context (notes / agreement / estimates / appointments / recent service, with date window) | PASS on synthetic catalog | **BLOCKED** |
+| Provenance (`live` / source label cannot be confused) | PASS | **BLOCKED** |
+| Independent inbound matching proof (`source_evidence`) | not claimed | **BLOCKED** until a private source-evidence manifest exists on the host |
+
+Date window is retrieve-time ± `date_window_days` (default 365). Work-order customer filter is unsupported on the live API client; that component is INCOMPLETE/unsupported, never a zero PASS.
 
 ## Offline scorecard
 
 | Scenario | Result | Notes |
 | --- | --- | --- |
-| Multi-identifier match on synthetic case 1; property `14` does not select `214` | PASS | Fixture catalog only |
-| Synthetic case 2 alternate payer/contact preserved on the customer record | PASS | Identity ≠ service property |
-| Synthetic case 3 missing account status stays `unknown`, never `active` | PASS | |
-| Ambiguity probe: multi-property without street | PASS | Abstain / `ambiguous_match_needs_daniel` |
-| Ambiguity probe: street number does not uniquely resolve two properties | PASS | Abstain |
-| Synthetic no-match `ZZZ-NO-CUSTOMER-PROOF-9F3A` after complete searches | PASS | Creates no record |
-| Auth failure / schema mismatch | PASS | `blocked`, not no-match |
-| Truncated pagination | PASS | `incomplete`, not no-match |
-| Unscoped work-order page | PASS | Omitted; not “no appointments” |
-| Fixture vs live provenance cannot be confused | PASS | |
-| Case Manager still uses fixture client | PASS | `live_read_client()` is not imported there |
-| Zero Fieldwork writes in fixture and runner | PASS | |
-| Live preflight from this VM | **BLOCKED** | `live_read_not_enabled`; no host token consumed here |
-| Live resolve of the 3 authorized labels | **BLOCKED** | This VM is not the approved host |
-| Independent live native-ID comparison | **BLOCKED** | Same reason |
+| Receipt construction refuses invented live identifiers | PASS | Missing data → insufficient, not `14 Fixture Lane` |
+| compare_to_direct rejects missing property and agreement false positives | PASS | Expected manifest IDs required |
+| Failed direct read / wrong IDs / disagreement both ways | PASS | BLOCKED / FAIL / INCOMPLETE as specified |
+| Full-name query zero is not “case absent”; name alone is not identity | PASS | Surname aliases still require corroboration |
+| Multi-identifier synthetic cases + selected property | PASS | Fixture catalog only |
+| Ambiguity probes abstain | PASS | Identifiers come from the scenario, not `locations[0]` |
+| Synthetic no-match after complete searches | PASS | Creates no record |
+| Auth / schema / truncated / unscoped WO | PASS | blocked / incomplete / omitted |
+| Private artifacts created 0600 / 0700 | PASS | `os.open` 0600, dir 0700 at creation |
+| `live-fw-issue-key` removed | PASS | |
+| Live preflight from this VM | **BLOCKED** | no existing host credential consumed |
 
-## Authorized live selection (host only)
+## Host execution (only after project-lead provisioning)
 
-Resolve only these project-referenced labels, through existing authorized access, as **identity/context candidates**. They are historical references, not current status and not permission to contact.
-
-1. authorized_case_1
-2. authorized_case_2
-3. authorized_case_3
-
-Plus at most two derived ambiguity probes from that same bounded set, and one synthetic no-match query. If a required identifier or multiple-property coverage is missing, that row is **BLOCKED** / unavailable — do not substitute another customer.
-
-Private host artifacts (not in git):
-
-- Manifest `0600`: `/var/lib/bt-intake-proof/live-fw-read/manifest.json`
-- Evidence dir `0700`: `/var/lib/bt-intake-proof/live-fw-read/evidence/`
-
-Public git has the example manifest and synthetic catalog only. No live customer names, emails, phones, streets, or note bodies belong in GitHub artifacts.
-
-## Host commands (approved GCE host only)
-
-Do not run these against this Cursor VM. Do not copy the API key, login, or live records here.
+See `PROVISIONING.md`. Do not run these until the existing authorized key file and private source-evidence manifest are on the host.
 
 ```bash
-# After this branch is on the host tree. Does not deploy or restart the receiver.
 export BT_FIELDWORK_LIVE_READ=1
-export FIELDWORK_API_KEY_FILE=/var/lib/bt-intake-proof/secrets/fieldwork_api_key
+export FIELDWORK_API_KEY_FILE=<project-lead-0600-path>
 export PYTHONPATH=src
 cd /opt/bt-intake-proof
 
-# 1) Token file exists and check_connection works. Never prints the token.
 python3 -m bt_intake_proof.cli live-fw-preflight --mode live
-
-# Optional, host secret boundary only, if a key file does not exist yet:
-# python3 -m bt_intake_proof.cli live-fw-issue-key --file "$FIELDWORK_API_KEY_FILE"
-
-# 2) Resolve the 3 authorized labels to native IDs. 0 or >1 hits → BLOCKED.
-python3 -m bt_intake_proof.cli live-fw-resolve --mode live \
-  --out /var/lib/bt-intake-proof/live-fw-read/manifest.json
-
-# 3) Bounded read + independent native-ID comparison. Does not draft or send.
 python3 -m bt_intake_proof.cli live-fw-read --mode live \
   --manifest /var/lib/bt-intake-proof/live-fw-read/manifest.json \
   --out /var/lib/bt-intake-proof/live-fw-read/evidence
 ```
 
-Offline fixture equivalent (safe anywhere):
+`live-fw-resolve` may fill native IDs only after source-evidence identifiers are present on the labels. A unique name is not identity. Full-name zero is not absence.
+
+Offline fixture:
 
 ```bash
 PYTHONPATH=src python3 -m bt_intake_proof.cli live-fw-preflight --mode fixture
@@ -82,18 +64,17 @@ PYTHONPATH=src python3 -m bt_intake_proof.cli live-fw-read --mode fixture \
 
 ## Remaining limitations
 
-- Work-order search has no documented `filter[customer_id]`. Unscoped pages are omitted / incomplete, not treated as empty history.
+- Live work-order search has no documented `filter[customer_id]`. That field is unsupported / INCOMPLETE on live, not an empty history PASS.
 - Provider token permission is not independently verified as read-only. The adapter enforces GET + allowlist + no other-host credential redirects.
-- Browser / Mac Fieldwork sessions are not the live-read adapter and are not used.
+- Connector search evidence is not this API client and is not treated as host integration proof.
 - The always-on receiver is not switched to live Fieldwork.
 - No scheduling, notes, estimates, customers, or mail writes.
-- Date window is declared (`date_window_days`, default 365). Unsupported or omitted slices stay visible on the private scorecard.
 - Missing digital agreements are not inferred into contract terms.
 
 ## Overall
 
 | Layer | Result |
 | --- | --- |
-| Offline implementation + unit tests | **PASS** (265 passed, 1 skipped) |
+| Offline implementation + unit tests | **PASS** (274 passed, 1 skipped) |
 | Live bounded read from this VM | **BLOCKED** |
-| Milestone LIVE-FW-READ-1 live proof | **BLOCKED** until Codex runs the host commands and compares private evidence |
+| Milestone LIVE-FW-READ-1 live proof | **BLOCKED** until project-lead provisioning and a private host manifest exist |

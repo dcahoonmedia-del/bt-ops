@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .fieldwork_booking import LABEL_FIXTURE, LABEL_LIVE, booking_state_from_records, draft_booking_guidance
@@ -34,6 +35,65 @@ ADDR_RE = re.compile(
 
 def digits(phone: str | None) -> str:
     return re.sub(r"\D", "", phone or "")[-10:]
+
+
+def window_bounds(days: int) -> tuple[datetime, datetime]:
+    now = datetime.now(timezone.utc)
+    span = timedelta(days=int(days))
+    return now - span, now + span
+
+
+def parse_dt(value: Any) -> datetime | None:
+    if not value:
+        return None
+    text = str(value).replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def row_in_window(row: dict[str, Any], start: datetime, end: datetime, keys: tuple[str, ...] = (
+    "starts_at",
+    "start_time",
+    "created_at",
+    "date",
+    "completed_at",
+    "updated_at",
+)) -> bool | None:
+    raw = None
+    for key in keys:
+        if row.get(key):
+            raw = row.get(key)
+            break
+    parsed = parse_dt(raw)
+    if parsed is None:
+        return None
+    return start <= parsed <= end
+
+
+def filter_window(
+    rows: list[dict[str, Any]],
+    start: datetime | None,
+    end: datetime | None,
+) -> tuple[list[dict[str, Any]], int, int]:
+    if start is None or end is None:
+        return list(rows), 0, 0
+    inside = []
+    undated = 0
+    outside = 0
+    for row in rows:
+        decision = row_in_window(row, start, end)
+        if decision is True:
+            inside.append(row)
+        elif decision is False:
+            outside += 1
+        else:
+            undated += 1
+    return inside, undated, outside
 
 
 def extract_identifiers(receipt: dict[str, Any]) -> dict[str, Any]:
@@ -311,7 +371,12 @@ def _compact_work_order(wo: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def match_and_context(client: ReadOnlyFieldworkClient, receipt: dict[str, Any]) -> dict[str, Any]:
+def match_and_context(
+    client: ReadOnlyFieldworkClient,
+    receipt: dict[str, Any],
+    *,
+    date_window_days: int | None = None,
+) -> dict[str, Any]:
     identifiers = extract_identifiers(receipt)
     found: dict[str, dict[str, Any]] = {}
     searches: list[dict[str, Any]] = []
@@ -436,17 +501,32 @@ def match_and_context(client: ReadOnlyFieldworkClient, receipt: dict[str, Any]) 
             if notes.incomplete:
                 omitted["notes"] = notes.reason or "pagination_truncated"
             note_rows = list(notes)
-        wos_fetch = as_fetch(client.search_work_orders(**{"filter[customer_id]": cid}))
-        if not wos_fetch.ok:
-            omitted["work_orders"] = wos_fetch.reason or "read_failed"
-            wos: list[dict[str, Any]] = []
+        win_start = win_end = None
+        if date_window_days:
+            win_start, win_end = window_bounds(date_window_days)
+        wo_supported = bool(getattr(client, "work_order_query_supported", False))
+        wos: list[dict[str, Any]] = []
+        if not wo_supported:
+            omitted["work_orders"] = "work_order_customer_filter_unsupported"
         else:
-            wos, wo_meta = scope_work_orders(list(wos_fetch), cid)
-            if not wo_meta["ok"]:
-                omitted["work_orders"] = wo_meta["reason"]
-                wos = []
-            elif wos_fetch.incomplete or wos_fetch.truncated:
-                omitted["work_orders"] = wos_fetch.reason or "pagination_truncated"
+            wo_params: dict[str, Any] = {"filter[customer_id]": cid}
+            if win_start and win_end:
+                wo_params["start_date"] = win_start.date().isoformat()
+                wo_params["end_date"] = win_end.date().isoformat()
+            wos_fetch = as_fetch(client.search_work_orders(**wo_params))
+            if not wos_fetch.ok:
+                omitted["work_orders"] = wos_fetch.reason or "read_failed"
+            else:
+                wos, wo_meta = scope_work_orders(list(wos_fetch), cid)
+                if not wo_meta["ok"]:
+                    omitted["work_orders"] = wo_meta["reason"]
+                    wos = []
+                elif wos_fetch.incomplete or wos_fetch.truncated:
+                    omitted["work_orders"] = wos_fetch.reason or "pagination_truncated"
+                else:
+                    wos, wo_undated, wo_outside = filter_window(wos, win_start, win_end)
+                    if wo_undated or wo_outside:
+                        omitted["work_orders_window"] = {"undated": wo_undated, "outside": wo_outside}
         agreements = as_fetch(client.list_agreements(**{"filter[customer_id]": cid}))
         if not agreements.ok:
             omitted["agreements"] = agreements.reason or "read_failed"
@@ -460,6 +540,9 @@ def match_and_context(client: ReadOnlyFieldworkClient, receipt: dict[str, Any]) 
             omitted["estimates"] = estimates.reason or "read_failed"
         elif estimates.incomplete:
             omitted["estimates"] = estimates.reason or "pagination_truncated"
+        est_rows, est_undated, est_outside = filter_window(list(estimates) if estimates.ok else [], win_start, win_end)
+        if estimates.ok and (est_undated or est_outside):
+            omitted["estimates_window"] = {"undated": est_undated, "outside": est_outside}
         upcoming = []
         last = None
         for wo in wos:
@@ -475,8 +558,29 @@ def match_and_context(client: ReadOnlyFieldworkClient, receipt: dict[str, Any]) 
                 name = str(agr.get("name") or agr.get("service") or agr.get("agreement") or "")
                 status = str(agr.get("status") or agr.get("state") or "").lower()
                 if "pestguard" in name.lower() or status in {"active", "current"}:
-                    active = {"name": name or "service_agreement", "status": agr.get("status") or agr.get("state")}
+                    active = {
+                        "id": agr.get("id"),
+                        "name": name or "service_agreement",
+                        "status": agr.get("status") or agr.get("state"),
+                    }
                     break
+        appointments: list[dict[str, Any]] = []
+        if "agreements" in omitted:
+            omitted["appointments"] = omitted["agreements"]
+        else:
+            for agr in agr_rows[:5]:
+                if agr.get("id") is None:
+                    continue
+                fetched = as_fetch(client.list_agreement_appointments(agr["id"]))
+                if not fetched.ok:
+                    omitted["appointments"] = fetched.reason or "read_failed"
+                    appointments = []
+                    break
+                appointments.extend(list(fetched))
+            else:
+                appointments, appt_undated, appt_outside = filter_window(appointments, win_start, win_end)
+                if appt_undated or appt_outside:
+                    omitted["appointments_window"] = {"undated": appt_undated, "outside": appt_outside}
         if "work_orders" in omitted:
             booking = None
         else:
@@ -501,8 +605,19 @@ def match_and_context(client: ReadOnlyFieldworkClient, receipt: dict[str, Any]) 
                 "booking_state": booking,
                 "active_agreement": active,
                 "upcoming_work_orders": upcoming[:5],
+                "upcoming_appointments": [
+                    {"id": row.get("id"), "status": row.get("status") or row.get("state"), "starts_at": row.get("starts_at") or row.get("start_time")}
+                    for row in appointments[:5]
+                ],
                 "last_service": last,
-                "estimates_count": len(estimates) if estimates.ok else None,
+                "notes_ok": notes.ok,
+                "notes_count": len(note_rows) if notes.ok else None,
+                "agreements_ok": agreements.ok,
+                "estimates_ok": estimates.ok,
+                "estimates_count": len(est_rows) if estimates.ok else None,
+                "appointments_ok": "appointments" not in omitted,
+                "work_orders_ok": "work_orders" not in omitted,
+                "date_window_days": date_window_days,
                 "office_context": office_hold(note_rows, customer) if "notes" not in omitted or note_rows else None,
                 "contacts": [
                     {
