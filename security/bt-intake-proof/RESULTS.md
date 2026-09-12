@@ -2,7 +2,9 @@
 
 **Overall: BLOCKED** at Phase 1 Google setup.
 
-Stopped for Daniel. No Cloud project was chosen, no billing was enabled, no `contactus@` consent was completed, and no mail was sent. Cursor Gmail MCP (`daniel@`, write-capable) was not used as a watch/Pub/Sub substitute.
+Daniel authorized the four named Pub/Sub/watch creates, then said the Cloud project still has to be built. `<PUT_PROJECT_ID_HERE>` was rejected as a placeholder. No Desktop OAuth client JSON is present.
+
+No Cloud project was created or chosen here, no billing was enabled, no `contactus@` consent was completed, and no mail was sent. Cursor Gmail MCP (`daniel@`, write-capable) was not used as a watch/Pub/Sub substitute.
 
 Test 0 isolation is unchanged.
 
@@ -10,7 +12,7 @@ Test 0 isolation is unchanged.
 
 | Gate | Result | Detail |
 | --- | --- | --- |
-| Gmail watch registration | BLOCKED | No named GCP project, no contactus read-only OAuth, no create approval |
+| Gmail watch registration | BLOCKED | Waiting for Daniel to create/name a real GCP project and provide Desktop OAuth JSON |
 | Pub/Sub delivery | BLOCKED | Dedicated topic/subscription not created |
 | New-message automatic capture | BLOCKED | Upstream Google gate |
 | Old-thread reply capture | BLOCKED | Upstream Google gate |

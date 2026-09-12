@@ -1,41 +1,43 @@
-# Stopped for Daniel — Google account-level decisions
+# Stopped for Daniel — create the Google Cloud project
 
-Phase 1 cannot continue without choices only you can make. I did not pick a Cloud project, create billing, or authenticate `contactus@`.
+You do need a real Google Cloud project. `<PUT_PROJECT_ID_HERE>` was a placeholder, so I did not use it. I still do not have the Desktop OAuth client JSON.
 
-## What I found
+I will not create the project, enable billing, or pick an existing project for you.
 
-| Check | Result |
-| --- | --- |
-| Local `gcloud` / ADC / `GOOGLE_CLOUD_PROJECT` | Absent |
-| Dedicated B&T Pub/Sub topic | Not created |
-| `contactus@` Gmail API token (`gmail.readonly`) | Absent |
-| Cursor Gmail MCP | Connected as **daniel@btpestcontrol.com**, with send/draft/label tools. Unused. Not a `users.watch` substitute. |
+## Already authorized (once a real project ID exists)
 
-## Reply with these decisions
+You already allowed me to create **only** these four things in the project you name:
 
-1. **Google Cloud project ID** I may use for this intake proof only. Example: `bt-intake-proof-2026`. I will not scan and pick an existing project.
-2. Confirm I may, in **that project only**:
-   - enable Gmail API and Pub/Sub API if they are off
-   - create topic `bt-intake-proof-contactus`
-   - create subscription `bt-intake-proof-contactus-sub`
-   - grant `gmail-api-push@system.gserviceaccount.com` Pub/Sub Publisher
-   - call Gmail `users.watch` for `contactus@btpestcontrol.com`
-3. If that project needs **billing** enabled, you enable it. I will stop again if Google requires it.
-4. **OAuth Desktop client** in that project, or tell me to create one after you name the project.
-5. **Interactive consent as `contactus@btpestcontrol.com`** (not daniel@) for this scope only:
-   `https://www.googleapis.com/auth/gmail.readonly`
-   I will print the URL and wait. Do not grant send/modify.
+- Pub/Sub topic `bt-intake-proof-contactus`
+- Pub/Sub subscription `bt-intake-proof-contactus-sub`
+- Publisher permission for `gmail-api-push@system.gserviceaccount.com` on that topic
+- Gmail `users.watch` for `contactus@btpestcontrol.com`
 
-## After watch is PASS — you send the mail
+Nothing else.
 
-I will not send email or create drafts. Use only `daniel@btpestcontrol.com` → `contactus@btpestcontrol.com`.
+## What you build now
 
-Wait until I report `gmail_watch_registration = PASS`, then send:
+Use a Google account that can administer B&T Cloud/Workspace. Suggested name: **B&T Intake Proof**. Suggested ID: `bt-intake-proof`.
 
-| Test | Subject must include | Notes |
-| --- | --- | --- |
-| New message | `BT-INTAKE-PROOF-NEW-E9A8-7F3C` | New thread |
-| Old-thread reply | `BT-INTAKE-PROOF-REPLY-E9A8-7F3C` | Reply on existing internal thread `1a09242c087af92c` / subject `BT-PILOT-0911-TEST02` |
-| Recovery | `BT-INTAKE-PROOF-RECOVERY-E9A8-7F3C` | Send only after I say the receiver is stopped |
+1. Open [Google Cloud Console](https://console.cloud.google.com/) and create a **new project**.
+2. Copy the **Project ID** (not just the display name). It looks like `bt-intake-proof` or `bt-intake-proof-123456`.
+3. If Google asks to **enable billing**, stop and tell me before you do it — unless you already want billing on and will enable it yourself.
+4. In that project, enable only these APIs:
+   - [Gmail API](https://console.cloud.google.com/apis/library/gmail.googleapis.com)
+   - [Cloud Pub/Sub API](https://console.cloud.google.com/apis/library/pubsub.googleapis.com)
+5. **APIs & Services → OAuth consent screen**
+   - User type: **Internal** if B&T Workspace allows it
+   - App name: `B&T intake proof`
+   - Do not add Gmail send/modify scopes
+6. **APIs & Services → Credentials → Create credentials → OAuth client ID**
+   - Application type: **Desktop app**
+   - Download the JSON
 
-Do not use customer threads. Do not send customer mail into this proof.
+## Reply here with
+
+1. The real **project ID**
+2. The Desktop OAuth client JSON (paste or attach)
+
+Then I will show you the Gmail OAuth URL. You sign in as **contactus@btpestcontrol.com** and approve **read-only** only. Do not use daniel@.
+
+Do not send any `BT-INTAKE-PROOF-*` emails until I confirm watch registration **PASS** and show project, mailbox, topic, subscription, history ID, and expiration.

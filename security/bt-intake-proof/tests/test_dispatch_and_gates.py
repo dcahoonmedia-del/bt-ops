@@ -7,7 +7,7 @@ from unittest import mock
 
 from bt_intake_proof.constants import CODEX_NAMESPACE, CODEX_TOOL_NAME, MAILBOX
 from bt_intake_proof.dispatch import build_constructor, build_external_content
-from bt_intake_proof.gates import diagnose_google
+from bt_intake_proof.gates import diagnose_google, is_usable_project_id
 from bt_intake_proof.setup_google import blocked_setup
 
 
@@ -65,6 +65,22 @@ class GateTests(unittest.TestCase):
         setup = blocked_setup(diagnosis)
         self.assertTrue(setup["stop"])
         self.assertFalse(setup["watch_registered"])
+
+    def test_placeholder_project_id_is_rejected(self) -> None:
+        self.assertFalse(is_usable_project_id("<PUT_PROJECT_ID_HERE>"))
+        self.assertFalse(is_usable_project_id("PUT_PROJECT_ID_HERE"))
+        self.assertTrue(is_usable_project_id("bt-intake-proof-2026"))
+        with tempfile.TemporaryDirectory() as tmp:
+            secrets = Path(tmp) / "secrets"
+            secrets.mkdir()
+            env = {"BT_GCP_PROJECT_ID": "<PUT_PROJECT_ID_HERE>"}
+            with mock.patch.dict(os.environ, env, clear=False):
+                with mock.patch("bt_intake_proof.gates.SECRETS", secrets):
+                    with mock.patch("bt_intake_proof.gates.CONFIG_PATH", Path(tmp) / "missing.toml"):
+                        diagnosis = diagnose_google()
+        self.assertEqual(diagnosis["status"], "BLOCKED")
+        self.assertIsNone(diagnosis["project_id"])
+        self.assertEqual(diagnosis["rejected_project_id"], "<PUT_PROJECT_ID_HERE>")
 
     def test_write_scope_token_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

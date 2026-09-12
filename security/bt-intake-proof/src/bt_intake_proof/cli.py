@@ -28,7 +28,7 @@ def cmd_gate(_args: argparse.Namespace) -> int:
         encoding="utf-8",
     )
     scorecard = empty_scorecard(
-        "Google Cloud project, read-only contactus OAuth, and Pub/Sub create approval are not present."
+        "Waiting for a real Google Cloud project ID and Desktop OAuth client JSON. Placeholder IDs are rejected."
     )
     write_scorecard(RESULTS / "scorecard.json", scorecard)
     _print({"google": diagnosis, "setup": blocked_setup(diagnosis), "scorecard_overall": scorecard["overall"]})
@@ -59,7 +59,7 @@ def cmd_scorecard(_args: argparse.Namespace) -> int:
 
 def cmd_record_local_tests(args: argparse.Namespace) -> int:
     scorecard = empty_scorecard(
-        "Google Cloud project, read-only contactus OAuth, and Pub/Sub create approval are not present."
+        "Waiting for a real Google Cloud project ID and Desktop OAuth client JSON. Placeholder IDs are rejected."
     )
     apply_local_contract_results(scorecard, bool(args.passed), args.output or "")
     write_scorecard(RESULTS / "scorecard.json", scorecard)

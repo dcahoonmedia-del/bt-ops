@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,17 @@ def _read_config() -> dict[str, str]:
     return values
 
 
+GCP_PROJECT_ID_RE = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
+PLACEHOLDER_PROJECT_IDS = {
+    "<put_project_id_here>",
+    "put_project_id_here",
+    "your-project-id",
+    "your_project_id",
+    "xxx",
+    "todo",
+}
+
+
 def _env_or_config(name: str, config_key: str | None = None) -> str:
     env_val = os.environ.get(name, "").strip()
     if env_val:
@@ -38,8 +50,20 @@ def _env_or_config(name: str, config_key: str | None = None) -> str:
     return _read_config().get(config_key or name.lower(), "").strip()
 
 
-def project_id() -> str:
+def raw_project_id() -> str:
     return _env_or_config("BT_GCP_PROJECT_ID", "project_id")
+
+
+def is_usable_project_id(value: str) -> bool:
+    cleaned = value.strip()
+    if not cleaned or cleaned.lower() in PLACEHOLDER_PROJECT_IDS:
+        return False
+    return bool(GCP_PROJECT_ID_RE.fullmatch(cleaned))
+
+
+def project_id() -> str:
+    raw = raw_project_id()
+    return raw if is_usable_project_id(raw) else ""
 
 
 def allow_resource_create() -> bool:
@@ -93,15 +117,23 @@ def diagnose_google() -> dict[str, Any]:
     token = _token_payload()
     scopes = token_scopes(token)
     decisions: list[dict[str, str]] = []
+    raw_pid = raw_project_id()
     pid = project_id()
     if not pid:
+        rejected = (
+            f" Received `{raw_pid}`, which is a placeholder/invalid project ID and was rejected."
+            if raw_pid
+            else ""
+        )
         decisions.append(
             {
                 "id": "gcp_project_id",
                 "status": "required",
                 "ask": (
                     "Name the Google Cloud project I may use for this B&T intake proof only. "
-                    "Reply with the project ID. I will not pick one from your existing projects."
+                    "Reply with the real project ID (6-30 lowercase letters, digits, or hyphens). "
+                    "I will not pick one from your existing projects."
+                    + rejected
                 ),
             }
         )
@@ -167,6 +199,7 @@ def diagnose_google() -> dict[str, Any]:
         "mailbox_required": MAILBOX,
         "readonly_scope": GMAIL_READONLY_SCOPE,
         "project_id": pid or None,
+        "rejected_project_id": raw_pid if raw_pid and not pid else None,
         "allow_resource_create": allow_resource_create(),
         "oauth_client_present": oauth_client_path().exists(),
         "contactus_token_present": token is not None and "error" not in (token or {}),

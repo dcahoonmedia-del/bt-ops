@@ -7,5 +7,6 @@ marker_prefix = "BT-INTAKE-PROOF-"
 topic_id = "bt-intake-proof-contactus"
 subscription_id = "bt-intake-proof-contactus-sub"
 project_id = ""
-allow_resource_create = ""
+# Daniel authorized these four creates only, once a real project ID is named.
+allow_resource_create = "yes"
 designated_reply_thread_id = "1a09242c087af92c"
