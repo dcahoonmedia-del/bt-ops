@@ -4,6 +4,9 @@ from __future__ import annotations
 
 MAILBOX = "contactus@btpestcontrol.com"
 ALLOWED_SENDER = "daniel@btpestcontrol.com"
+LEAD_DESK_PLUS_MAILBOX = "daniel+lead-desk@btpestcontrol.com"
+TRANSPORT_CONTACTUS = "contactus"
+TRANSPORT_PLUS = "plus_address"
 MARKER_PREFIX = "BT-INTAKE-PROOF-"
 MARKER_RE = r"BT-INTAKE-PROOF-[A-Z0-9-]+"
 

@@ -18,7 +18,14 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Protocol
-from .constants import ALLOWED_SENDER, FORBIDDEN_GMAIL_SCOPES, GMAIL_READONLY_SCOPE, MAILBOX, MARKER_DESK_CTRL
+from .constants import (
+    ALLOWED_SENDER,
+    FORBIDDEN_GMAIL_SCOPES,
+    GMAIL_READONLY_SCOPE,
+    LEAD_DESK_PLUS_MAILBOX,
+    MAILBOX,
+    MARKER_DESK_CTRL,
+)
 from .desk_origin import authenticate_control_origin, unquoted_control_text
 from .eligibility import normalize_email
 from .gates import daniel_sent_token_path
@@ -480,6 +487,18 @@ def corroborate_daniel_sent(
     }
 
 
+def _persisted_recipient_matches(inbound: dict[str, Any], proof: dict[str, Any]) -> bool:
+    proof_recip = normalize_email(proof.get("recipient"))
+    inbound_recips = {
+        normalize_email(item) for item in inbound.get("recipients") or [] if normalize_email(item)
+    }
+    if proof_recip == MAILBOX:
+        return not inbound_recips or inbound_recips == {MAILBOX}
+    if proof_recip == LEAD_DESK_PLUS_MAILBOX:
+        return not inbound_recips or inbound_recips == {LEAD_DESK_PLUS_MAILBOX}
+    return False
+
+
 def persisted_proof_matches(inbound: dict[str, Any], proof: dict[str, Any]) -> bool:
     if str(proof.get("proof_version") or "") != PROOF_VERSION:
         return False
@@ -489,7 +508,7 @@ def persisted_proof_matches(inbound: dict[str, Any], proof: dict[str, Any]) -> b
         return False
     if str(proof.get("payload_hash") or "") != str(inbound.get("payload_hash") or ""):
         return False
-    if normalize_email(proof.get("recipient")) != MAILBOX:
+    if not _persisted_recipient_matches(inbound, proof):
         return False
     control_id = str(inbound.get("control_gmail_id") or "")
     if control_id and str(proof.get("control_gmail_id") or "") != control_id:

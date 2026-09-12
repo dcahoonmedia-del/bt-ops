@@ -8,7 +8,7 @@ import json
 import sys
 from pathlib import Path
 
-from .constants import MAILBOX
+from .constants import MAILBOX, TRANSPORT_CONTACTUS, TRANSPORT_PLUS
 from .dispatch import build_constructor
 from .cloud_auth import cloud_authorization_url
 from .gates import diagnose_google, store_path
@@ -310,6 +310,7 @@ def cmd_lead_desk_packets(args: argparse.Namespace) -> int:
         control_intent=args.control_intent or None,
         control_owner=args.control_owner or None,
         control_note=note,
+        control_transport=getattr(args, "control_transport", None) or TRANSPORT_CONTACTUS,
     )
     write_desk_packets(payload, dest)
     control = payload.get("control") or {}
@@ -405,6 +406,33 @@ def cmd_desk_control(args: argparse.Namespace) -> int:
     return 0 if result.get("ok") else 2
 
 
+def cmd_desk_plus_control(args: argparse.Namespace) -> int:
+    from .cases import CaseLayer
+    from .desk_bridge import format_result_email, process_plus_control_mail
+
+    store = ReceiptStore(Path(args.store) if args.store else store_path())
+    try:
+        layer = CaseLayer(store)
+        result = process_plus_control_mail(layer, gmail_message_id=args.message_id)
+    finally:
+        store.close()
+    RESULTS.mkdir(parents=True, exist_ok=True)
+    dest = RESULTS / "live" / "desk-plus-control-result.json"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    safe = {key: value for key, value in result.items() if key != "result_email"}
+    dest.write_text(json.dumps(safe, indent=2, default=str) + "\n", encoding="utf-8")
+    email = result.get("result_email") or format_result_email(result)
+    (RESULTS / "live" / "desk-plus-control-result.txt").write_text(
+        f"Subject: {email['subject']}\n\n{email['body']}",
+        encoding="utf-8",
+    )
+    safe["execute_send"] = False
+    safe["customer_send"] = False
+    safe["contactus_traffic"] = False
+    _print(safe)
+    return 0 if result.get("ok") else 2
+
+
 def cmd_desk_action(args: argparse.Namespace) -> int:
     from .desk_control import submit_desk_action
 
@@ -493,6 +521,12 @@ def main(argv: list[str] | None = None) -> int:
     desk.add_argument("--control-owner", default="", help="owner for office_owned generate-only control")
     desk.add_argument("--control-note", default="", help="exact NOTE text for generate-only revise_draft")
     desk.add_argument("--control-note-file", default="", help="read exact NOTE from a UTF-8 file")
+    desk.add_argument(
+        "--control-transport",
+        default=TRANSPORT_CONTACTUS,
+        choices=(TRANSPORT_CONTACTUS, TRANSPORT_PLUS),
+        help="Generate-only destination. plus_address is internal Lead Desk control only.",
+    )
     desk.set_defaults(func=cmd_lead_desk_packets)
     sub.add_parser("intake-mode").set_defaults(func=cmd_intake_mode)
     dc = sub.add_parser("desk-control", help="Process one ChatGPT Gmail control message. Origin is fail-closed without Gmail-fetched evidence. Does not execute a send.")
@@ -503,6 +537,13 @@ def main(argv: list[str] | None = None) -> int:
     dc.add_argument("--message-id", default="")
     dc.add_argument("--store", default="")
     dc.set_defaults(func=cmd_desk_control)
+    dpc = sub.add_parser(
+        "desk-plus-control",
+        help="Process one internal plus-address control fetched from Daniel SENT. Does not send or use contactus@.",
+    )
+    dpc.add_argument("--message-id", required=True, help="Gmail id in the authenticated daniel@ mailbox")
+    dpc.add_argument("--store", default="")
+    dpc.set_defaults(func=cmd_desk_plus_control)
     da = sub.add_parser("desk-action", help="Primary path: authorize a ChatGPT structured intent. Does not send.")
     da.add_argument("--intent", default="", help="One of the desk intents, e.g. approve_and_send_current")
     da.add_argument("--json", default="", help="Small JSON action from ChatGPT: {intent, owner, note}")

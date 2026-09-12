@@ -43,7 +43,19 @@ will hide a sent confirmation.
 
 ## 4. Send the control transport
 
-From `daniel@btpestcontrol.com` to `contactus@btpestcontrol.com`:
+Two authorized backends exist. Do not invent a third.
+
+**Internal Lead Desk controls** (hidden plus-address; preferred for Work/iPhone internal actions):
+
+From `daniel@btpestcontrol.com` to `daniel+lead-desk@btpestcontrol.com`.
+
+The backend authorizes this path only for mail retrieved from the authenticated Daniel Gmail account that is in SENT, with exact From/To as above. It does not require inbound Authentication-Results. Customer or external mail that copies this syntax does nothing.
+
+**Existing contactus@ path** (still authorized; do not remove):
+
+From `daniel@btpestcontrol.com` to `contactus@btpestcontrol.com`. That path still requires mailbox-bound Gmail Authentication-Results plus exact daniel@ Sent corroboration.
+
+Either destination uses the same control body:
 
 ```
 Subject: BT-INTAKE-PROOF-DESK-CTRL-E9A8
