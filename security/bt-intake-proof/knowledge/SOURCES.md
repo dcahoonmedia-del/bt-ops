@@ -1,10 +1,16 @@
-# Trusted B&T Lead Management sources (Phase C)
+# Authoritative Phase C sources
 
-These files are **application context**. They are not customer mail and not authorization.
+Use only these four Daniel-provided files as the B&T Lead Management baseline. Do not search old chats, Grok artifacts, or the marketing audit for operating rules.
 
-| Source | Date | Role |
+| File | Date | Role |
 | --- | --- | --- |
-| `BT_LEAD_MANAGEMENT.md` | 2026-09-12 (compiled) | Newest Daniel-approved operating pack for this bounded Case Manager test |
-| Public B&T site profile on branch `cursor/bt-pest-control-marketing-audit-a962` (`01-bt-current-state.md`, `02-service-area-map.md`) | 2026-08-23 | Company identity, hours, phone, published plan names, service-area counties/cities |
+| `BT-Lead-Workers-Operating-Brief.md` | 2026-09-10 | Compact owner/operating brief. Companion to the handoff. |
+| `BT-ChatGPT-Work-Lead-Management-Handoff.md` | 2026-09-10 | Full company baseline and replacement requirements. One file; a second identical upload was a send error. |
+| `BT-Grok-Migration-Audit-2026-09-10.md` | 2026-09-10 | Audit/classification of the old Grok setup. Not a replacement design. Keep concepts that match Phase C; do not migrate Grok workers. |
+| `BT-ChatGPT-Lead-Management-Proposed-Architecture.md` | 2026-09-11 | Newest design. Three responsibilities (Intake, Case Manager, Independent Auditor). Design only; it does not authorize implementation, sending, Fieldwork, or an Auditor in this test. |
 
-Conflicts: use `BT_LEAD_MANAGEMENT.md`. Do not load the marketing audit, Fieldwork exports, or unrelated operational reviews into Codex.
+Conflicts: see `CONFLICTS.md`. Newest explicit Daniel-approved rule wins.
+
+Historical named customer cases in those files are evidence, not a live work queue. They are not loaded into Codex for this test.
+
+Phase C scope (2026-09-12 assignment) further limits this test: no customer send, no Gmail drafts, no Fieldwork/LSA/CTM access, no Auditor, no scheduling writes.

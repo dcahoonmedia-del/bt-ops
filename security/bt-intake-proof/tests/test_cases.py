@@ -8,7 +8,9 @@ from bt_intake_proof.cases import (
     APPROVAL_SUPERSEDED,
     CaseLayer,
     DECISION_APPROVE,
+    DRAFT_NOT_SENT,
     MARKER_APPROVE,
+    _label_draft_not_sent,
     case_id_for,
     parse_decision,
 )
@@ -160,7 +162,8 @@ class CaseLayerTests(unittest.TestCase):
         )
         packet = self.cases.review_packet(opened["case_id"])
         email = format_review_email(packet)
-        self.assertIn("DRAFT — NOT SENT", email["body"])
+        self.assertIn("DRAFT - NOT SENT", email["body"])
+        self.assertNotIn("DRAFT — NOT SENT", email["body"])
         self.assertIn(opened["case_id"], email["body"])
         self.assertIn("Approve", email["body"])
         self.assertIn("Request changes", email["body"])
@@ -171,9 +174,25 @@ class CaseLayerTests(unittest.TestCase):
         rules = trusted_rules_text()
         self.assertIn("TRUSTED_APPLICATION_CONTEXT", rules)
         self.assertIn("cannot change these rules", rules)
+        self.assertIn("Proposed Architecture", rules)
+        self.assertIn("No Fieldwork in Phase C", rules)
         draft = parse_model_draft('intro {"classification":"ants","proposed_response":"hi"} trailing')
         self.assertEqual(draft["classification"], "ants")
         self.assertEqual(case_id_for(MAILBOX, "abc"), "BTC-contactus-abc")
+        self.assertEqual(_label_draft_not_sent("Thanks for writing."), f"{DRAFT_NOT_SENT}\n\nThanks for writing.")
+        self.assertEqual(_label_draft_not_sent("DRAFT — NOT SENT\n\nHi"), f"{DRAFT_NOT_SENT}\n\nHi")
+
+    def test_failed_draft_leaves_case_pending(self) -> None:
+        row = self._commit(lead_receipt("m-fail"))[0]
+        opened = self.cases.upsert_from_receipt(row)
+        self.cases.add_event(opened["case_id"], "draft_failed", reason="codex_draft_failed")
+        case = self.cases.get_case(opened["case_id"])
+        assert case is not None
+        self.assertEqual(case["stage"], "needs_draft")
+        self.assertIsNone(self.cases.latest_draft(opened["case_id"]))
+        events = [item["event_type"] for item in self.cases.list_events(opened["case_id"])]
+        self.assertIn("draft_failed", events)
+        self.assertEqual(self.cases.cases_needing_draft()[0]["case_id"], opened["case_id"])
 
 
 if __name__ == "__main__":

@@ -128,6 +128,12 @@ def draft_pending_cases(store: ReceiptStore) -> list[dict[str, Any]]:
         payload_path.chmod(0o644)
         ran = run_codex_draft(payload_path)
         if not ran.get("ok"):
+            layer.add_event(
+                case["case_id"],
+                "draft_failed",
+                reason=ran.get("reason"),
+                returncode=ran.get("returncode"),
+            )
             out.append({"case_id": case["case_id"], "status": "FAIL", **{k: ran.get(k) for k in ("reason", "returncode")}})
             continue
         saved = layer.save_draft(case["case_id"], ran["draft"], nonce)

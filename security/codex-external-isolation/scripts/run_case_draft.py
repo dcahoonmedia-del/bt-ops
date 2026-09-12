@@ -77,12 +77,12 @@ def developer_instructions(rules: str) -> str:
         '"known_facts":["string"],'
         '"missing_info":["string"],'
         '"recommended_next_step":"string",'
-        '"proposed_response":"DRAFT — NOT SENT\\n\\n...",'
+        '"proposed_response":"DRAFT - NOT SENT\\n\\n...",'
         '"channel":"email",'
         '"judgment_needed":"string or null",'
         '"reasoning_summary":"string"'
         "}\n"
-        "proposed_response MUST start with DRAFT — NOT SENT and must be the exact customer reply. Do not send."
+        "proposed_response MUST start with DRAFT - NOT SENT (ASCII hyphen, no em dash) and must be the exact customer reply. Do not send."
     )
 
 

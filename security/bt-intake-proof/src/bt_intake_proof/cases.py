@@ -39,6 +39,18 @@ _CASE_REF = re.compile(r"CASE=([A-Za-z0-9._-]+)")
 _DRAFT_REF = re.compile(r"DRAFT=(\d+)")
 
 
+DRAFT_NOT_SENT = "DRAFT - NOT SENT"
+_DRAFT_PREFIXES = (DRAFT_NOT_SENT, "DRAFT — NOT SENT", "DRAFT -- NOT SENT")
+
+
+def _label_draft_not_sent(proposed: str) -> str:
+    text = (proposed or "").strip()
+    for prefix in _DRAFT_PREFIXES:
+        if text.startswith(prefix):
+            return DRAFT_NOT_SENT + text[len(prefix) :]
+    return f"{DRAFT_NOT_SENT}\n\n{text}" if text else DRAFT_NOT_SENT
+
+
 def _json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, default=str)
 
@@ -307,9 +319,7 @@ class CaseLayer:
         if not case:
             raise ValueError(f"unknown case {case_id}")
         version = int(case.get("draft_version") or 0) + 1
-        proposed = str(draft.get("proposed_response") or "").strip()
-        if not proposed.startswith("DRAFT — NOT SENT") and not proposed.startswith("DRAFT -- NOT SENT"):
-            proposed = "DRAFT — NOT SENT\n\n" + proposed
+        proposed = _label_draft_not_sent(str(draft.get("proposed_response") or "").strip())
         labeled = 1
         now = utc_now()
         self.conn.execute(
