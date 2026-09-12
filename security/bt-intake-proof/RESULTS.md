@@ -1,8 +1,8 @@
 # B&T contactus intake proof
 
-**Gmail `users.watch`: PASS.** **Pub/Sub pull: PASS.** Impersonation used Token Creator. No JSON key was created.
+**Gmail `users.watch`: PASS.** **Pub/Sub pull: PASS.** **New-message capture: PASS** in 18.47s, event-driven.
 
-Pulled one Gmail watch envelope for `contactus@btpestcontrol.com` (`historyId` `6007776`, message id `21177054176054382`). It was **not** acked and Gmail history was **not** fetched, so no customer mail was processed.
+No JSON key. Unread and labels unchanged. Codex dispatch is still pending.
 
 ## Scorecard
 
@@ -10,10 +10,10 @@ Pulled one Gmail watch envelope for `contactus@btpestcontrol.com` (`historyId` `
 | --- | --- |
 | Gmail watch registration | PASS |
 | Pub/Sub delivery | PASS |
-| New-message automatic capture | BLOCKED — waiting for marked internal mail |
+| New-message automatic capture | PASS — 18.47s, event-driven, marker `BT-INTAKE-PROOF-NEW-E9A8-7F3C` |
 | Old-thread reply capture | BLOCKED |
-| State preservation | BLOCKED |
-| Durable storage | BLOCKED (local contract PASS) |
+| State preservation | PASS — UNREAD/INBOX unchanged |
+| Durable storage | PASS |
 | Deduplication | BLOCKED (local contract PASS) |
 | Recovery after receiver downtime | BLOCKED |
 | Codex ExternalMessage delivery | BLOCKED |

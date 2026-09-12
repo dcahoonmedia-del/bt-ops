@@ -8,6 +8,8 @@ import json
 import sys
 from pathlib import Path
 
+from .constants import MAILBOX
+from .dispatch import build_constructor
 from .gates import diagnose_google
 from .cloud_auth import cloud_authorization_url
 from .live_google import contactus_gmail
@@ -150,6 +152,38 @@ def cmd_receive_loop(args: argparse.Namespace) -> int:
         store.close()
 
 
+def cmd_write_dispatch_payload(args: argparse.Namespace) -> int:
+    store = _live_store()
+    try:
+        receipts = [item for item in store.eligible_receipts(MAILBOX) if item.get("gmail_message_id") == args.message_id] if args.message_id else store.eligible_receipts(MAILBOX)
+    finally:
+        store.close()
+    if not receipts:
+        payload = {"status": "FAIL", "error": "no eligible durable receipt"}
+        _print(payload)
+        return 1
+    receipt = receipts[0]
+    nonce = args.nonce or f"bt-intake-{receipt['gmail_message_id']}"
+    constructor = build_constructor(receipt, nonce)
+    dest = RESULTS / "live" / "codex-payload.json"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps({"constructor": constructor}, indent=2) + "\n", encoding="utf-8")
+    dest.chmod(0o600)
+    _print(
+        {
+            "status": "READY",
+            "payload_path": str(dest),
+            "gmail_message_id": receipt.get("gmail_message_id"),
+            "test_marker": receipt.get("test_marker"),
+            "nonce": nonce,
+            "tool_name": constructor["tool_name"],
+            "namespace": constructor["namespace"],
+            "authorization": constructor["authorization"],
+        }
+    )
+    return 0
+
+
 def cmd_record_local_tests(args: argparse.Namespace) -> int:
     scorecard = empty_scorecard(
         "contactus@ Gmail read-only consent passed. Pub/Sub create is blocked on Cloud admin credentials or console-created topic."
@@ -179,6 +213,10 @@ def main(argv: list[str] | None = None) -> int:
     loop = sub.add_parser("receive-loop")
     loop.add_argument("--interval", type=float, default=2.0)
     loop.set_defaults(func=cmd_receive_loop)
+    disp = sub.add_parser("write-dispatch-payload")
+    disp.add_argument("--message-id", default="")
+    disp.add_argument("--nonce", default="")
+    disp.set_defaults(func=cmd_write_dispatch_payload)
     args = parser.parse_args(argv)
     return args.func(args)
 

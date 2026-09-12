@@ -1,45 +1,45 @@
 {
   "overall": "BLOCKED",
-  "stopped_at": "new_message_automatic_capture",
-  "reason": "Watch and Pub/Sub pull PASS. Waiting for marked internal mail from daniel@ to contactus@.",
+  "stopped_at": "codex_external_message_delivery",
+  "reason": "New-message capture PASS in 18.47s. Isolated Codex dispatch is next.",
   "gates": {
     "gmail_watch_registration": {
       "result": "PASS",
-      "detail": "historyId 6007776 expires 2026-09-19T01:52:34Z"
+      "detail": "historyId 6007818 after refresh; original watch 6007776"
     },
     "pubsub_delivery": {
       "result": "PASS",
-      "detail": "Impersonated bt-intake-proof-receiver and pulled 1 Gmail watch envelope for contactus@. No JSON key. Not acked. History not fetched."
+      "detail": "Impersonated bt-intake-proof-receiver. Live Gmail watch envelope pulled and acked after commit."
     },
     "new_message_automatic_capture": {
-      "result": "BLOCKED",
-      "detail": "Waiting for BT-INTAKE-PROOF-NEW-E9A8-7F3C from daniel@ to contactus@."
+      "result": "PASS",
+      "detail": "Event-driven capture of BT-INTAKE-PROOF-NEW-E9A8-7F3C in 18.47s. Gmail message 1a09369252aa667b."
     },
     "old_thread_reply_capture": {
       "result": "BLOCKED",
-      "detail": "Waiting for new-message capture first."
+      "detail": "Waiting for isolated Codex dispatch, then the designated old-thread reply."
     },
     "state_preservation": {
-      "result": "BLOCKED",
-      "detail": "Waiting for new-message capture first."
+      "result": "PASS",
+      "detail": "Labels UNREAD, CATEGORY_PERSONAL, INBOX unchanged after capture."
     },
     "durable_storage": {
-      "result": "BLOCKED",
-      "detail": "Local SQLite/eligibility/ack contract tests passed. Live mailbox write is blocked on Google setup.",
+      "result": "PASS",
+      "detail": "Eligible receipt committed to SQLite before Pub/Sub ack.",
       "local_contract": "PASS"
     },
     "deduplication": {
       "result": "BLOCKED",
-      "detail": "Local SQLite/eligibility/ack contract tests passed. Live mailbox write is blocked on Google setup.",
+      "detail": "Local SQLite/eligibility/ack contract tests passed. Live dedup waits for recovery.",
       "local_contract": "PASS"
     },
     "recovery_after_receiver_downtime": {
       "result": "BLOCKED",
-      "detail": "Waiting for new-message capture first."
+      "detail": "Waiting for new-message and Codex first."
     },
     "codex_external_message_delivery": {
       "result": "BLOCKED",
-      "detail": "Waiting for a durable eligible receipt before isolated Codex dispatch."
+      "detail": "Durable eligible receipt exists. Isolated ExternalMessage dispatch is next."
     }
   },
   "google": {
@@ -60,10 +60,10 @@
     "gcloud_present": false,
     "decisions_required": [],
     "failures": [],
-    "next_action": "Google local gates are present; continue watch registration."
+    "next_action": "Dispatch the durable eligible receipt into isolated Codex ExternalMessage."
   },
   "local_contract_tests": {
     "passed": true,
-    "output": "27 tests OK"
+    "output": "31 tests OK"
   }
 }

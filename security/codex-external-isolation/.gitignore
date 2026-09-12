@@ -3,4 +3,5 @@ results/*.log
 results/docker-inspect.json
 results/timeline/
 results/chatgpt-auth/
+results/intake-dispatch/
 __pycache__/
