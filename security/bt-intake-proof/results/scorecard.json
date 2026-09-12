@@ -1,7 +1,7 @@
 {
   "overall": "BLOCKED",
   "stopped_at": "old_thread_reply_capture",
-  "reason": "New-message capture and isolated Codex dispatch PASS. Waiting for the designated old-thread reply.",
+  "reason": "Reply captured on the new-message thread. Waiting for designated thread BT-PILOT-0911-TEST02.",
   "gates": {
     "gmail_watch_registration": {
       "result": "PASS",
@@ -17,7 +17,7 @@
     },
     "old_thread_reply_capture": {
       "result": "BLOCKED",
-      "detail": "Reply on thread 1a09242c087af92c / BT-PILOT-0911-TEST02 with BT-INTAKE-PROOF-REPLY-E9A8-7F3C."
+      "detail": "Captured a 15.54s event-driven reply on the new-message thread 1a09369252aa667b. Still need a reply on designated thread 1a09242c087af92c / BT-PILOT-0911-TEST02 with BT-INTAKE-PROOF-REPLY-E9A8-7F3C."
     },
     "state_preservation": {
       "result": "PASS",

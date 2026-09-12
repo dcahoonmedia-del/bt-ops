@@ -1,0 +1,20 @@
+{
+  "status": "CAPTURED_WRONG_THREAD",
+  "detection_path": "event_driven",
+  "gmail_message_id": "1a0936cc429d918e",
+  "thread_id": "1a09369252aa667b",
+  "expected_thread_id": "1a09242c087af92c",
+  "expected_subject": "BT-PILOT-0911-TEST02",
+  "expected_marker": "BT-INTAKE-PROOF-REPLY-E9A8-7F3C",
+  "observed_subject": "Re: BT-INTAKE-PROOF-NEW-E9A8-7F3C",
+  "observed_marker": "BT-INTAKE-PROOF-NEW-E9A8-7F3C",
+  "classification": "reply",
+  "gmail_received_at": "2026-09-11T22:22:42-04:00",
+  "detected_at": "2026-09-12T02:22:57.539326+00:00",
+  "latency_seconds": 15.54,
+  "under_60s": true,
+  "labels_unchanged": true,
+  "unread_preserved": true,
+  "polled_gmail": false,
+  "note": "Reply was on the new-message proof thread, not the designated BT-PILOT-0911-TEST02 thread."
+}
