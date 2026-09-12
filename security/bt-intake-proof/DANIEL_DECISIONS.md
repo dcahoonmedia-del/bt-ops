@@ -1,14 +1,5 @@
-# Stopped for Daniel — enable IAM API
+# Stopped for Daniel — create the receiver service account in Console
 
-Cloud login is stored. No JSON key was created. Service account `bt-intake-proof-receiver` was not created because the IAM API is disabled on `bt-intake-proof`.
+IAM API is enabled. Cloud login is stored. `iam.serviceAccounts.create` was denied, so I did not create `bt-intake-proof-receiver` and did not create a JSON key.
 
-Enable only these two APIs, then reply **done**:
-
-1. IAM API  
-   https://console.cloud.google.com/apis/library/iam.googleapis.com?project=bt-intake-proof
-2. IAM Credentials API (needed to impersonate, not to download a key)  
-   https://console.cloud.google.com/apis/library/iamcredentials.googleapis.com?project=bt-intake-proof
-
-If Google asks to link billing, stop and tell me.
-
-Do not send `BT-INTAKE-PROOF-*` emails yet.
+Follow `SA_CONSOLE_GUIDE.md`, then reply **done**.
