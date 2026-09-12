@@ -331,6 +331,24 @@ def cmd_intake_mode(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_desk_intent(args: argparse.Namespace) -> int:
+    from .desk_control import authorize_desk_intent, normalize_desk_intent
+
+    inferred = normalize_desk_intent(
+        args.utterance,
+        {
+            "last_question_kind": args.last_question or None,
+            "displayed_case": True,
+            "displayed_draft": True,
+            "owner": args.owner or "daniel",
+        },
+    )
+    authorized = authorize_desk_intent(inferred)
+    payload = {"inferred": inferred, "authorized": authorized, "execute_send": False}
+    _print(payload)
+    return 0
+
+
 def cmd_record_local_tests(args: argparse.Namespace) -> int:
     scorecard = empty_scorecard(
         "contactus@ Gmail read-only consent passed. Pub/Sub create is blocked on Cloud admin credentials or console-created topic."
@@ -381,6 +399,11 @@ def main(argv: list[str] | None = None) -> int:
     desk.add_argument("--case-id", default="", help="optional case to detail; default is newest inbound")
     desk.set_defaults(func=cmd_lead_desk_packets)
     sub.add_parser("intake-mode").set_defaults(func=cmd_intake_mode)
+    di = sub.add_parser("desk-intent")
+    di.add_argument("utterance", help="Daniel's newest utterance; not a magic phrase")
+    di.add_argument("--last-question", default="", help="offer_send | review_wording | ask_owner")
+    di.add_argument("--owner", default="daniel")
+    di.set_defaults(func=cmd_desk_intent)
     args = parser.parse_args(argv)
     return args.func(args)
 
