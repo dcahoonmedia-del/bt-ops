@@ -1,3 +1,3 @@
-# Stopped — delete the off-spec VM and recreate
+# Need a persistent SSH key on the VM
 
-Daniel will delete `instance-20260912-024540` and its boot disk, then create `bt-intake-cloud` as e2-small with the receiver SA. See `CLOUD_HOST_GUIDE.md`.
+The receiver is installed and running. Google’s guest agent removed the temporary SSH key. Add the key on the VM **Edit** page (not in the black terminal) so I can finish checks.
