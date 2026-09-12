@@ -1,0 +1,83 @@
+{
+  "pcap": "/workspace/security/codex-external-isolation/results/startup.pcap",
+  "pcap_bytes": 804,
+  "hosts": [],
+  "dns_queries": [],
+  "conversation_count": 8,
+  "conversations": [
+    {
+      "ts": "1789163669.438045000",
+      "dst": "",
+      "tcp": "",
+      "udp": "",
+      "sni": "",
+      "http_host": "",
+      "dns": ""
+    },
+    {
+      "ts": "1789163669.445831000",
+      "dst": "ff02::16",
+      "tcp": "",
+      "udp": "",
+      "sni": "",
+      "http_host": "",
+      "dns": ""
+    },
+    {
+      "ts": "1789163669.669839000",
+      "dst": "ff02::16",
+      "tcp": "",
+      "udp": "",
+      "sni": "",
+      "http_host": "",
+      "dns": ""
+    },
+    {
+      "ts": "1789163670.150061000",
+      "dst": "ff02::1:ffc6:44c5",
+      "tcp": "",
+      "udp": "",
+      "sni": "",
+      "http_host": "",
+      "dns": ""
+    },
+    {
+      "ts": "1789163670.439201000",
+      "dst": "",
+      "tcp": "",
+      "udp": "",
+      "sni": "",
+      "http_host": "",
+      "dns": ""
+    },
+    {
+      "ts": "1789163671.173942000",
+      "dst": "ff02::16",
+      "tcp": "",
+      "udp": "",
+      "sni": "",
+      "http_host": "",
+      "dns": ""
+    },
+    {
+      "ts": "1789163671.439298000",
+      "dst": "",
+      "tcp": "",
+      "udp": "",
+      "sni": "",
+      "http_host": "",
+      "dns": ""
+    },
+    {
+      "ts": "1789163671.557846000",
+      "dst": "ff02::16",
+      "tcp": "",
+      "udp": "",
+      "sni": "",
+      "http_host": "",
+      "dns": ""
+    }
+  ],
+  "forbidden_hits": [],
+  "github_plugin_update_traffic": false
+}

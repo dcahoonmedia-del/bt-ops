@@ -1,0 +1,20 @@
+{
+  "ok": true,
+  "result": {
+    "account": {
+      "email": "daniel@btpestcontrol.com",
+      "planType": "prolite",
+      "type": "chatgpt"
+    },
+    "requiresOpenaiAuth": true
+  },
+  "logged_in": true,
+  "isolated_session": {
+    "auth_json_present": true,
+    "auth_mode": "chatgpt",
+    "openai_api_key_set": false,
+    "chatgpt_tokens_present": true,
+    "account_id_present": true,
+    "ok": true
+  }
+}

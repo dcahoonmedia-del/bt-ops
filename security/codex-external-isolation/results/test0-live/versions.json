@@ -1,0 +1,11 @@
+{
+  "python": "3.12.14 (main, Sep  1 2026, 00:10:15) [GCC 12.2.0]",
+  "openai_codex": "0.154.0",
+  "openai_codex_file": "/usr/local/lib/python3.12/site-packages/openai_codex/__init__.py",
+  "codex_bin": "/usr/local/lib/python3.12/site-packages/codex_cli_bin/bin/codex",
+  "codex_cli": {
+    "returncode": 0,
+    "stdout": "codex-cli 0.154.0",
+    "stderr": ""
+  }
+}
