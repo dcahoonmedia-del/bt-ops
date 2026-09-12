@@ -1,7 +1,7 @@
 {
-  "overall": "IN_PROGRESS",
-  "stopped_at": "vm_restart",
-  "reason": "Mac-off NEW, REPLY, recovery, watch renew, and Codex ExternalMessage all PASS. VM reboot proof is blocked until the persistent SSH key is in the correct Edit-page columns.",
+  "overall": "PASS",
+  "stopped_at": null,
+  "reason": "All Phase B cloud-host gates passed. The Mac was not required. No JSON key. Do not send more CLOUD markers.",
   "json_key_created": false,
   "mac_off_tests_started": true,
   "mac_required_for_send": false,
@@ -11,7 +11,7 @@
     "pubsub_delivery": "PASS",
     "gmail_history_recovery": "PASS",
     "watch_renewal": "PASS",
-    "durable_persistence_across_vm_restart": "BLOCKED_SSH_KEY_COLUMNS",
+    "durable_persistence_across_vm_restart": "PASS",
     "deduplication": "PASS",
     "codex_authentication_persistence": "PASS",
     "external_message_authority_boundary": "PASS"
@@ -19,5 +19,6 @@
   "cloud_new": "PASS",
   "cloud_reply": "PASS",
   "cloud_recovery": "PASS",
-  "watch_renew": "PASS"
+  "watch_renew": "PASS",
+  "vm_restart": "PASS"
 }

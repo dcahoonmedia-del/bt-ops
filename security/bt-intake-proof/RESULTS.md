@@ -1,6 +1,8 @@
 # B&T contactus intake proof
 
-**Overall: PASS.** Automatic intake from `contactus@` is proven. No JSON key. Unread and labels unchanged. Isolated Codex treated mail as `external_untrusted`.
+**Overall: PASS.** Automatic intake from `contactus@` is proven on the laptop path (Phase A) and on GCE VM `bt-intake-cloud` with the Mac off (Phase B). No JSON key. Unread and labels unchanged. Isolated Codex treated mail as `external_untrusted`.
+
+Phase B details: `results/PHASEB.md`.
 
 ## Scorecard
 
