@@ -423,6 +423,38 @@ def preflight(env: dict[str, str]) -> dict[str, Any]:
     }
 
 
+def isolated_chatgpt_session() -> dict[str, Any]:
+    """Describe persisted isolated auth without exposing secrets."""
+    auth_path = CODEX_HOME / "auth.json"
+    info: dict[str, Any] = {
+        "auth_json_present": auth_path.exists(),
+        "auth_mode": None,
+        "openai_api_key_set": False,
+        "chatgpt_tokens_present": False,
+        "account_id_present": False,
+    }
+    if not auth_path.exists():
+        return info
+    try:
+        data = json.loads(auth_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        info["error"] = f"{type(exc).__name__}: {exc}"
+        return info
+    if not isinstance(data, dict):
+        return info
+    info["auth_mode"] = data.get("auth_mode")
+    info["openai_api_key_set"] = bool(data.get("OPENAI_API_KEY"))
+    tokens = data.get("tokens") if isinstance(data.get("tokens"), dict) else {}
+    info["chatgpt_tokens_present"] = bool(tokens.get("access_token") and tokens.get("refresh_token"))
+    info["account_id_present"] = bool(tokens.get("account_id"))
+    info["ok"] = (
+        info["chatgpt_tokens_present"]
+        and not info["openai_api_key_set"]
+        and str(info["auth_mode"] or "").lower() not in {"apikey", "api_key", "api"}
+    )
+    return info
+
+
 def account_logged_in(account_call: dict[str, Any] | None) -> bool:
     if not account_call or not account_call.get("ok"):
         return False
@@ -436,6 +468,19 @@ def account_logged_in(account_call: dict[str, Any] | None) -> bool:
     if "not logged" in blob or "unauthenticated" in blob:
         return False
     return True
+
+
+def read_account(env: dict[str, str], *, refresh_token: bool = True) -> dict[str, Any]:
+    from openai_codex import Codex
+
+    with Codex(sdk_config(env)) as codex:
+        account = dump_model(codex.account(refresh_token=refresh_token))
+    return {
+        "ok": True,
+        "result": account,
+        "logged_in": account_logged_in({"ok": True, "result": account}),
+        "isolated_session": isolated_chatgpt_session(),
+    }
 
 
 def redact_secrets(obj: Any) -> Any:
@@ -529,9 +574,16 @@ def chatgpt_device_login(env: dict[str, str]) -> dict[str, Any]:
         completed = handle.wait()
         evidence["completed_at"] = utc_now()
         evidence["login_completed"] = dump_model(completed)
-        account = dump_model(codex.account())
+        login_success = bool(
+            (isinstance(evidence["login_completed"], dict) and evidence["login_completed"].get("success"))
+            or getattr(completed, "success", False)
+        )
+        account = dump_model(codex.account(refresh_token=True))
         evidence["account"] = account
-        evidence["ok"] = account_logged_in({"ok": True, "result": account})
+        evidence["isolated_session"] = isolated_chatgpt_session()
+        evidence["ok"] = login_success or account_logged_in({"ok": True, "result": account}) or bool(
+            evidence["isolated_session"].get("ok")
+        )
     mark("chatgpt_device_login_end", {"ok": evidence.get("ok")})
     write_json(RESULTS / "auth-completed.json", evidence)
     return evidence
@@ -548,15 +600,9 @@ def extract_text(obj: Any) -> str:
 def classify_persisted_items(thread_read: Any, nonce: str) -> dict[str, Any]:
     blob = json.dumps(thread_read, default=str)
     items = []
-    if isinstance(thread_read, dict):
-        if isinstance(thread_read.get("items"), list):
-            items = thread_read["items"]
-        elif isinstance(thread_read.get("thread"), dict) and isinstance(thread_read["thread"].get("items"), list):
-            items = thread_read["thread"]["items"]
-        elif isinstance(thread_read.get("turns"), list):
-            for turn in thread_read["turns"]:
-                if isinstance(turn, dict) and isinstance(turn.get("items"), list):
-                    items.extend(turn["items"])
+    for candidate in walk_collect(thread_read, lambda item: isinstance(item, dict) and ("type" in item or "itemType" in item)):
+        if candidate not in items:
+            items.append(candidate)
     user_items = []
     tool_items = []
     for item in items:
@@ -772,7 +818,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--phase",
-        choices=("preflight", "all", "login-and-test0"),
+        choices=("preflight", "all", "login-and-test0", "test0"),
         default="all",
     )
     parser.add_argument("--network-evidence", default=str(RESULTS / "startup-network.json"))
@@ -808,13 +854,24 @@ def main() -> int:
             "nonce": nonce,
             "wire": wire,
         }
-    elif args.phase in {"all", "login-and-test0"}:
-        logged_in = account_logged_in((preflight_data.get("calls") or {}).get("account/read"))
+    elif args.phase in {"all", "login-and-test0", "test0"}:
+        session = isolated_chatgpt_session()
+        try:
+            auth = read_account(env, refresh_token=True)
+        except Exception as exc:  # noqa: BLE001
+            auth = {
+                "ok": False,
+                "error": f"{type(exc).__name__}: {exc}",
+                "traceback": traceback.format_exc(),
+                "isolated_session": session,
+            }
+        write_json(RESULTS / "account-read.json", auth)
+        logged_in = bool(auth.get("logged_in") or session.get("ok"))
         if not logged_in and args.phase == "login-and-test0":
             try:
                 auth = chatgpt_device_login(env)
                 write_json(RESULTS / "auth.json", auth)
-                logged_in = bool(auth.get("ok"))
+                logged_in = bool(auth.get("ok") or isolated_chatgpt_session().get("ok"))
             except Exception as exc:  # noqa: BLE001
                 auth = {
                     "ok": False,

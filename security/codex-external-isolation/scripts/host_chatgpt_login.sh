@@ -10,6 +10,7 @@ NETWORK="${NETWORK:-codex-iso-net}"
 SUBNET="${SUBNET:-172.28.154.0/24}"
 CONTAINER="${CONTAINER:-codex-iso-chatgpt-login}"
 VOLUME="${VOLUME:-codex-iso-chatgpt-home}"
+PHASE="${PHASE:-login-and-test0}"
 
 mkdir -p "${RESULTS_DIR}"
 
@@ -51,7 +52,18 @@ echo "==> starting isolated ChatGPT device-code login on ${NETWORK}"
   --env CODEX_TEST_RESULTS=/opt/codex-isolation/results \
   --mount "type=volume,src=${VOLUME},dst=/opt/codex-isolation/runtime" \
   --mount "type=bind,src=${RESULTS_DIR},dst=/opt/codex-isolation/results" \
-  "${IMAGE}" --phase login-and-test0
+  "${IMAGE}" --phase "${PHASE:-login-and-test0}"
+
+PHASE="${PHASE:-login-and-test0}"
+if [[ "${PHASE}" == "test0" ]]; then
+  echo "==> waiting for Test 0 to finish"
+  "${DOCKER[@]}" wait "${CONTAINER}"
+  "${DOCKER[@]}" logs "${CONTAINER}" || true
+  if [[ -f "${RESULTS_DIR}/report.json" ]]; then
+    python3 -c 'import json,pathlib,sys; print(json.dumps(json.loads(pathlib.Path(sys.argv[1]).read_text()).get("verdict"), indent=2))' "${RESULTS_DIR}/report.json"
+  fi
+  exit 0
+fi
 
 echo "==> waiting for device-code challenge"
 for i in $(seq 1 90); do
