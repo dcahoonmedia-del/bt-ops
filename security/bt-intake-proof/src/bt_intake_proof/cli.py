@@ -440,23 +440,14 @@ def cmd_desk_plus_poll(args: argparse.Namespace) -> int:
 
 def cmd_desk_plus_deliver_results(args: argparse.Namespace) -> int:
     from .cases import CaseLayer
-    from .desk_plus_result_send import deliver_plus_results, reconcile_plus_result_outbox
+    from .desk_plus_loop import recover_plus_result_sends
 
     store = ReceiptStore(Path(args.store) if args.store else store_path())
     try:
         layer = CaseLayer(store)
-        reconciled = reconcile_plus_result_outbox(layer, [])
-        delivered = deliver_plus_results(layer)
+        payload = recover_plus_result_sends(layer)
     finally:
         store.close()
-    payload = {
-        "ok": True,
-        "reconciled": reconciled,
-        "delivered": delivered,
-        "blind_retry": False,
-        "exactly_once_delivery": False,
-        "contactus_traffic": False,
-    }
     _print(payload)
     return 0
 

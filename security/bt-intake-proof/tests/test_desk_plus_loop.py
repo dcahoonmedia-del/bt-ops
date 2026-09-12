@@ -1,4 +1,5 @@
 import base64
+import json
 import sqlite3
 import tempfile
 import threading
@@ -30,6 +31,7 @@ from bt_intake_proof.desk_bridge import (
 from bt_intake_proof.desk_control import INTENT_HOLD, INTENT_REVISE
 from bt_intake_proof.desk_plus_discover import (
     PlusHistoryExpired,
+    discover_plus_controls,
     extract_plus_history_ids,
     fetch_plus_history,
     plus_history_query,
@@ -45,14 +47,23 @@ from bt_intake_proof.desk_plus_result_send import (
     REASON_CHANNEL_NOT_READY,
     deliver_plus_results,
     plus_result_channel_ready,
+    plus_result_payload_digest,
     reconcile_plus_result_outbox,
+    set_test_fail_after_result_insert,
     set_test_plus_result_ready,
+    set_test_plus_result_sent_lookup,
     set_test_plus_result_transport,
+    set_test_plus_sender_identity,
 )
 from bt_intake_proof.desk_plus_store import (
     PLUS_CURSOR_KEY,
+    STATUS_AWAITING_LABEL,
+    STATUS_PROCESSING,
+    CLAIM_LEASE,
+    ensure_plus_tables,
     get_plus_cursor,
     get_seen,
+    pending_seen_ids,
     save_plus_cursor,
 )
 from bt_intake_proof.gmail_readonly import ReadOnlyGmail
@@ -140,6 +151,10 @@ class FakePlusLoopClient(FakeDanielPlusClient):
         self.history_pages: list[dict] = []
         self.searches: list[str] = []
         self.search_ids: list[str] = []
+        self.search_pages: list[list[str]] | None = None
+        self.search_calls: list[dict] = []
+        self.raw_fetches: list[str] = []
+        self.metadata_fetches: list[str] = []
         self.labels = [
             {"id": LEAD_DESK_CONTROL_LABEL_ID, "name": "B&T Lead Desk/Control"},
             {"id": LEAD_DESK_RESULTS_LABEL_ID, "name": "B&T Lead Desk/Results"},
@@ -159,13 +174,28 @@ class FakePlusLoopClient(FakeDanielPlusClient):
             hid = str(page.get("historyId") or hid)
         return {"history": history, "historyId": hid}
 
-    def search_messages(self, query: str, max_results: int = 10) -> list[dict]:
+    def search_messages(
+        self,
+        query: str,
+        max_results: int = 10,
+        label_ids: list[str] | None = None,
+        page_token: str | None = None,
+    ):
         self.searches.append(query)
+        self.search_calls.append(
+            {"q": query, "max_results": max_results, "label_ids": label_ids, "page_token": page_token}
+        )
+        if self.search_pages is not None:
+            idx = int(page_token or 0)
+            page = self.search_pages[idx] if 0 <= idx < len(self.search_pages) else []
+            nxt = str(idx + 1) if idx + 1 < len(self.search_pages) else None
+            return {"messages": [{"id": item} for item in page], "nextPageToken": nxt}
         return [{"id": item} for item in self.search_ids[:max_results]]
 
     def get_message(self, message_id: str, fmt: str = "raw") -> dict:
         raw = dict(self.messages[message_id])
         if fmt == "metadata":
+            self.metadata_fetches.append(message_id)
             return {
                 "id": raw.get("id"),
                 "labelIds": raw.get("labelIds") or [],
@@ -176,6 +206,7 @@ class FakePlusLoopClient(FakeDanielPlusClient):
                     ]
                 },
             }
+        self.raw_fetches.append(message_id)
         return raw
 
     def list_labels(self) -> list[dict]:
@@ -200,6 +231,7 @@ class DeskPlusLoopTests(unittest.TestCase):
         self.layer = CaseLayer(self.store)
         ensure_send_tables(self.layer)
         ensure_bridge_tables(self.layer)
+        ensure_plus_tables(self.layer)
         self.store.commit_notification(
             mailbox=MAILBOX,
             history_id="cu-1",
@@ -237,6 +269,9 @@ class DeskPlusLoopTests(unittest.TestCase):
         set_test_plus_now(self.now)
         set_test_plus_result_ready(True)
         set_test_plus_result_transport(MemoryPlusResultTransport())
+        set_test_plus_result_sent_lookup(None)
+        set_test_plus_sender_identity(None)
+        set_test_fail_after_result_insert(False)
         set_test_plus_discover_client(None)
         set_test_plus_client(None)
         set_test_plus_preflight()
@@ -249,6 +284,9 @@ class DeskPlusLoopTests(unittest.TestCase):
         set_test_plus_discover_client(None)
         set_test_plus_result_ready(None)
         set_test_plus_result_transport(None)
+        set_test_plus_result_sent_lookup(None)
+        set_test_plus_sender_identity(None)
+        set_test_fail_after_result_insert(False)
         set_test_plus_preflight()
         self.store.close()
         self.tmp.cleanup()
@@ -339,7 +377,9 @@ class DeskPlusLoopTests(unittest.TestCase):
         self.assertTrue(result["discovery"].get("history_expired"))
         self.assertTrue(client.searches)
         self.assertIn("in:sent", client.searches[0])
-        self.assertIn(LEAD_DESK_CONTROL_LABEL_ID, client.searches[0])
+        self.assertNotIn("label:", client.searches[0])
+        self.assertNotIn(LEAD_DESK_CONTROL_LABEL_ID, client.searches[0])
+        self.assertTrue(any(LEAD_DESK_CONTROL_LABEL_ID in (call.get("label_ids") or []) for call in client.search_calls))
         self.assertNotIn("in:inbox", client.searches[0])
         self.assertEqual(get_seen(self.layer, STALE_PLUS_CONTROL_ID)["status"], "skipped")
         self.assertTrue(any(item.get("ok") and item.get("gmail_message_id") == "rec-1" or item.get("applied") for item in result["processed"]))
@@ -492,17 +532,27 @@ class DeskPlusLoopTests(unittest.TestCase):
         self.assertEqual(row["status"], "unknown")
         again = deliver_plus_results(self.layer, MemoryPlusResultTransport())
         self.assertEqual(again, [])
-        reconciled = reconcile_plus_result_outbox(
-            self.layer,
-            [
-                {
-                    "id": "gmail-res-1",
-                    "subject": row["subject"],
-                    "body": row["body"],
-                    "provider_message_id": "gmail-res-1",
-                }
-            ],
-        )
+
+        def _lookup(_row):
+            return {
+                "ok": True,
+                "matches": [
+                    {
+                        "id": "gmail-res-1",
+                        "from": ALLOWED_SENDER,
+                        "to": [LEAD_DESK_PLUS_RESULTS_MAILBOX],
+                        "cc": [],
+                        "bcc": [],
+                        "subject": row["subject"],
+                        "body": row["body"],
+                        "rfc_message_id": row["rfc_message_id"],
+                        "provider_message_id": "gmail-res-1",
+                    }
+                ],
+            }
+
+        set_test_plus_result_sent_lookup(_lookup)
+        reconciled = reconcile_plus_result_outbox(self.layer, [{"subject": row["subject"], "body": "ignored"}])
         self.assertTrue(reconciled[0]["recovered"])
         self.assertFalse(reconciled[0]["retried"])
         self.assertEqual(self.layer.conn.execute("SELECT status FROM plus_result_outbox").fetchone()["status"], "sent")
@@ -597,6 +647,411 @@ class DeskPlusLoopTests(unittest.TestCase):
         self.assertEqual(ready["blocker"], "plus_result_send_token_missing")
         self.assertFalse(ready["uses_contactus_credentials"])
         self.assertFalse(ready["widens_readonly"])
+
+    def _expire_claim(self, gmail_message_id: str) -> None:
+        stale = (datetime.now(timezone.utc) - CLAIM_LEASE - timedelta(seconds=5)).isoformat()
+        self.layer.conn.execute(
+            "UPDATE plus_control_seen SET claimed_at = ? WHERE gmail_message_id = ?",
+            (stale, gmail_message_id),
+        )
+
+    def test_format_failure_inside_persist_rolls_back_draft_nonce_result(self) -> None:
+        client = FakePlusLoopClient()
+        self._install_control("atom-fmt", client)
+        before = int(self.layer.get_case(self.case_id)["draft_version"])
+        nonce_before = self.layer.latest_draft(self.case_id)["nonce"]
+        with patch(
+            "bt_intake_proof.desk_plus_result_send.format_plus_combined_result",
+            side_effect=RuntimeError("injected format boom"),
+        ):
+            with self.assertRaises(RuntimeError):
+                process_discovered_plus_control(self.layer, "atom-fmt")
+        self.assertEqual(int(self.layer.get_case(self.case_id)["draft_version"]), before)
+        self.assertEqual(self.layer.latest_draft(self.case_id)["nonce"], nonce_before)
+        self.assertEqual(self.layer.conn.execute("SELECT COUNT(*) AS n FROM plus_result_outbox").fetchone()["n"], 0)
+        self.assertEqual(self.layer.conn.execute("SELECT COUNT(*) AS n FROM desk_control_consumed").fetchone()["n"], 0)
+        self.assertEqual(get_seen(self.layer, "atom-fmt")["status"], STATUS_PROCESSING)
+        self.assertNotIn("atom-fmt", pending_seen_ids(self.layer))
+
+    def test_fail_after_result_insert_before_commit_rolls_back_unit(self) -> None:
+        client = FakePlusLoopClient()
+        self._install_control("atom-ins", client)
+        before = int(self.layer.get_case(self.case_id)["draft_version"])
+        set_test_fail_after_result_insert(True)
+        try:
+            with self.assertRaises(RuntimeError):
+                process_discovered_plus_control(self.layer, "atom-ins")
+        finally:
+            set_test_fail_after_result_insert(False)
+        self.assertEqual(int(self.layer.get_case(self.case_id)["draft_version"]), before)
+        self.assertEqual(self.layer.conn.execute("SELECT COUNT(*) AS n FROM plus_result_outbox").fetchone()["n"], 0)
+        self.assertEqual(self.layer.conn.execute("SELECT COUNT(*) AS n FROM desk_control_consumed").fetchone()["n"], 0)
+        self.assertEqual(get_seen(self.layer, "atom-ins")["status"], STATUS_PROCESSING)
+
+    def test_history_events_checkpointed_before_cursor_survives_metadata_death(self) -> None:
+        client = FakePlusLoopClient()
+        self._install_control("review-control", client)
+        save_plus_cursor(self.layer, "10")
+        client.history_pages = [
+            {
+                "historyId": "20",
+                "history": [{"messagesAdded": [{"message": {"id": "review-control"}}]}],
+            }
+        ]
+        with patch(
+            "bt_intake_proof.desk_plus_discover._get_metadata",
+            side_effect=RuntimeError("process death during metadata"),
+        ):
+            discover_plus_controls(self.layer, client=client)
+        self.assertEqual(str(get_plus_cursor(self.layer)["history_id"]), "20")
+        self.assertIsNotNone(get_seen(self.layer, "review-control"))
+        client.history_pages = []
+        recovered = poll_plus_controls_once(self.layer, client=client)
+        self.assertTrue(
+            any(item.get("ok") and item.get("control_gmail_id") == "review-control" for item in recovered["processed"]),
+            recovered,
+        )
+        self.assertEqual(int(self.layer.get_case(self.case_id)["draft_version"]), 2)
+
+    def test_lease_recovers_death_before_save_and_after_save_before_seen(self) -> None:
+        client = FakePlusLoopClient()
+        self._install_control("lease-before", client)
+        before = int(self.layer.get_case(self.case_id)["draft_version"])
+        with patch(
+            "bt_intake_proof.desk_plus_result_send.format_plus_combined_result",
+            side_effect=RuntimeError("death before save"),
+        ):
+            with self.assertRaises(RuntimeError):
+                process_discovered_plus_control(self.layer, "lease-before")
+        self.assertEqual(int(self.layer.get_case(self.case_id)["draft_version"]), before)
+        self.assertEqual(get_seen(self.layer, "lease-before")["status"], STATUS_PROCESSING)
+        self._expire_claim("lease-before")
+        self.assertIn("lease-before", pending_seen_ids(self.layer))
+        replay = process_discovered_plus_control(self.layer, "lease-before")
+        self.assertTrue(replay["ok"], replay)
+        self.assertEqual(int(self.layer.get_case(self.case_id)["draft_version"]), 2)
+
+        client2 = FakePlusLoopClient()
+        mail2 = format_control_mail(
+            INTENT_REVISE,
+            compute_packet_binding(self.layer.get_case(self.case_id), self.layer.latest_draft(self.case_id)),
+            note="DRAFT - NOT SENT\n\nSecond lease revision.",
+            transport=TRANSPORT_PLUS,
+        )
+        raw2 = _plus_raw_with_headers(
+            "lease-after",
+            mail2["subject"],
+            mail2["body"],
+            self.sent_at,
+            ["SENT", LEAD_DESK_CONTROL_LABEL_ID],
+        )
+        client2.messages["lease-after"] = raw2
+        set_test_plus_client(client2)
+        set_test_plus_discover_client(client2)
+        import bt_intake_proof.desk_plus_loop as loop_mod
+
+        real_update = loop_mod.update_seen
+
+        def _boom(layer, gmail_message_id, **kwargs):
+            if kwargs.get("status") == "processed":
+                raise RuntimeError("death after save before seen")
+            return real_update(layer, gmail_message_id, **kwargs)
+
+        with patch.object(loop_mod, "update_seen", side_effect=_boom):
+            with self.assertRaises(RuntimeError):
+                process_discovered_plus_control(self.layer, "lease-after")
+        self.assertEqual(int(self.layer.get_case(self.case_id)["draft_version"]), 3)
+        self.assertEqual(self.layer.conn.execute("SELECT COUNT(*) AS n FROM plus_result_outbox").fetchone()["n"], 2)
+        self.assertEqual(get_seen(self.layer, "lease-after")["status"], STATUS_PROCESSING)
+        self._expire_claim("lease-after")
+        again = process_discovered_plus_control(self.layer, "lease-after")
+        self.assertTrue(again.get("replayed") or again.get("ok"), again)
+        self.assertEqual(int(self.layer.get_case(self.case_id)["draft_version"]), 3)
+        self.assertEqual(self.layer.conn.execute("SELECT COUNT(*) AS n FROM plus_result_outbox").fetchone()["n"], 2)
+
+    def test_normal_mail_stays_awaiting_label_without_raw_fetch(self) -> None:
+        client = FakePlusLoopClient()
+        ordinary = _plus_raw_with_headers(
+            "normal-mail",
+            "hello",
+            "ordinary customer mail",
+            self.sent_at,
+            ["SENT"],
+        )
+        client.messages["normal-mail"] = ordinary
+        set_test_plus_client(client)
+        set_test_plus_discover_client(client)
+        save_plus_cursor(self.layer, "10")
+        client.history_pages = [
+            {"historyId": "11", "history": [{"messagesAdded": [{"message": {"id": "normal-mail"}}]}]}
+        ]
+        before = int(self.layer.get_case(self.case_id)["draft_version"])
+        result = poll_plus_controls_once(self.layer, client=client)
+        self.assertEqual(get_seen(self.layer, "normal-mail")["status"], STATUS_AWAITING_LABEL)
+        self.assertNotIn("normal-mail", result["discovery"]["candidates"])
+        self.assertNotIn("normal-mail", client.raw_fetches)
+        self.assertEqual(int(self.layer.get_case(self.case_id)["draft_version"]), before)
+
+    def test_control_label_delay_then_removal(self) -> None:
+        client = FakePlusLoopClient()
+        delayed = _plus_raw_with_headers(
+            "label-delay",
+            self.mail["subject"],
+            self.mail["body"],
+            self.sent_at,
+            ["SENT"],
+        )
+        client.messages["label-delay"] = delayed
+        set_test_plus_client(client)
+        set_test_plus_discover_client(client)
+        save_plus_cursor(self.layer, "10")
+        client.history_pages = [
+            {"historyId": "12", "history": [{"messagesAdded": [{"message": {"id": "label-delay"}}]}]}
+        ]
+        first = poll_plus_controls_once(self.layer, client=client)
+        self.assertEqual(get_seen(self.layer, "label-delay")["status"], STATUS_AWAITING_LABEL)
+        self.assertFalse(any(item.get("ok") for item in first["processed"]))
+        client.messages["label-delay"]["labelIds"] = ["SENT", LEAD_DESK_CONTROL_LABEL_ID]
+        client.history_pages = []
+        authorized = discover_plus_controls(self.layer, client=client)
+        self.assertIn("label-delay", authorized["candidates"])
+        client.messages["label-delay"]["labelIds"] = ["SENT"]
+        removed = process_discovered_plus_control(self.layer, "label-delay", client=client)
+        self.assertTrue(removed.get("awaiting_label"), removed)
+        self.assertFalse(removed.get("ok"))
+        self.assertNotIn("label-delay", client.raw_fetches)
+        self.assertEqual(int(self.layer.get_case(self.case_id)["draft_version"]), 1)
+        client.messages["label-delay"]["labelIds"] = ["SENT", LEAD_DESK_CONTROL_LABEL_ID]
+        second = poll_plus_controls_once(self.layer, client=client)
+        self.assertTrue(any(item.get("ok") and item.get("control_gmail_id") == "label-delay" for item in second["processed"]), second)
+
+    def test_changed_control_label_id_resolved_by_name(self) -> None:
+        client = FakePlusLoopClient()
+        new_id = "Label_CHANGED_CONTROL"
+        client.labels = [
+            {"id": new_id, "name": "B&T Lead Desk/Control"},
+            {"id": LEAD_DESK_RESULTS_LABEL_ID, "name": "B&T Lead Desk/Results"},
+        ]
+        raw = _plus_raw_with_headers(
+            "changed-id",
+            self.mail["subject"],
+            self.mail["body"],
+            self.sent_at,
+            ["SENT", new_id],
+        )
+        client.messages["changed-id"] = raw
+        set_test_plus_client(client)
+        set_test_plus_discover_client(client)
+        save_plus_cursor(self.layer, "10")
+        client.history_error = PlusHistoryExpired("historyId no longer valid")
+        client.search_ids = ["changed-id"]
+        result = poll_plus_controls_once(self.layer, client=client)
+        self.assertTrue(client.search_calls)
+        self.assertNotIn("Label_", client.searches[0])
+        self.assertIn(new_id, client.search_calls[0].get("label_ids") or [])
+        self.assertTrue(any(item.get("ok") for item in result["processed"]), result)
+
+    def test_recovery_paginates_beyond_one_page(self) -> None:
+        client = FakePlusLoopClient()
+        set_test_plus_client(client)
+        set_test_plus_discover_client(client)
+        save_plus_cursor(self.layer, "10")
+        client.history_error = PlusHistoryExpired("historyId no longer valid")
+        client.search_pages = [["page-a"], ["page-b"], ["page-c"]]
+        report = discover_plus_controls(self.layer, client=client)
+        self.assertGreaterEqual(len(client.search_calls), 3, client.search_calls)
+        self.assertIsNotNone(get_seen(self.layer, "page-a"))
+        self.assertIsNotNone(get_seen(self.layer, "page-b"))
+        self.assertIsNotNone(get_seen(self.layer, "page-c"))
+        self.assertNotIn("label:", report.get("reconcile_query") or "")
+
+    def test_reconcile_keeps_ambiguous_sends_unknown(self) -> None:
+        client = FakePlusLoopClient()
+        self._install_control("res-amb", client)
+        processed = process_discovered_plus_control(self.layer, "res-amb")
+        self.assertTrue(processed["ok"], processed)
+        self.layer.conn.execute("UPDATE plus_result_outbox SET status = 'sending'")
+        row = dict(self.layer.conn.execute("SELECT * FROM plus_result_outbox").fetchone())
+
+        set_test_plus_result_sent_lookup(lambda _row: {"ok": True, "matches": []})
+        empty = reconcile_plus_result_outbox(self.layer, [])
+        self.assertTrue(empty[0]["unknown"])
+        self.assertFalse(empty[0]["retried"])
+        self.assertEqual(empty[0]["reason"], "still_unconfirmed")
+        self.assertEqual(self.layer.conn.execute("SELECT status FROM plus_result_outbox").fetchone()["status"], "unknown")
+        self.assertEqual(deliver_plus_results(self.layer, MemoryPlusResultTransport()), [])
+
+        def _wrong_to(_row):
+            return {
+                "ok": True,
+                "matches": [
+                    {
+                        "from": ALLOWED_SENDER,
+                        "to": ["amy@example.com"],
+                        "subject": row["subject"],
+                        "body": row["body"],
+                        "rfc_message_id": row["rfc_message_id"],
+                        "provider_message_id": "wrong-to",
+                    }
+                ],
+            }
+
+        self.layer.conn.execute("UPDATE plus_result_outbox SET status = 'sending'")
+        set_test_plus_result_sent_lookup(_wrong_to)
+        wrong = reconcile_plus_result_outbox(self.layer)
+        self.assertEqual(wrong[0]["reason"], "still_unconfirmed")
+        self.assertEqual(self.layer.conn.execute("SELECT status FROM plus_result_outbox").fetchone()["status"], "unknown")
+
+        def _wrong_body(_row):
+            return {
+                "ok": True,
+                "matches": [
+                    {
+                        "from": ALLOWED_SENDER,
+                        "to": [LEAD_DESK_PLUS_RESULTS_MAILBOX],
+                        "subject": row["subject"],
+                        "body": "different body",
+                        "rfc_message_id": row["rfc_message_id"],
+                        "provider_message_id": "wrong-body",
+                    }
+                ],
+            }
+
+        self.layer.conn.execute("UPDATE plus_result_outbox SET status = 'unknown'")
+        set_test_plus_result_sent_lookup(_wrong_body)
+        body = reconcile_plus_result_outbox(self.layer)
+        self.assertEqual(body[0]["reason"], "still_unconfirmed")
+
+        exact = {
+            "from": ALLOWED_SENDER,
+            "to": [LEAD_DESK_PLUS_RESULTS_MAILBOX],
+            "cc": [],
+            "bcc": [],
+            "subject": row["subject"],
+            "body": row["body"],
+            "rfc_message_id": row["rfc_message_id"],
+            "provider_message_id": "dup-1",
+        }
+        set_test_plus_result_sent_lookup(lambda _row: {"ok": True, "matches": [exact, {**exact, "provider_message_id": "dup-2"}]})
+        dup = reconcile_plus_result_outbox(self.layer)
+        self.assertEqual(dup[0]["reason"], "ambiguous_provider_match")
+        self.assertFalse(dup[0]["retried"])
+
+        def _boom(_row):
+            raise RuntimeError("lookup exploded")
+
+        set_test_plus_result_sent_lookup(_boom)
+        crashed = reconcile_plus_result_outbox(self.layer)
+        self.assertEqual(crashed[0]["reason"], "plus_result_lookup_error")
+        self.assertFalse(crashed[0]["retried"])
+        self.assertEqual(self.layer.conn.execute("SELECT status FROM plus_result_outbox").fetchone()["status"], "unknown")
+
+    def test_blocked_result_returns_to_pending_when_sender_ready(self) -> None:
+        client = FakePlusLoopClient()
+        self._install_control("res-block", client)
+        processed = process_discovered_plus_control(self.layer, "res-block")
+        self.assertTrue(processed["ok"], processed)
+        self.layer.conn.execute("UPDATE plus_result_outbox SET status = 'blocked'")
+        from bt_intake_proof.desk_plus_loop import recover_plus_result_sends
+
+        recovered = recover_plus_result_sends(self.layer)
+        self.assertGreaterEqual(recovered["unblocked_results"], 1)
+        self.assertTrue(any(item.get("ok") for item in recovered["delivered"]))
+        self.assertEqual(self.layer.conn.execute("SELECT status FROM plus_result_outbox").fetchone()["status"], "sent")
+
+    def test_result_mime_includes_persisted_rfc_message_id(self) -> None:
+        from email import message_from_bytes
+
+        from bt_intake_proof.bounded_send import mime_from_binding
+
+        client = FakePlusLoopClient()
+        self._install_control("mime-1", client)
+        processed = process_discovered_plus_control(self.layer, "mime-1")
+        self.assertTrue(processed["ok"], processed)
+        row = dict(self.layer.conn.execute("SELECT * FROM plus_result_outbox").fetchone())
+        self.assertTrue(row["rfc_message_id"])
+        self.assertTrue(row["body_digest"])
+        self.assertTrue(row["payload_digest"])
+        raw = mime_from_binding(
+            {
+                "from_addr": ALLOWED_SENDER,
+                "to_addr": LEAD_DESK_PLUS_RESULTS_MAILBOX,
+                "subject": row["subject"],
+                "body": row["body"],
+                "rfc_message_id": row["rfc_message_id"],
+            }
+        )
+        parsed = message_from_bytes(raw)
+        self.assertIn(row["rfc_message_id"].encode("ascii"), raw)
+        self.assertEqual(
+            str(parsed["Message-ID"] or "").replace("\n", "").replace("\r", "").replace(" ", ""),
+            row["rfc_message_id"],
+        )
+        self.assertEqual(plus_result_payload_digest(
+            {"from": ALLOWED_SENDER, "to": LEAD_DESK_PLUS_RESULTS_MAILBOX, "cc": "", "bcc": "", "subject": row["subject"], "body": row["body"]},
+            row["rfc_message_id"],
+        ), row["payload_digest"])
+
+    def test_sender_readiness_uses_live_identity_not_token_file(self) -> None:
+        from bt_intake_proof.desk_plus_result_send import GMAIL_SEND_SCOPE
+        from bt_intake_proof.gmail_readonly import GmailAuthError
+
+        dest = Path(self.tmp.name) / "plus_send_token.json"
+        dest.write_text(
+            json.dumps(
+                {
+                    "email": ALLOWED_SENDER,
+                    "scopes": [GMAIL_SEND_SCOPE],
+                    "refresh_token": "not-live-proof",
+                }
+            ),
+            encoding="utf-8",
+        )
+        set_test_plus_result_ready(None)
+        set_test_plus_result_transport(None)
+        with patch.dict("os.environ", {"BT_DANIEL_PLUS_RESULT_SEND_TOKEN": str(dest)}):
+            set_test_plus_sender_identity(GmailAuthError("invalid_grant"))
+            blocked = plus_result_channel_ready()
+            self.assertFalse(blocked["ready"])
+            self.assertEqual(blocked["blocker"], "plus_result_sender_unusable")
+            set_test_plus_sender_identity({"email": "amy@example.com", "scopes": [GMAIL_SEND_SCOPE]})
+            wrong = plus_result_channel_ready()
+            self.assertFalse(wrong["ready"])
+            set_test_plus_sender_identity({"email": ALLOWED_SENDER, "scopes": [GMAIL_SEND_SCOPE]})
+            ready = plus_result_channel_ready()
+            self.assertTrue(ready["ready"])
+            self.assertEqual(ready["identity_via"], "test_tokeninfo")
+
+    def test_preflight_requires_results_label_and_label_lookup(self) -> None:
+        set_test_plus_result_ready(True)
+        set_test_plus_preflight(
+            labels=[{"id": LEAD_DESK_CONTROL_LABEL_ID, "name": "B&T Lead Desk/Control"}],
+            filters="forbidden",
+            profile={"emailAddress": ALLOWED_SENDER, "historyId": "9"},
+        )
+        missing = plus_control_preflight()
+        self.assertEqual(missing["status"], "BLOCKED")
+        self.assertIn("results_label_missing", missing["activation_blockers"])
+        set_test_plus_preflight(
+            labels="fail",
+            filters="forbidden",
+            profile={"emailAddress": ALLOWED_SENDER, "historyId": "9"},
+        )
+        failed = plus_control_preflight()
+        self.assertEqual(failed["status"], "BLOCKED")
+        self.assertIn("plus_label_lookup_failed", failed["activation_blockers"])
+        set_test_plus_preflight(
+            labels=[
+                {"id": LEAD_DESK_CONTROL_LABEL_ID, "name": "B&T Lead Desk/Control"},
+                {"id": LEAD_DESK_RESULTS_LABEL_ID, "name": "B&T Lead Desk/Results"},
+            ],
+            filters="forbidden",
+            profile={"emailAddress": ALLOWED_SENDER, "historyId": "9"},
+        )
+        ready = plus_control_preflight()
+        self.assertEqual(ready["status"], "READY")
+        self.assertTrue(ready["discovery"]["ready"])
+        self.assertNotIn("Label_", ready["discovery"]["query"])
 
 
 if __name__ == "__main__":

@@ -948,6 +948,10 @@ def process_control_mail(
     """Authorize one control message. Never interprets speech. Does not execute a send."""
     ensure_bridge_tables(layer)
     ensure_send_tables(layer)
+    if _normalize_control_transport(transport) == TRANSPORT_PLUS:
+        from .desk_plus_store import ensure_plus_tables
+
+        ensure_plus_tables(layer)
     chosen = _normalize_control_transport(transport)
     if not chosen:
         result = _fail("unknown_control_transport")
@@ -1274,6 +1278,9 @@ def process_plus_control_mail(
     gmail_message_id: str,
 ) -> dict[str, Any]:
     """Process one live-fetched plus-address control. Caller evidence is not identity."""
+    from .desk_plus_store import ensure_plus_tables
+
+    ensure_plus_tables(layer)
     loaded = fetch_plus_control_from_daniel(gmail_message_id)
     if not loaded.get("ok"):
         result = _fail(str(loaded.get("reason") or "plus_gmail_message_missing"), transport=TRANSPORT_PLUS)

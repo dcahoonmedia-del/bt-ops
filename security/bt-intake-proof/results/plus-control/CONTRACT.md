@@ -48,28 +48,35 @@ Gmail history with `messageAdded` and `labelAdded`. It uses the
 existing Daniel readonly credential only. It does not add Pub/Sub and
 does not change contactus `users.watch` / `watch_cursors`.
 
-Discovery is limited to the existing `B&T Lead Desk/Control` label plus
-the exact sender/recipient subset. Search is `in:sent` plus that label;
-archive/filtering must not hide controls. Results mailbox/label and
-`BT-INTAKE-PROOF-PLUS-RESULT-E9A8` are excluded to prevent loops.
+Discovery is limited to the existing `B&T Lead Desk/Control` label
+(resolved by **name** to the current ID) plus the exact sender/recipient
+subset. Recovery search uses supported `q` syntax (`in:sent to:… after:…`)
+and API `labelIds`. Opaque `Label_…` IDs are never placed in `q`.
+Results mailbox/label and `BT-INTAKE-PROOF-PLUS-RESULT-E9A8` are
+excluded to prevent loops.
 
-History is paginated. The Daniel cursor key is
+History is paginated. Every recoverable history/recovery id is
+checkpointed **before** the cursor advances. The Daniel cursor key is
 `daniel@btpestcontrol.com/plus-control`. Repeated or reordered events
-are deduped in `plus_control_seen`. After history expiration, a bounded
-SENT+Control reconcile (25 messages) runs. Unrelated bodies are not
-stored.
+are deduped in `plus_control_seen`. After history expiration, recovery
+paginates over the 15-minute freshness window. Ordinary mail without
+Control stays `awaiting_label` and is never raw-fetched. The Control
+subset is revalidated from metadata before every execution.
 
-Each candidate is independently re-checked (raw envelope, live profile,
-message id, freshness, case/version/body/inbound, single-use) before
-execution.
+Processing leases expire after two minutes so a crash cannot leave a
+row `processing` forever. Committed outcomes replay without a second
+consume.
 
 ## Atomic save and one result
 
-A successful revise consumes the nonce and writes **one** durable
-`plus_combined` result intent in the same SQLite transaction. Retries
-do not save twice. The result combines the spoken outcome, the updated
-draft, and the fresh backend packet binding. It is not a contactus
-result plus a separate CASE email.
+Schema setup is initialized **outside** the revise transaction
+(`execute()`, never `executescript()`). A successful revise consumes
+the nonce and writes **one** durable `plus_combined` result intent in
+the same SQLite transaction. A failure inside result persistence rolls
+back draft, nonce, and result together. Retries do not save twice. The
+result combines the spoken outcome, the updated draft, and the fresh
+backend packet binding. It is not a contactus result plus a separate
+CASE email.
 
 If the plus-result sender is not configured, processing is blocked and
 the decision is not consumed.
@@ -85,28 +92,41 @@ content only. Credential reference:
 That file is not created by this assignment. The readonly token is not
 widened. contactus send/readonly tokens are not fallbacks.
 
+An RFC `Message-ID` is persisted before send and included in MIME.
 Gmail `users.messages.send` is not exactly-once from the client view.
-Unknown or timeout outcomes stay `unknown` until provider SENT records
-are reconciled. This path does not claim exactly-once delivery.
+Unknown, timeout, empty, delayed, mismatched, or duplicate SENT
+lookups stay `unknown` and are never blindly retried. Reconciliation
+uses Daniel **readonly** SENT, verifies live account, sole results
+recipient, payload digest, and the durable RFC id. Caller-supplied
+subject/marker lists are not authoritative. Blocked (known-unsent)
+rows may return to pending only after live sender identity is proven
+usable. This path does not claim exactly-once delivery.
+
+Sender readiness refreshes the send credential and proves email plus
+effective scopes through `tokeninfo`. Token-file metadata is not live
+proof. Known-unusable credentials fail closed.
 
 ## Preflight
 
 `python3 -m bt_intake_proof desk-plus-preflight` reports the live
 Daniel profile, required labels where listable, filter accessibility
 without requesting `gmail.settings`, discovery readiness, sender
-readiness, and activation blockers. It does not recreate or change
-Daniel's filters, routing, labels, or permissions.
+readiness, and activation blockers. READY requires both Control and
+Results labels by name and a successful label list. It does not
+recreate or change Daniel's filters, routing, labels, or permissions.
 
 ## Offline proof
 
-`PYTHONPATH=src python3 -m unittest tests.test_desk_plus_control tests.test_desk_plus_loop` → 39 passed.
+Focused plus-loop + plus-control + deploy unit tests, then the full
+`unittest discover -s tests` suite. Counts are recorded on the
+regenerated release after this correction. GCE and iPhone proof remain
+unrun.
 
-`PYTHONPATH=src python3 -m unittest discover -s tests` → 281 passed, 1 skipped.
-
-See `tests/test_desk_plus_loop.py` for history, label-added, expired
-recovery, stale controls, envelope, intents, concurrency, rollback,
-crash recovery, uncertain send, result loops, missing credentials,
-and zero contactus traffic.
+See `tests/test_desk_plus_loop.py` for the six review regressions:
+implicit-commit rollback, lost-discovery checkpoint, lease reclaim,
+authoritative SENT reconcile, private-subset revalidation, and live
+sender/preflight fail-closed. Deploy installs the plus timer
+**disabled**.
 
 ## What this assignment does not do
 

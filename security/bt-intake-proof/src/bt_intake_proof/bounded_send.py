@@ -90,6 +90,9 @@ def mime_from_binding(binding: dict[str, Any]) -> bytes:
     msg["From"] = binding["from_addr"]
     msg["To"] = binding["to_addr"]
     msg["Subject"] = binding["subject"]
+    rfc = binding.get("rfc_message_id") or binding.get("message_id")
+    if rfc:
+        msg["Message-ID"] = str(rfc)
     msg.set_content(binding["body"])
     return msg.as_bytes()
 

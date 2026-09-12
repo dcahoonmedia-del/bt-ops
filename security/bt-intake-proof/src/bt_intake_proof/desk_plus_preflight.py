@@ -27,14 +27,14 @@ from .gmail_readonly import GmailAuthError
 from .oauth_consent import _get_json
 
 
-_TEST_LABELS: list[dict[str, str]] | None = None
+_TEST_LABELS: list[dict[str, str]] | str | None = None
 _TEST_FILTERS: Any = None
 _TEST_PROFILE: dict[str, Any] | None = None
 
 
 def set_test_plus_preflight(
     *,
-    labels: list[dict[str, str]] | None = None,
+    labels: list[dict[str, str]] | str | None = None,
     filters: Any = None,
     profile: dict[str, Any] | None = None,
 ) -> None:
@@ -46,6 +46,8 @@ def set_test_plus_preflight(
 
 def _list_labels(client: Any) -> dict[str, Any]:
     if _TEST_LABELS is not None:
+        if _TEST_LABELS == "fail":
+            return {"ok": False, "reason": "plus_label_lookup_failed", "labels": []}
         return {"ok": True, "labels": list(_TEST_LABELS), "via": "test_fixture"}
     if hasattr(client, "list_labels"):
         return {"ok": True, "labels": list(client.list_labels() or []), "via": "client"}
@@ -123,11 +125,12 @@ def plus_control_preflight(*, client: Any | None = None) -> dict[str, Any]:
     gmail = client
     if access.get("available") or client is not None or _TEST_PROFILE is not None:
         try:
-            gmail = client or _plus_gmail_client()
             if _TEST_PROFILE is not None:
                 profile_email = normalize_email(str(_TEST_PROFILE.get("emailAddress") or ""))
                 profile = dict(_TEST_PROFILE)
+                gmail = client
             else:
+                gmail = client or _plus_gmail_client()
                 profile_email = _profile_email_from_client(gmail)
                 profile = {"emailAddress": profile_email}
             account["live_profile"] = profile_email
@@ -147,19 +150,26 @@ def plus_control_preflight(*, client: Any | None = None) -> dict[str, Any]:
     present_labels = {str(item.get("id") or ""): str(item.get("name") or "") for item in labels_report.get("labels") or []}
     names = set(present_labels.values())
     ids = set(present_labels)
-    control_ok = LEAD_DESK_CONTROL_LABEL_ID in ids or LEAD_DESK_CONTROL_LABEL in names
-    results_ok = LEAD_DESK_RESULTS_LABEL_ID in ids or LEAD_DESK_RESULTS_LABEL in names
-    if labels_report.get("ok") and not control_ok:
-        blockers.append("control_label_missing")
+    control_ok = LEAD_DESK_CONTROL_LABEL in names
+    results_ok = LEAD_DESK_RESULTS_LABEL in names
+    if not labels_report.get("ok"):
+        blockers.append("plus_label_lookup_failed")
+        control_ok = False
+        results_ok = False
+    else:
+        if not control_ok:
+            blockers.append("control_label_missing")
+        if not results_ok:
+            blockers.append("results_label_missing")
     required_labels = {
         "control": {
             "name": LEAD_DESK_CONTROL_LABEL,
-            "id": LEAD_DESK_CONTROL_LABEL_ID,
+            "id": next((lid for lid, name in present_labels.items() if name == LEAD_DESK_CONTROL_LABEL), LEAD_DESK_CONTROL_LABEL_ID),
             "present": control_ok,
         },
         "results": {
             "name": LEAD_DESK_RESULTS_LABEL,
-            "id": LEAD_DESK_RESULTS_LABEL_ID,
+            "id": next((lid for lid, name in present_labels.items() if name == LEAD_DESK_RESULTS_LABEL), LEAD_DESK_RESULTS_LABEL_ID),
             "present": results_ok,
             "note": "Excluded from discovery. Do not recreate.",
         },
@@ -169,10 +179,10 @@ def plus_control_preflight(*, client: Any | None = None) -> dict[str, Any]:
     if not sender.get("ready"):
         blockers.append(str(sender.get("blocker") or "plus_result_send_not_ready"))
 
-    discovery_ready = bool(account.get("live_profile_verified")) and control_ok and access.get("available", True)
-    if _TEST_PROFILE is not None and account.get("live_profile_verified") and control_ok:
+    discovery_ready = bool(account.get("live_profile_verified")) and control_ok and results_ok and labels_report.get("ok") and access.get("available", True)
+    if _TEST_PROFILE is not None and account.get("live_profile_verified") and control_ok and results_ok and labels_report.get("ok"):
         discovery_ready = True
-    if not discovery_ready and "daniel_readonly_unavailable" not in blockers and "control_label_missing" not in blockers and "live_profile_not_daniel" not in blockers:
+    if not discovery_ready and "daniel_readonly_unavailable" not in blockers and "control_label_missing" not in blockers and "results_label_missing" not in blockers and "plus_label_lookup_failed" not in blockers and "live_profile_not_daniel" not in blockers:
         if not account.get("live_profile_verified"):
             blockers.append("discovery_not_ready")
 
@@ -184,7 +194,7 @@ def plus_control_preflight(*, client: Any | None = None) -> dict[str, Any]:
         "required_labels": required_labels,
         "filters": filters_report,
         "discovery": {
-            "ready": discovery_ready and "daniel_readonly_unavailable" not in blockers and "live_profile_not_daniel" not in blockers and "control_label_missing" not in blockers,
+            "ready": discovery_ready and "daniel_readonly_unavailable" not in blockers and "live_profile_not_daniel" not in blockers and "control_label_missing" not in blockers and "results_label_missing" not in blockers and "plus_label_lookup_failed" not in blockers,
             "cursor_key": PLUS_DISCOVERY_CURSOR_KEY,
             "isolated_from_contactus": True,
             "contactus_mailbox": MAILBOX,

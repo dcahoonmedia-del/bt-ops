@@ -8,10 +8,10 @@ No live mail. No credential minting. No filter/label changes.
 
 | Ref | Value |
 | --- | --- |
-| Source commit | `3e67a45ecd9abccc4c8d6bf7865166c5089e1fa5` |
-| Artifact commit | `11a19a3` (TRANSFER RAW) |
-| Tarball SHA256 | `100823dcdcd8fe68f87e9f8eb40ac57ac78b50b466964a970943176fae252510` |
-| Tree SHA256 | `7fdab6783b4505e4b75a9901649f92dfef0634f6d83d7a520aa31885d246ddd0` |
+| Source commit | regenerated after the project-lead correction; see `RELEASE.json` |
+| Artifact commit | same as TRANSFER `SOURCE_COMMIT` after rebuild |
+| Tarball SHA256 | see `results/plus-control-release/MANIFEST.json` |
+| Tree SHA256 | see `results/plus-control-release/RELEASE.json` |
 
 ## Backup / migration / rollback (narrow)
 
@@ -40,11 +40,18 @@ See `results/plus-control-release/TRANSFER` for curl + sha256 + extract.
 ```bash
 sudo bash /tmp/bt-intake-plus-control-src/bt-intake-proof/scripts/guarded_desk_roundtrip_deploy.sh
 systemctl is-enabled bt-intake-receiver.service
-systemctl is-enabled bt-plus-control-poll.timer || true
-systemctl is-enabled bt-plus-control-poll.service || true
+systemctl is-enabled bt-plus-control-poll.timer
+systemctl is-enabled bt-plus-control-poll.service
 ```
 
-Plus units must remain disabled until preflight is READY.
+The guarded path copies plus units when they exist in the release and
+runs `systemctl disable` on both (never `enable`). Expect
+`disabled` / `static` here. Plus units must remain disabled until
+preflight is READY and the project lead activates them.
+
+Expect `READY` only when the live Daniel profile matches, Control and
+Results labels resolve by name, and the sender passes live tokeninfo.
+A missing Results label or a failed label list is BLOCKED.
 
 ## Preflight (read-only)
 

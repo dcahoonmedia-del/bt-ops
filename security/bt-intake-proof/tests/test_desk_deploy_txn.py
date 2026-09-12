@@ -45,6 +45,19 @@ if args[:1] == ["daemon-reload"]:
     data["calls"].append(args)
     path.write_text(json.dumps(data))
     sys.exit(0)
+if args[:1] == ["disable"]:
+    data["calls"] = data.get("calls") or []
+    data["calls"].append(args)
+    data["disabled"] = data.get("disabled") or []
+    if len(args) > 1:
+        data["disabled"].append(args[1])
+    path.write_text(json.dumps(data))
+    sys.exit(0)
+if args[:1] == ["enable"]:
+    data["calls"] = data.get("calls") or []
+    data["calls"].append(args)
+    path.write_text(json.dumps(data))
+    sys.exit(0)
 print("unexpected", args, file=sys.stderr)
 sys.exit(2)
 '''
@@ -257,6 +270,35 @@ class DeskDeployTxnTests(unittest.TestCase):
         self.assertNotIn("client_secret", printed)
         for line in printed.splitlines():
             json.loads(line)
+
+    def test_plus_units_installed_disabled_and_rolled_back(self) -> None:
+        (self.source / "systemd" / "bt-plus-control-poll.service").write_text(
+            "[Service]\nExecStart=/plus-new\n",
+            encoding="utf-8",
+        )
+        (self.source / "systemd" / "bt-plus-control-poll.timer").write_text(
+            "[Timer]\nOnUnitActiveSec=60s\n",
+            encoding="utf-8",
+        )
+        sqlite_before = self._sqlite_bytes()
+        tokens_before = self._token_bytes()
+        result = deploy(self._paths())
+        self.assertEqual(result["deployment"], "PASS")
+        self.assertTrue((self.systemd / "bt-plus-control-poll.timer").exists())
+        self.assertTrue((self.systemd / "bt-plus-control-poll.service").exists())
+        self.assertIn("ExecStart=/plus-new", (self.systemd / "bt-plus-control-poll.service").read_text(encoding="utf-8"))
+        calls = self._ctl().get("calls") or []
+        self.assertTrue(any(call[:1] == ["disable"] and "bt-plus-control-poll.timer" in call for call in calls), calls)
+        self.assertTrue(any(call[:1] == ["disable"] and "bt-plus-control-poll.service" in call for call in calls), calls)
+        self.assertFalse(any(call[:1] == ["enable"] for call in calls), calls)
+        self.assertEqual(self._sqlite_bytes(), sqlite_before)
+        self.assertEqual(self._token_bytes(), tokens_before)
+        rolled = rollback(self._paths())
+        self.assertEqual(rolled["rollback"], "PASS")
+        self.assertFalse((self.systemd / "bt-plus-control-poll.timer").exists())
+        self.assertFalse((self.systemd / "bt-plus-control-poll.service").exists())
+        self.assertEqual(self._sqlite_bytes(), sqlite_before)
+        self.assertEqual(self._token_bytes(), tokens_before)
 
 
 if __name__ == "__main__":

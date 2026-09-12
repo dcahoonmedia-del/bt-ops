@@ -431,14 +431,31 @@ def apply_release(paths: DeployPaths) -> None:
         paths.systemd_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(unit_src, paths.systemd_dir / paths.unit_name)
         os.chmod(paths.systemd_dir / paths.unit_name, 0o644)
+    _install_plus_units_disabled(paths)
+    if paths.after_unit_hook:
+        paths.after_unit_hook()
+
+
+def _install_plus_units_disabled(paths: DeployPaths) -> list[str]:
+    """Copy plus units when present and leave them disabled. Never enable."""
+    installed: list[str] = []
     for name in PLUS_UNITS:
         plus_src = paths.source / "systemd" / name
         if plus_src.is_file():
             paths.systemd_dir.mkdir(parents=True, exist_ok=True)
             shutil.copy2(plus_src, paths.systemd_dir / name)
             os.chmod(paths.systemd_dir / name, 0o644)
-    if paths.after_unit_hook:
-        paths.after_unit_hook()
+            installed.append(name)
+    if not installed:
+        return installed
+    reloaded = run_systemctl(paths, "daemon-reload")
+    if reloaded.returncode != 0:
+        raise DeployError("failed to daemon-reload after plus unit install", mutated=True)
+    for name in installed:
+        disabled = run_systemctl(paths, "disable", name)
+        if disabled.returncode != 0:
+            raise DeployError(f"failed to disable {name}", mutated=True)
+    return installed
 
 
 def verify_quiesced_evidence(manifest: dict[str, Any], paths: DeployPaths) -> None:
