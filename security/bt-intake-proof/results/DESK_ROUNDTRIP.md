@@ -1,7 +1,7 @@
 # Desk round-trip scorecard
 
 Reviewed baseline: `378ffcf` / PR #14
-This revision: see git HEAD on `cursor/bt-intake-roundtrip-e9a8` after this update
+This revision: `aa23690` on `cursor/bt-intake-roundtrip-e9a8` (do not treat as live).
 Deployed revision: **UNKNOWN** (not read). Host `35.243.167.73` answered SSH this session; both recorded usernames returned `Permission denied (publickey)`. No command was run on the host.
 
 Isolation: BT-INTAKE-PROOF on. Real-customer sends OFF. Broad/shadow capture OFF.
@@ -39,9 +39,9 @@ Evidence labels: **unit** / **fixture** / **runtime** / **real-phone**.
 Failed read-only access checks this session:
 
 - `security/bt-intake-proof/secrets/` absent (gitignored; no `bt-intake-cloud` key file)
-- `~/.ssh` absent
+- `~/.ssh` has `known_hosts` only (written by this session's SSH probe). No private keys.
 - `gcloud` not on PATH; `~/.config/gcloud` absent
-- GCE metadata not available
+- GCE metadata not available (`metadata.google.internal` did not resolve)
 - SSH to recorded host: `Permission denied (publickey)` as `btadmin` and as `bt-intake-cloud-e9a8`
 - Host TCP/SSH at `35.243.167.73` **did** answer (key rejected). That is not a revision read.
 
