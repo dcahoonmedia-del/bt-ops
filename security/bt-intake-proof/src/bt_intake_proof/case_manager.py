@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from .cases import CaseLayer
+from .cases import APPROVAL_CHANGES, STAGE_NEEDS_DRAFT, STAGE_REOPENED, CaseLayer
 from .constants import MAILBOX
 from .knowledge import trusted_rules_text
 from .review import format_review_email
@@ -123,6 +123,30 @@ def draft_pending_cases(store: ReceiptStore) -> list[dict[str, Any]]:
             out.append({"case_id": case["case_id"], "status": "BLOCKED", "reason": "missing_eligible_receipt"})
             continue
         nonce = f"bt-case-{case['case_id']}-r{receipt['gmail_message_id']}"
+        already = layer.conn.execute(
+            "SELECT version FROM case_drafts WHERE case_id = ? AND nonce = ? ORDER BY version DESC LIMIT 1",
+            (case["case_id"], nonce),
+        ).fetchone()
+        if already and case.get("approval_state") != APPROVAL_CHANGES:
+            if case.get("stage") in {STAGE_NEEDS_DRAFT, STAGE_REOPENED}:
+                layer.conn.execute(
+                    """
+                    UPDATE cases SET stage = 'awaiting_review', approval_state = 'pending_review',
+                        next_action = 'daniel_review', updated_at = ?
+                    WHERE case_id = ?
+                    """,
+                    (utc_now(), case["case_id"]),
+                )
+                layer.add_event(case["case_id"], "draft_reused", version=already["version"], nonce=nonce)
+            out.append(
+                {
+                    "case_id": case["case_id"],
+                    "status": "SKIPPED",
+                    "reason": "draft_exists_for_inbound",
+                    "version": already["version"],
+                }
+            )
+            continue
         payload_path = store.path.parent / f"case-draft-{case['case_id']}.json"
         payload_path.write_text(json.dumps(build_case_payload(case, receipt, nonce), indent=2) + "\n", encoding="utf-8")
         payload_path.chmod(0o644)
