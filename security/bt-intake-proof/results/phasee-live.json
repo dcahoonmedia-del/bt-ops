@@ -1,29 +1,39 @@
 {
   "phase": "E",
+  "overall": "PASS",
   "inbound": {
     "marker": "BT-INTAKE-PROOF-CASEMGR-PHASEE-E9A8",
     "gmail_message_id": "1a093f8e919b8787",
-    "thread_id": "1a093f8e919b8787",
-    "from": "daniel@btpestcontrol.com",
-    "to": "contactus@btpestcontrol.com",
-    "eligible": true,
-    "labels_unchanged": true
+    "thread_id": "1a093f8e919b8787"
   },
   "case_id": "BTC-contactus-1a093f8e919b8787",
   "draft_version": 1,
-  "draft_source": "host_written_exact_phasee_body",
-  "fieldwork": "FIELDWORK_NOT_ACCESSED",
-  "review": {
-    "subject": "BT-INTAKE-PROOF-CASE-REVIEW-E9A8 BTC-contactus-1a093f8e919b8787 v1",
+  "action_id": 1,
+  "send": {
+    "from": "contactus@btpestcontrol.com",
     "to": "daniel@btpestcontrol.com",
-    "cc": "contactus@btpestcontrol.com",
-    "gmail_message_id": "1a093fa3665da401",
-    "send_triggered_in_packet": false
+    "cc": [],
+    "bcc": [],
+    "subject": "BT-PHASE-E-SEND-E9A8-C4F1 internal send test",
+    "marker": "BT-PHASE-E-SEND-E9A8-C4F1",
+    "provider_message_id": "1a094071738bb70f",
+    "contactus_thread_id": "1a093f8e919b8787",
+    "status_after_attempt": "attempted_verification_pending",
+    "status_after_sent_verify": "sent_verified",
+    "status_after_receipt_verify": "recipient_receipt_verified",
+    "consumed": 1,
+    "second_execute": "already_consumed"
   },
-  "send_marker": "BT-PHASE-E-SEND-E9A8-C4F1",
-  "live_send": {
-    "status": "BLOCKED",
-    "reason": "contactus_send_token_not_configured",
-    "also_waiting": "exact_iphone_approval_of_draft_v1"
-  }
+  "daniel_receipt": {
+    "id": "1a094071c6be5dab",
+    "unread_preserved": true,
+    "labels_after_inspect": ["UNREAD", "IMPORTANT", "INBOX"]
+  },
+  "vm_restart": {
+    "consumed_still": 1,
+    "due_sends": [],
+    "sent_count_still": 1
+  },
+  "intake_readonly_untouched": true,
+  "send_token_scopes": ["https://www.googleapis.com/auth/gmail.send"]
 }

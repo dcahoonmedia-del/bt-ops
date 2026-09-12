@@ -100,7 +100,7 @@ def _norm_body(text: Any) -> str:
     return str(text or "").replace("\r\n", "\n").strip()
 
 
-def compare_outbound(binding: dict[str, Any], found: dict[str, Any]) -> list[str]:
+def compare_outbound(binding: dict[str, Any], found: dict[str, Any], *, require_thread: bool = True) -> list[str]:
     mismatches = []
     if normalize_email(found.get("from") or found.get("sender")) != PHASEE_FROM:
         mismatches.append("from")
@@ -118,7 +118,7 @@ def compare_outbound(binding: dict[str, Any], found: dict[str, Any]) -> list[str
         mismatches.append("marker")
     found_thread = str(found.get("thread_id") or found.get("threadId") or "")
     bound_thread = str(binding.get("thread_id") or "")
-    if bound_thread and found_thread and found_thread != bound_thread:
+    if require_thread and bound_thread and found_thread and found_thread != bound_thread:
         mismatches.append("thread")
     return mismatches
 
@@ -168,7 +168,8 @@ def verify_recipient(layer: CaseLayer, action_id: int, transport: VerifyTranspor
         record_verification(layer, action_id, "daniel_inbox", "missing" if not found else "duplicate", detail={"count": len(found)})
         return {"ok": False, "reason": "recipient_count", "count": len(found)}
     message = found[0]
-    mismatches = compare_outbound(binding, message)
+    # Gmail thread IDs are per-mailbox; do not require the contactus thread id on daniel@.
+    mismatches = compare_outbound(binding, message, require_thread=False)
     if mismatches:
         record_verification(layer, action_id, "daniel_inbox", "mismatch", detail={"mismatches": mismatches})
         return {"ok": False, "reason": "content_mismatch", "mismatches": mismatches}

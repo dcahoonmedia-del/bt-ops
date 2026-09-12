@@ -1,55 +1,39 @@
 # Phase E — exact approval → bounded Gmail send → independent verification
 
-**Logic/negative-test overall: PASS.**  
-**Live inbound → durable case → exact draft → iPhone review packet: PASS.**  
-**Live contactus send / Sent verification / recipient receipt / VM restart of a live send: BLOCKED** until a dedicated `contactus@` `gmail.send` token exists and Daniel approves this exact packet. Intake readonly credentials were not used to send.
+**Overall: PASS.** Live Fieldwork remains unused and BLOCKED.
 
-Live case: `BTC-contactus-1a093f8e919b8787` draft v1. Review mail id `1a093fa3665da401`. Internal B&T only.
-
-No real-customer mail. No Fieldwork access or write. No LSA/CTM native send. No Independent Auditor.
+One internal send only: `contactus@btpestcontrol.com` → `daniel@btpestcontrol.com`. Marker `BT-PHASE-E-SEND-E9A8-C4F1`. No CC/BCC, attachments, links, or customer promises.
 
 ## Scorecard
 
 | Gate | Result |
 | --- | --- |
-| Exact approval binding (case, draft version, mailbox, recipient, thread, subject, body, no attachments/links, timing, latest inbound) | PASS |
+| Exact approval binding | PASS |
 | Stale / superseded approval rejection | PASS |
 | Changed payload / recipient rejection | PASS |
 | Single-use approval | PASS |
-| Direct bounded Gmail send (separate sender; Codex has no send) | PASS (unit / memory transport). Live contactus send **BLOCKED** (`contactus_send_token_not_configured`) |
+| Direct bounded Gmail send | PASS |
 | No agent-to-agent send delegation | PASS |
 | Sender cannot silently modify approved content | PASS |
-| Independent Sent verification (not the sender API claim) | PASS (unit / memory). Live contactus Sent **BLOCKED** until a real send exists |
-| Recipient receipt verification, unread preserved | PASS (unit / memory). Live daniel@ inspect **BLOCKED** until a real send exists |
+| Independent Sent verification | PASS |
+| Recipient receipt verification, unread preserved | PASS |
 | Duplicate prevention | PASS |
 | Ambiguous-send / timeout does not auto-retry | PASS |
-| Persistence across process restart (sqlite reopen) | PASS |
-| Persistence across live VM restart after a real send | BLOCKED (no live send yet) |
+| Persistence across VM restart | PASS (checked after reboot) |
 | Zero real-customer communication | PASS |
 | Zero Fieldwork activity | PASS |
 
-## What this slice does
+## Live chain
 
-- Phase E inbound marker `BT-INTAKE-PROOF-CASEMGR-PHASEE-E9A8` installs a host-written exact draft. Codex does not invent the send body.
-- The iPhone review packet shows the complete From/To/CC/BCC/subject/body/timing packet.
-- Phase C approve still records `send_triggered=0` and does not queue a send.
-- Phase E approve may queue one stored action. The host loop never executes it.
-- `python3 -m bt_intake_proof phasee-execute <action_id>` is the only sender entry. It locks, re-reads, revalidates, submits the stored payload, and consumes the approval.
-- Status after a provider accept is `attempted_verification_pending`, not `sent`.
-- Timeout / ambiguous provider response is `unknown`, consumed, no automatic resend.
-- `phasee-verify` searches contactus Sent with the existing **read-only** token and compares the actual message.
+- Inbound `BT-INTAKE-PROOF-CASEMGR-PHASEE-E9A8` → case `BTC-contactus-1a093f8e919b8787` draft v1 (host-written exact body).
+- iPhone approve reply recorded. Host queued action `1`. Host loop never executed a send.
+- Separate send-only token: `gmail.send` only at `secrets/contactus_gmail_send_token.json`. Intake `gmail.readonly` token unchanged.
+- `phasee-execute 1` submitted the stored payload once. Status `attempted_verification_pending`, then independently `sent_verified`, then `recipient_receipt_verified`. Consumed `1`.
+- Provider / Sent id: `1a094071738bb70f` on contactus thread `1a093f8e919b8787`.
+- Independent Sent: From/To/CC/BCC/subject/body/thread match. Exactly one outbound.
+- daniel@ copy `1a094071c6be5dab` still `UNREAD` after read-only inspect.
+- Second execute: `already_consumed`.
 
-## Negative tests (no extra real mail)
+## Not done
 
-1. Superseded draft cannot send
-2. Altered body after approval cannot send
-3. Changed recipient cannot send
-4. New inbound invalidates the old approval
-5. Consumed approval cannot send twice
-6. Simulated timeout / `unknown` does not cause `execute_due_sends` to resend
-
-## Live remaining
-
-Live send from `contactus@` requires a dedicated send token at `secrets/contactus_gmail_send_token.json` (`gmail.send`, contactus@ only). The intake `gmail.readonly` token must stay read-only.
-
-Do not send as daniel@ and claim it was contactus@.
+No live Fieldwork. No LSA/CTM native send. No Independent Auditor. No customer mail.

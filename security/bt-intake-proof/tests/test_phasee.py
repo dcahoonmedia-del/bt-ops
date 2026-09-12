@@ -224,6 +224,40 @@ class PhaseETests(unittest.TestCase):
         self.assertTrue(receipt["ok"])
         self.assertTrue(receipt["unread_preserved"])
 
+    def test_recipient_verify_skips_cross_mailbox_thread_id(self) -> None:
+        action = self._open_approved()
+        transport = MemorySendTransport()
+        sent = execute_action(self.layer, action["id"], transport)
+        outbound = {
+            "id": sent["provider_message_id"],
+            "from": MAILBOX,
+            "to": [PHASEE_TO],
+            "cc": [],
+            "bcc": [],
+            "subject": PHASEE_SUBJECT,
+            "body": PHASEE_BODY,
+            "thread_id": action["thread_id"],
+            "label_ids": ["SENT"],
+        }
+        verified = verify_sent(self.layer, action["id"], MemoryVerifyTransport(sent=[outbound]))
+        self.assertTrue(verified["ok"])
+        receipt = verify_recipient(
+            self.layer,
+            action["id"],
+            MemoryVerifyTransport(
+                inbox=[
+                    {
+                        **outbound,
+                        "id": "daniel-copy",
+                        "thread_id": "daniel-mailbox-thread",
+                        "label_ids": ["INBOX", "UNREAD"],
+                    }
+                ]
+            ),
+        )
+        self.assertTrue(receipt["ok"])
+        self.assertTrue(receipt["unread_preserved"])
+
     def test_phase_c_approve_does_not_queue_send(self) -> None:
         self.store.commit_notification(
             mailbox=MAILBOX,
