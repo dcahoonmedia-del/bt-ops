@@ -3,13 +3,14 @@
 FILE=bt-intake-desk-roundtrip.tar.gz
 SHA256=d7edc5243810ac323736c61855f2d11a92b138bf98710a04d826555844eeaf5e
 SOURCE_COMMIT=f4a1dba728ce28fb7a7271339f344739ef90df73
-RAW=https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/f4a1dba728ce28fb7a7271339f344739ef90df73/security/bt-intake-proof/results/desk-roundtrip-release/bt-intake-desk-roundtrip.tar.gz
+ARTIFACT_COMMIT=38197e5afe8c58e4a67514e196bf70b94389c665
+RAW=https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/38197e5afe8c58e4a67514e196bf70b94389c665/security/bt-intake-proof/results/desk-roundtrip-release/bt-intake-desk-roundtrip.tar.gz
 DEST=/tmp/bt-intake-desk-roundtrip.tar.gz
 
 # On the VM (Google Cloud SSH-in-browser). Keep secrets on the host.
 # Do not send BT-DESK-ROUNDTRIP-SEND-E9A8. Do not reset SQLite.
 
-curl -fsSLo /tmp/bt-intake-desk-roundtrip.tar.gz https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/f4a1dba728ce28fb7a7271339f344739ef90df73/security/bt-intake-proof/results/desk-roundtrip-release/bt-intake-desk-roundtrip.tar.gz
+curl -fsSLo /tmp/bt-intake-desk-roundtrip.tar.gz https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/38197e5afe8c58e4a67514e196bf70b94389c665/security/bt-intake-proof/results/desk-roundtrip-release/bt-intake-desk-roundtrip.tar.gz
 echo "d7edc5243810ac323736c61855f2d11a92b138bf98710a04d826555844eeaf5e  /tmp/bt-intake-desk-roundtrip.tar.gz" | sha256sum -c
 rm -rf /tmp/bt-intake-desk-roundtrip-src
 mkdir -p /tmp/bt-intake-desk-roundtrip-src
