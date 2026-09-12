@@ -1,0 +1,2 @@
+# Live Google libraries are not installed until Daniel names a Cloud project.
+# Local contract tests use the standard library only.

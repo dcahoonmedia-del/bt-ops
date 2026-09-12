@@ -1,0 +1,11 @@
+{
+  "status": "READY_FOR_PROJECT_OWNER_CLOUD_CONSENT",
+  "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth?client_id=1028131400538-5r57fq95el2uhmmtp2m38m3lgab7loa8.apps.googleusercontent.com&redirect_uri=http%3A%2F%2Flocalhost&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform&access_type=offline&prompt=consent&include_granted_scopes=false&login_hint=daniel%40btpestcontrol.com",
+  "sign_in_as": "daniel@btpestcontrol.com",
+  "do_not_sign_in_as": "contactus@btpestcontrol.com",
+  "scope": "https://www.googleapis.com/auth/cloud-platform",
+  "gmail_scopes_requested": false,
+  "service_account_key_will_be_created": false,
+  "project_id": "bt-intake-proof",
+  "purpose": "Create service account bt-intake-proof-receiver, grant roles/pubsub.subscriber on bt-intake-proof-contactus-sub only, impersonate that account, and pull."
+}

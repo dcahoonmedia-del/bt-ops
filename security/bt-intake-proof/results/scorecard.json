@@ -1,0 +1,69 @@
+{
+  "overall": "PASS",
+  "stopped_at": null,
+  "reason": "All intake-proof gates passed. Receiver remains stopped. No further marked mail is needed.",
+  "gates": {
+    "gmail_watch_registration": {
+      "result": "PASS",
+      "detail": "users.watch on contactus@ to bt-intake-proof-contactus. Final cursor 6008029."
+    },
+    "pubsub_delivery": {
+      "result": "PASS",
+      "detail": "Impersonated bt-intake-proof-receiver. Live watch envelopes pulled. No JSON key."
+    },
+    "new_message_automatic_capture": {
+      "result": "PASS",
+      "detail": "Event-driven capture of BT-INTAKE-PROOF-NEW-E9A8-7F3C in 18.47s. Gmail message 1a09369252aa667b."
+    },
+    "old_thread_reply_capture": {
+      "result": "PASS",
+      "detail": "Event-driven reply 1a0936fd1117e77d on Re: BT-PILOT-0911-TEST02 in 14.69s. Marker BT-INTAKE-PROOF-REPLY-E9A8-7F3C."
+    },
+    "state_preservation": {
+      "result": "PASS",
+      "detail": "UNREAD, CATEGORY_PERSONAL, and INBOX unchanged on new, reply, and recovery receipts."
+    },
+    "durable_storage": {
+      "result": "PASS",
+      "detail": "Eligible receipts committed to SQLite before Pub/Sub ack.",
+      "local_contract": "PASS"
+    },
+    "deduplication": {
+      "result": "PASS",
+      "detail": "Recovery message 1a0937172a374a92 stored once. Later Pub/Sub notice and second recover inserted 0.",
+      "local_contract": "PASS"
+    },
+    "recovery_after_receiver_downtime": {
+      "result": "PASS",
+      "detail": "Receiver stopped. History recover from 6007981 inserted BT-INTAKE-PROOF-RECOVERY-E9A8-7F3C. Path=recovery."
+    },
+    "codex_external_message_delivery": {
+      "result": "PASS",
+      "detail": "Isolated ExternalMessage lead_email_ingest/external_untrusted. Model treated_as=external_untrusted, grants_authorization=false."
+    }
+  },
+  "google": {
+    "status": "READY",
+    "mailbox_required": "contactus@btpestcontrol.com",
+    "readonly_scope": "https://www.googleapis.com/auth/gmail.readonly",
+    "project_id": "bt-intake-proof",
+    "rejected_project_id": null,
+    "allow_resource_create": true,
+    "oauth_client_present": true,
+    "contactus_token_present": true,
+    "token_email": "contactus@btpestcontrol.com",
+    "token_scopes": [
+      "https://www.googleapis.com/auth/gmail.readonly"
+    ],
+    "scope_violations": [],
+    "gmail_mcp_note": "Cursor Gmail MCP is authenticated as daniel@btpestcontrol.com and can send/modify. It is not used for this proof and is not a users.watch + Pub/Sub substitute.",
+    "gcloud_present": false,
+    "decisions_required": [],
+    "failures": [],
+    "next_action": "Intake proof complete. Do not send more BT-INTAKE-PROOF-* mail."
+  },
+  "local_contract_tests": {
+    "passed": true,
+    "output": "31 tests OK"
+  }
+}

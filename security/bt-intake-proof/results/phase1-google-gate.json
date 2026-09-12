@@ -1,0 +1,29 @@
+{
+  "status": "BLOCKED",
+  "mailbox_required": "contactus@btpestcontrol.com",
+  "readonly_scope": "https://www.googleapis.com/auth/gmail.readonly",
+  "project_id": "bt-intake-proof",
+  "rejected_project_id": null,
+  "allow_resource_create": true,
+  "oauth_client_present": false,
+  "contactus_token_present": false,
+  "token_email": null,
+  "token_scopes": [],
+  "scope_violations": [],
+  "gmail_mcp_note": "Cursor Gmail MCP is authenticated as daniel@btpestcontrol.com and can send/modify. It is not used for this proof and is not a users.watch + Pub/Sub substitute.",
+  "gcloud_present": false,
+  "decisions_required": [
+    {
+      "id": "oauth_desktop_client",
+      "status": "required",
+      "ask": "Create (or export) a Desktop OAuth client in that same project with scope https://www.googleapis.com/auth/gmail.readonly only, then place the client JSON at /workspace/security/bt-intake-proof/secrets/gmail_oauth_client.json or tell me to create the client after you name the project."
+    },
+    {
+      "id": "contactus_readonly_consent",
+      "status": "required",
+      "ask": "Sign in as contactus@btpestcontrol.com \u2014 not daniel@ \u2014 and consent to Gmail read-only. I will print an authorization URL and stop. Do not approve send/modify scopes."
+    }
+  ],
+  "failures": [],
+  "next_action": "Stop for Daniel. Do not choose a Cloud project, enable billing, or complete consent."
+}

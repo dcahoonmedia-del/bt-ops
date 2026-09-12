@@ -1,0 +1,20 @@
+{
+  "status": "PASS",
+  "detection_path": "event_driven",
+  "gmail_message_id": "1a0936fd1117e77d",
+  "thread_id": "1a09243262a6a145",
+  "configured_thread_id": "1a09242c087af92c",
+  "subject": "Re: BT-PILOT-0911-TEST02",
+  "test_marker": "BT-INTAKE-PROOF-REPLY-E9A8-7F3C",
+  "classification": "reply",
+  "gmail_received_at": "2026-09-11T22:26:02-04:00",
+  "detected_at": "2026-09-12T02:26:16.688017+00:00",
+  "latency_seconds": 14.69,
+  "under_60s": true,
+  "labels_before": ["UNREAD", "CATEGORY_PERSONAL", "INBOX"],
+  "labels_after": ["UNREAD", "CATEGORY_PERSONAL", "INBOX"],
+  "labels_unchanged": true,
+  "unread_preserved": true,
+  "polled_gmail": false,
+  "note": "Gmail thread id for BT-PILOT-0911-TEST02 is 1a09243262a6a145; configured id 1a09242c087af92c looks like a message id from that conversation."
+}

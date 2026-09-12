@@ -1,0 +1,38 @@
+{
+  "status": "PASS",
+  "receiver_was_stopped": true,
+  "cursor_before": "6007981",
+  "cursor_after": "6008029",
+  "gmail_message_id": "1a0937172a374a92",
+  "thread_id": "1a0937172a374a92",
+  "test_marker": "BT-INTAKE-PROOF-RECOVERY-E9A8-7F3C",
+  "classification": "new_message",
+  "detection_path": "recovery",
+  "gmail_received_at": "2026-09-11T22:27:48-04:00",
+  "detected_at": "2026-09-12T02:28:25.685192+00:00",
+  "first_recover": {
+    "inserted": 1,
+    "duplicates": 0,
+    "start_history_id": "6007981",
+    "end_history_id": "6008029"
+  },
+  "pubsub_after_recover": {
+    "pulled": 1,
+    "acked": true,
+    "receipt_count": 0,
+    "start_history_id": "6008029",
+    "end_history_id": "6008029"
+  },
+  "second_recover": {
+    "inserted": 0,
+    "duplicates": 0
+  },
+  "recovery_receipt_rows": 1,
+  "total_receipts": 4,
+  "labels_before": ["UNREAD", "CATEGORY_PERSONAL", "INBOX"],
+  "labels_after": ["UNREAD", "CATEGORY_PERSONAL", "INBOX"],
+  "labels_unchanged": true,
+  "unread_preserved": true,
+  "duplicate": false,
+  "polled_gmail_inbox": false
+}

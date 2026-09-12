@@ -1,0 +1,18 @@
+{
+  "project_id": "bt-intake-proof",
+  "mailbox": "contactus@btpestcontrol.com",
+  "gmail_consent": {
+    "email": "contactus@btpestcontrol.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/gmail.readonly"
+    ],
+    "readonly_only": true,
+    "profile_history_id": "6007776"
+  },
+  "pubsub": null,
+  "watch": null,
+  "status": "BLOCKED",
+  "blocked_on": "gcp_admin_credentials",
+  "message": "contactus@ Gmail read-only cannot create Pub/Sub resources. I need a Cloud login that can create only the authorized topic, subscription, and IAM grant in bt-intake-proof, or you can create those three in Cloud Console and I will register users.watch.",
+  "error": "Pub/Sub HTTP 403: {\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Request had insufficient authentication scopes.\",\n    \"status\": \"PERMISSION_DENIED\",\n    \"details\": [\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.ErrorInfo\",\n        \"reason\": \"ACCESS_TOKEN_SCOPE_INSUFFICIENT\",\n        \"metadata\": {\n          \"method\": \"google.pubsub.v1.Publisher.CreateTopic\",\n          \"service\": \"pubsub.googleapis.com\"\n        }\n      }\n    ]\n  }\n}\n"
+}

@@ -1,0 +1,18 @@
+{
+  "status": "READY_FOR_CONTACTUS_CONSENT",
+  "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth?client_id=1028131400538-5r57fq95el2uhmmtp2m38m3lgab7loa8.apps.googleusercontent.com&redirect_uri=http%3A%2F%2Flocalhost&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fgmail.readonly&access_type=offline&prompt=consent&include_granted_scopes=false&login_hint=contactus%40btpestcontrol.com",
+  "mailbox_required": "contactus@btpestcontrol.com",
+  "scope": "https://www.googleapis.com/auth/gmail.readonly",
+  "redirect_uri": "http://localhost",
+  "project_id": "bt-intake-proof",
+  "forbidden_scopes_requested": false,
+  "instructions": [
+    "Open the authorization URL while signed out of daniel@ if needed.",
+    "Sign in as contactus@btpestcontrol.com only.",
+    "Approve Gmail read-only only. Decline if Google shows send, modify, or draft.",
+    "After approve, the browser will try to open localhost and fail. Copy the full address-bar URL and send it back."
+  ],
+  "client_id_suffix": "1028131400538-\u2026",
+  "client_type": "installed",
+  "client_secret_present": true
+}

@@ -1,0 +1,34 @@
+{
+  "sa": "bt-intake-proof-receiver@bt-intake-proof.iam.gserviceaccount.com",
+  "json_key_created": false,
+  "token_creator": "PASS",
+  "impersonation": "PASS",
+  "pull_before_rewatch": {
+    "subscription": "projects/bt-intake-proof/subscriptions/bt-intake-proof-contactus-sub",
+    "received_count": 1,
+    "message_ids": [
+      "21177054176054382"
+    ],
+    "ack_ids_present": true,
+    "return_immediately": true,
+    "acked": false,
+    "envelopes": [
+      {
+        "message_id": "21177054176054382",
+        "publish_time": "2026-09-12T01:52:34.355Z",
+        "ack_id_present": true,
+        "email_address": "contactus@btpestcontrol.com",
+        "history_id": "6007776",
+        "mailbox_match": true
+      }
+    ]
+  },
+  "watch_refresh": null,
+  "pull_after_rewatch": null,
+  "impersonation_attempt": 1,
+  "status": "PASS",
+  "acked": false,
+  "gmail_history_fetched": false,
+  "customer_mail_processed": false,
+  "proof_email_sent": false
+}

@@ -1,0 +1,7 @@
+{
+  "sa": "bt-intake-proof-receiver@bt-intake-proof.iam.gserviceaccount.com",
+  "json_key_created": false,
+  "token_creator": "PASS",
+  "impersonation": "PASS",
+  "impersonated_token_present": true
+}
