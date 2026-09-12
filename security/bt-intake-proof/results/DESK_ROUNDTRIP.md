@@ -1,7 +1,7 @@
 # Desk round-trip scorecard
 
 Reviewed baseline: `378ffcf` / PR #14
-This revision: see git HEAD on `cursor/bt-intake-roundtrip-e9a8` (do not treat as live).
+This revision: `b8b31b3` on `cursor/bt-intake-roundtrip-e9a8` (do not treat as live).
 Deployed revision: **UNKNOWN** (not read). Existing-path SSH/gcloud blocker accepted; no further SSH retries this revision.
 
 Isolation: BT-INTAKE-PROOF on. Real-customer sends OFF. Broad/shadow capture OFF.
