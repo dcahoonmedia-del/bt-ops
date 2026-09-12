@@ -1,36 +1,20 @@
 {
   "overall": "IN_PROGRESS",
-  "stopped_at": "cloud_new_send",
-  "reason": "On-spec VM receiver is healthy with docker group fixed. Persistent btadmin SSH key is still in the wrong Edit-page columns. Mac-off CLOUD-NEW test is starting.",
+  "stopped_at": "cloud_reply",
+  "reason": "CLOUD-NEW PASS on the GCE host (event-driven capture + isolated ExternalMessage). CLOUD-REPLY is next. VM reboot test still needs the btadmin SSH key in the correct Edit-page columns.",
   "json_key_created": false,
   "mac_off_tests_started": true,
   "mac_required_for_send": false,
-  "vm": {
-    "name": "bt-intake-cloud",
-    "external_ip": "35.243.167.73",
-    "zone": "us-east1-c",
-    "machine": "e2-small",
-    "service_account": "bt-intake-proof-receiver@bt-intake-proof.iam.gserviceaccount.com",
-    "disk_gb": 20,
-    "os_login": false
+  "gates": {
+    "mac_independent_operation": "IN_PROGRESS",
+    "automatic_service_startup": "PASS",
+    "pubsub_delivery": "PASS",
+    "gmail_history_recovery": "NOT_YET",
+    "watch_renewal": "NOT_YET",
+    "durable_persistence_across_vm_restart": "BLOCKED_SSH_KEY_COLUMNS",
+    "deduplication": "NOT_YET",
+    "codex_authentication_persistence": "PASS",
+    "external_message_authority_boundary": "PASS"
   },
-  "receiver": {
-    "unit": "bt-intake-receiver",
-    "active": true,
-    "enabled": true,
-    "started_at": "2026-09-12T03:26:58Z",
-    "identity_source": "gce_metadata",
-    "history_id": "6008066",
-    "receipts": 0,
-    "btintake_in_docker_group": true
-  },
-  "ssh": {
-    "contactus": true,
-    "btadmin": false,
-    "metadata_key_format": "wrong_columns"
-  },
-  "docker": {
-    "image": "bt-ops-codex-isolation:0.154.0",
-    "volume": "codex-iso-chatgpt-home"
-  }
+  "cloud_new": "PASS"
 }
