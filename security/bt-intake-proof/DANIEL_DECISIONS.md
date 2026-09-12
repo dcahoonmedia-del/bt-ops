@@ -1,5 +1,5 @@
-# Stopped for Daniel — create the receiver service account in Console
+# Stopped for Daniel — grant Service Account Token Creator
 
-IAM API is enabled. Cloud login is stored. `iam.serviceAccounts.create` was denied, so I did not create `bt-intake-proof-receiver` and did not create a JSON key.
+Steps 1 and 2 are done. Impersonation still needs `roles/iam.serviceAccountTokenCreator` for `daniel@btpestcontrol.com` on `bt-intake-proof-receiver` only. No JSON key was created.
 
-Follow `SA_CONSOLE_GUIDE.md`, then reply **done**.
+Follow `SA_CONSOLE_GUIDE.md`.

@@ -1,43 +1,24 @@
-# Create the receiver service account in the console
+# Grant Service Account Token Creator
 
-The Cloud login cannot call `iam.serviceAccounts.create`. Create **only** this account and two grants. Do not download a key. If Google asks for billing, stop and tell me.
+Steps 1 and 2 are done. Do **not** download a key.
 
-## 1. Create the service account
+Open this Permissions page (not the Keys page):
 
-https://console.cloud.google.com/iam-admin/serviceaccounts/create?project=bt-intake-proof
+https://console.cloud.google.com/iam-admin/serviceaccounts/details/bt-intake-proof-receiver@bt-intake-proof.iam.gserviceaccount.com/permissions?project=bt-intake-proof
 
-- Service account ID: `bt-intake-proof-receiver`
-- Name: `B&T intake proof receiver`
-- Skip any optional role on the **project**
-- **Done / Create**
-- If Google offers **Create key** / **Add key**, click **Done** or **Skip**. Do not download JSON.
+1. Confirm the top says service account `bt-intake-proof-receiver`.
+2. Click **Grant Access** or **Add Principal**.
+3. In **New principals**, type: `daniel@btpestcontrol.com`
+4. Click the **Select a role** box.
+5. Type `Token Creator` in the filter. Do not pick Owner, Editor, or Viewer.
+6. Choose **Service Account Token Creator**.
+   The full name is `roles/iam.serviceAccountTokenCreator`.
+7. **Save**.
 
-Confirm it appears:
+After Save, the Permissions list should show `daniel@btpestcontrol.com` with **Service Account Token Creator**. That is not the same as **Service Account User**.
+
+If you do not see a Permissions tab, start here and click the receiver email, then **Permissions**:
+
 https://console.cloud.google.com/iam-admin/serviceaccounts?project=bt-intake-proof
 
-The email should be:
-`bt-intake-proof-receiver@bt-intake-proof.iam.gserviceaccount.com`
-
-## 2. Subscriber on the one subscription only
-
-https://console.cloud.google.com/cloudpubsub/subscription/detail/bt-intake-proof-contactus-sub?project=bt-intake-proof
-
-1. **Permissions**
-2. **Add principal**
-3. Principal: `bt-intake-proof-receiver@bt-intake-proof.iam.gserviceaccount.com`
-4. Role: **Pub/Sub Subscriber**
-5. Save
-
-Do not grant Editor, Owner, Pub/Sub Admin, or Publisher.
-
-## 3. Allow impersonation (no key)
-
-https://console.cloud.google.com/iam-admin/serviceaccounts/details/bt-intake-proof-receiver@bt-intake-proof.iam.gserviceaccount.com?project=bt-intake-proof
-
-1. **Permissions**
-2. **Grant access**
-3. Principal: `daniel@btpestcontrol.com`
-4. Role: **Service Account Token Creator**
-5. Save
-
-Then reply **done**. I will impersonate that account and pull. Do not send `BT-INTAKE-PROOF-*` emails yet.
+Then reply **done**. I will impersonate and pull. Do not send `BT-INTAKE-PROOF-*` emails yet.

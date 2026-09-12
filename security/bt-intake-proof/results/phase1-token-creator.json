@@ -1,0 +1,17 @@
+{
+  "sa": "bt-intake-proof-receiver@bt-intake-proof.iam.gserviceaccount.com",
+  "json_key_created": false,
+  "cloud_token_refreshed": true,
+  "impersonation_probe": {
+    "gce_metadata": false,
+    "adc_present": false,
+    "cloud_user_token_present": true,
+    "json_key_required": false,
+    "reason": "This VM has no GCP metadata identity. Impersonation can work after a short-lived project-owner Cloud login. A downloaded service-account JSON key is not required and will not be created."
+  },
+  "token_creator": "DENIED",
+  "impersonation": "FAIL",
+  "pull": null,
+  "error": "iam.serviceAccounts.getAccessToken denied (Token Creator not yet effective)",
+  "http_hint": "403"
+}

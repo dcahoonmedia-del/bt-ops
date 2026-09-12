@@ -1,8 +1,8 @@
 # B&T contactus intake proof
 
-**Gmail `users.watch`: PASS.** Receiver pull: **BLOCKED** — cannot create the service account via API.
+**Gmail `users.watch`: PASS.** Receiver pull: **BLOCKED** — Token Creator for `daniel@` on `bt-intake-proof-receiver` is not effective yet.
 
-No JSON key was created. `iam.serviceAccounts.create` returned permission denied. Daniel can create the SA and two grants in Cloud Console.
+No JSON key was created. Steps 1 and 2 (SA + subscription Subscriber) are done. Impersonation still returns `iam.serviceAccounts.getAccessToken` denied.
 
 ## Scorecard
 
