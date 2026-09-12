@@ -17,6 +17,11 @@ A newer inbound on the same thread supersedes any prior approval.
 ## Phase E limits (2026-09-12 assignment)
 
 Phase E proves one version-bound internal send: contactus@ → daniel@ only, after Daniel approves the exact packet on iPhone.
+
+## Phase F1 limits (2026-09-12 assignment)
+
+Read-only Lead Desk. ChatGPT on iPhone reads backend-generated `BT-INTAKE-PROOF-DESK-*` packets in daniel@ Gmail. Custom MCP is not the iPhone path and must not be exposed publicly.
+Desk packets do not approve, revise drafts, change ownership, send customer mail, or write Fieldwork.
 Bind approval to case ID, draft version, source mailbox, exact recipient, Gmail thread, subject, full body/signature, no attachments/links, immediate supervised timing, and latest inbound message ID.
 A generic or stale approval must not send. Newer inbound, recipient change, body change, or case/draft version change invalidates the old approval.
 Codex/drafting has no Gmail send authority. A separate sender may execute only one stored, valid, unconsumed approval and must not modify the payload.

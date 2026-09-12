@@ -1,0 +1,27 @@
+{
+  "phase": "F1",
+  "scope": "readonly_lead_desk_gmail_packets",
+  "overall": "PASS",
+  "iphone_path": "gmail_packets",
+  "chatgpt_custom_mcp_mobile": "BLOCKED",
+  "public_ingress": false,
+  "live_fieldwork": "BLOCKED",
+  "approvals_added": false,
+  "customer_sends_added": false,
+  "store_fingerprint": "f5652512b07ef4f0911017982bfa055f51425a4aa8174901e9168b9b07607cd9",
+  "store_unchanged": true,
+  "unit_tests": "77 passed",
+  "gates": {
+    "secure_public_mcp_connection": "not_used",
+    "chatgpt_mcp_iphone": "BLOCKED",
+    "iphone_gmail_availability": "PASS",
+    "chatgpt_gmail_retrieval_path": "PASS",
+    "list_cases_packet": "PASS",
+    "read_case_packet": "PASS",
+    "health_packet": "PASS",
+    "evidence_accuracy": "PASS",
+    "zero_case_mutations": "PASS",
+    "zero_gmail_label_mutations_on_inspect": "PASS",
+    "unauthorized_public_access": "PASS"
+  }
+}

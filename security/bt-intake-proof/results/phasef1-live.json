@@ -1,0 +1,35 @@
+{
+  "phase": "F1",
+  "overall": "PASS",
+  "generated_at": "2026-09-12T05:29:15.593497+00:00",
+  "store_fingerprint": "f5652512b07ef4f0911017982bfa055f51425a4aa8174901e9168b9b07607cd9",
+  "store_unchanged": true,
+  "case_id": "BTC-contactus-1a093f8e919b8787",
+  "health_overall": "ok",
+  "queue_count": 6,
+  "waiting_on_daniel": 4,
+  "from": "daniel@btpestcontrol.com",
+  "to": "daniel@btpestcontrol.com",
+  "cc": [],
+  "packets": {
+    "queue": {
+      "subject": "BT-INTAKE-PROOF-DESK-QUEUE-E9A8 attention queue 2026-09-12T05:29",
+      "gmail_message_id": "1a09417e8285548a",
+      "unread_after_inspect": true
+    },
+    "case": {
+      "subject": "BT-INTAKE-PROOF-DESK-CASE-E9A8 BTC-contactus-1a093f8e919b8787",
+      "gmail_message_id": "1a09417ea542cb8a",
+      "provider_message_id": "1a094071738bb70f",
+      "send_status": "recipient_receipt_verified",
+      "unread_after_inspect": true
+    },
+    "health": {
+      "subject": "BT-INTAKE-PROOF-DESK-HEALTH-E9A8 intake ok 2026-09-12T05:29",
+      "gmail_message_id": "1a09417eaf52504c",
+      "unread_after_inspect": true
+    }
+  },
+  "incomplete_queue_ignore": "1a094178a69302ae",
+  "public_ingress": false
+}
