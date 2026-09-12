@@ -48,11 +48,12 @@ Click **Security** on the left.
    https://console.cloud.google.com/iam-admin/serviceaccounts/details/bt-intake-proof-receiver@bt-intake-proof.iam.gserviceaccount.com/permissions?project=bt-intake-proof
 2. **Access scopes:** if you see **Set access for each API**, turn on **Cloud Pub/Sub** only.  
    If you only see Default / Full access, choose **Allow full access to all Cloud APIs**. That is OK **only** with the receiver SA (it can still only subscribe to our one topic).
-3. **SSH keys** / **Manage access:** add this exact line:
+3. **SSH keys** / **Manage access:** the Edit page has two columns. Do **not** paste `btadmin:` into the Key box.
 
-```
-btadmin:ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIC/DKOmrbwVG08WuDE4IREYQoVVmgXy5coIYC3pxPbzu bt-intake-cloud-e9a8
-```
+- **Username:** `btadmin`
+- **Key:** `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIC/DKOmrbwVG08WuDE4IREYQoVVmgXy5coIYC3pxPbzu bt-intake-cloud-e9a8`
+
+If you already added a row whose Username is `bt-intake-cloud-e9a8` and whose Key starts with `btadmin:`, delete that row and add the two fields above, then Save.
 
 ## E. Create
 

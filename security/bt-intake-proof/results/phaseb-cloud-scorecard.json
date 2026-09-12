@@ -1,14 +1,36 @@
 {
-  "overall": "BLOCKED",
-  "stopped_at": "vm_off_spec",
-  "reason": "SSH works to 35.243.167.73. VM is e2-medium with default compute SA and 10GB disk. Not installing until e2-small + receiver SA + 20GB + Pub/Sub-only scopes.",
+  "overall": "IN_PROGRESS",
+  "stopped_at": "cloud_new_send",
+  "reason": "On-spec VM receiver is healthy with docker group fixed. Persistent btadmin SSH key is still in the wrong Edit-page columns. Mac-off CLOUD-NEW test is starting.",
+  "json_key_created": false,
+  "mac_off_tests_started": true,
+  "mac_required_for_send": false,
   "vm": {
-    "name": "instance-20260912-024540",
+    "name": "bt-intake-cloud",
     "external_ip": "35.243.167.73",
     "zone": "us-east1-c",
-    "machine": "e2-medium",
-    "service_account": "1028131400538-compute@developer.gserviceaccount.com",
-    "disk_gb": 10,
-    "json_key_created": false
+    "machine": "e2-small",
+    "service_account": "bt-intake-proof-receiver@bt-intake-proof.iam.gserviceaccount.com",
+    "disk_gb": 20,
+    "os_login": false
+  },
+  "receiver": {
+    "unit": "bt-intake-receiver",
+    "active": true,
+    "enabled": true,
+    "started_at": "2026-09-12T03:26:58Z",
+    "identity_source": "gce_metadata",
+    "history_id": "6008066",
+    "receipts": 0,
+    "btintake_in_docker_group": true
+  },
+  "ssh": {
+    "contactus": true,
+    "btadmin": false,
+    "metadata_key_format": "wrong_columns"
+  },
+  "docker": {
+    "image": "bt-ops-codex-isolation:0.154.0",
+    "volume": "codex-iso-chatgpt-home"
   }
 }

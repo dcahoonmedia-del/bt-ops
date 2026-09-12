@@ -37,7 +37,7 @@ OPENAI_API_KEY=
 CODEX_API_KEY=
 EOF
 chmod 640 "$ETC/env"
-id docker >/dev/null 2>&1 && usermod -aG docker btintake || true
+getent group docker >/dev/null 2>&1 && usermod -aG docker btintake || true
 chown -R btintake:btintake "$PREFIX" "$ISO_PREFIX" "$STATE" "$ETC"
 install -m 644 "$ROOT/systemd/bt-intake-receiver.service" /etc/systemd/system/bt-intake-receiver.service
 systemctl daemon-reload
