@@ -19,6 +19,16 @@ from .oauth_consent import OAuthClientError, authorization_url, blocked_oauth_ur
 from .scorecard import apply_local_contract_results, empty_scorecard, markdown_table, write_scorecard
 from .setup_google import blocked_setup
 from .store import ReceiptStore
+from .fieldwork_live_read import (
+    EXAMPLE_MANIFEST,
+    HOST_EVIDENCE,
+    HOST_MANIFEST,
+    client_for_mode,
+    load_manifest,
+    preflight,
+    resolve_authorized,
+    run_bounded_read,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 RESULTS = ROOT / "results"
@@ -441,6 +451,71 @@ def cmd_recover_initial_case_review(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_live_fw_preflight(args: argparse.Namespace) -> int:
+    payload = preflight(args.mode)
+    _print(payload)
+    return 0 if payload.get("ok") else 2
+
+
+def cmd_live_fw_resolve(args: argparse.Namespace) -> int:
+    try:
+        client = client_for_mode(args.mode)
+    except Exception as exc:  # noqa: BLE001
+        _print({"ok": False, "status": "BLOCKED", "reason": str(exc)[:80]})
+        return 2
+    dest = Path(args.out) if args.out else HOST_MANIFEST
+    payload = resolve_authorized(client, out_path=dest)
+    _print(payload)
+    return 0 if payload.get("ok") else 2
+
+
+def cmd_live_fw_read(args: argparse.Namespace) -> int:
+    try:
+        client = client_for_mode(args.mode)
+        manifest = load_manifest(Path(args.manifest) if args.manifest else EXAMPLE_MANIFEST)
+    except Exception as exc:  # noqa: BLE001
+        _print({"ok": False, "status": "BLOCKED", "reason": str(exc)[:80], "drafted": False, "sent": False})
+        return 2
+    dest = Path(args.out) if args.out else HOST_EVIDENCE
+    scorecard = run_bounded_read(client, manifest, evidence_dir=dest)
+    public = {
+        "overall": scorecard.get("overall"),
+        "live": scorecard.get("live"),
+        "source_label": scorecard.get("source_label"),
+        "date_window_days": scorecard.get("date_window_days"),
+        "write_attempts": scorecard.get("write_attempts"),
+        "request_count": scorecard.get("request_count"),
+        "drafted": False,
+        "enqueued": False,
+        "sent": False,
+        "receiver_unchanged": True,
+        "coverage": scorecard.get("coverage"),
+        "scenarios": [
+            {
+                "key": row.get("key"),
+                "kind": row.get("kind"),
+                "proof_class": row.get("proof_class"),
+                "result": row.get("result"),
+                "matcher_status": row.get("matcher_status"),
+                "reason": row.get("reason"),
+                "comparison_ok": row.get("comparison_ok"),
+                "identity_ok": row.get("identity_ok"),
+                "context_ok": row.get("context_ok"),
+                "inbound_matching_proof": row.get("inbound_matching_proof"),
+                "live": row.get("live"),
+                "source_label": row.get("source_label"),
+            }
+            for row in scorecard.get("scenarios") or []
+        ],
+    }
+    _print(public)
+    if scorecard.get("overall") == "PASS":
+        return 0
+    if scorecard.get("overall") == "FAIL":
+        return 1
+    return 2
+
+
 def cmd_record_local_tests(args: argparse.Namespace) -> int:
     scorecard = empty_scorecard(
         "contactus@ Gmail read-only consent passed. Pub/Sub create is blocked on Cloud admin credentials or console-created topic."
@@ -526,6 +601,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Write one current CASE packet to the durable outbox. Still does not send.",
     )
     rec_init.set_defaults(func=cmd_recover_initial_case_review)
+    lfp = sub.add_parser("live-fw-preflight", help="Bounded Fieldwork live-read preflight. Does not search customers or send mail.")
+    lfp.add_argument("--mode", choices=("live", "fixture"), default="live")
+    lfp.set_defaults(func=cmd_live_fw_preflight)
+    lfr = sub.add_parser("live-fw-resolve", help="Resolve authorized labels after corroboration. Writes a private manifest. Does not send or mint credentials.")
+    lfr.add_argument("--mode", choices=("live", "fixture"), default="live")
+    lfr.add_argument("--out", default="", help="Private manifest path; default /var/lib/bt-intake-proof/live-fw-read/manifest.json")
+    lfr.set_defaults(func=cmd_live_fw_resolve)
+    lfrd = sub.add_parser("live-fw-read", help="Bounded Fieldwork identity/context read. Does not draft, enqueue, or send.")
+    lfrd.add_argument("--mode", choices=("live", "fixture"), default="live")
+    lfrd.add_argument("--manifest", default="", help="Private or example manifest path")
+    lfrd.add_argument("--out", default="", help="Private evidence directory")
+    lfrd.set_defaults(func=cmd_live_fw_read)
     args = parser.parse_args(argv)
     return args.func(args)
 
