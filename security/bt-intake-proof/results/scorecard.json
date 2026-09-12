@@ -60,7 +60,7 @@
     "gcloud_present": false,
     "decisions_required": [],
     "failures": [],
-    "next_action": "Dispatch the durable eligible receipt into isolated Codex ExternalMessage."
+    "next_action": "Capture the designated old-thread reply BT-INTAKE-PROOF-REPLY-E9A8-7F3C."
   },
   "local_contract_tests": {
     "passed": true,
