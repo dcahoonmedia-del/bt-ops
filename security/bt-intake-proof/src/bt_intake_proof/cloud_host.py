@@ -18,6 +18,7 @@ from .constants import (
     MAILBOX,
     MARKER_PREFIX,
 )
+from .case_manager import process_cases
 from .dispatch import build_constructor
 from .gce_identity import receiver_identity
 from .gates import store_path
@@ -103,6 +104,7 @@ def run_once(store: ReceiptStore) -> dict[str, Any]:
     watch = renew_watch_preserving_cursor(store)
     received = receive_once(store, gmail, token)
     dispatched = dispatch_pending(store)
+    cases = process_cases(store)
     return {
         "identity": identity,
         "recover": {
@@ -119,6 +121,16 @@ def run_once(store: ReceiptStore) -> dict[str, Any]:
         },
         "receive": received,
         "dispatch": dispatched,
+        "cases": {
+            "synced": [
+                {k: item.get(k) for k in ("case_id", "created", "reopened", "approval_superseded", "ok", "decision", "reason", "skipped")}
+                for item in cases.get("synced") or []
+            ],
+            "drafted": [
+                {k: item.get(k) for k in ("case_id", "status", "version", "reason")}
+                for item in cases.get("drafted") or []
+            ],
+        },
     }
 
 
@@ -162,6 +174,19 @@ def serve(interval: float = 2.0) -> int:
                     processed=received.get("processed"),
                 )
             dispatch_pending(store)
+            cases = process_cases(store)
+            if cases.get("synced") or cases.get("drafted"):
+                safe_log(
+                    "case_manager",
+                    synced=[
+                        {k: item.get(k) for k in ("case_id", "created", "reopened", "approval_superseded", "ok", "decision", "reason", "skipped")}
+                        for item in cases.get("synced") or []
+                    ],
+                    drafted=[
+                        {k: item.get(k) for k in ("case_id", "status", "version", "reason")}
+                        for item in cases.get("drafted") or []
+                    ],
+                )
             time.sleep(interval)
     except KeyboardInterrupt:
         safe_log("cloud_host_stop")
