@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from .constants import (
     ALLOWED_SENDER,
@@ -95,17 +95,6 @@ def exchange_cloud_code(redirect_or_code: str) -> dict[str, Any]:
     access = str(token.get("access_token") or "")
     if not access:
         raise OAuthClientError("Cloud token response missing access_token")
-    email = ""
-    try:
-        info = _post_form(
-            "https://oauth2.googleapis.com/tokeninfo",
-            {"access_token": access},
-        )
-        email = normalize_email(str(info.get("email") or info.get("sub") or ""))
-    except OAuthClientError:
-        email = ""
-    if email == "contactus@btpestcontrol.com":
-        raise OAuthClientError("Cloud login must be the project owner, not contactus@")
     record = {
         "token_uri": client.get("token_uri") or "https://oauth2.googleapis.com/token",
         "client_id": client["client_id"],
@@ -113,13 +102,26 @@ def exchange_cloud_code(redirect_or_code: str) -> dict[str, Any]:
         "refresh_token": token.get("refresh_token"),
         "access_token": access,
         "scopes": scopes,
-        "email": email,
-        "account": email,
+        "email": "",
+        "account": "",
     }
     dest = cloud_token_path()
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     dest.chmod(0o600)
+    email = ""
+    try:
+        info = _get_json(f"https://oauth2.googleapis.com/tokeninfo?access_token={quote(access)}")
+        email = normalize_email(str(info.get("email") or ""))
+    except OAuthClientError:
+        email = ""
+    if email == "contactus@btpestcontrol.com":
+        raise OAuthClientError("Cloud login must be the project owner, not contactus@")
+    if email:
+        record["email"] = email
+        record["account"] = email
+        dest.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+        dest.chmod(0o600)
     return {
         "status": "PASS",
         "email": email or None,

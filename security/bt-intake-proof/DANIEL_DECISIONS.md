@@ -1,9 +1,14 @@
-# Stopped for Daniel — one more Cloud localhost URL
+# Stopped for Daniel — enable IAM API
 
-The Cloud authorization code was exchanged, then Google userinfo rejected the Cloud-only token and I did not persist it. That code cannot be reused. No service account, JSON key, or Pub/Sub pull was performed.
+Cloud login is stored. No JSON key was created. Service account `bt-intake-proof-receiver` was not created because the IAM API is disabled on `bt-intake-proof`.
 
-Open the same Cloud URL again as **daniel@btpestcontrol.com** (not contactus@) and send the new localhost address-bar URL.
+Enable only these two APIs, then reply **done**:
 
-https://accounts.google.com/o/oauth2/v2/auth?client_id=1028131400538-5r57fq95el2uhmmtp2m38m3lgab7loa8.apps.googleusercontent.com&redirect_uri=http%3A%2F%2Flocalhost&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform&access_type=offline&prompt=consent&include_granted_scopes=false&login_hint=daniel%40btpestcontrol.com
+1. IAM API  
+   https://console.cloud.google.com/apis/library/iam.googleapis.com?project=bt-intake-proof
+2. IAM Credentials API (needed to impersonate, not to download a key)  
+   https://console.cloud.google.com/apis/library/iamcredentials.googleapis.com?project=bt-intake-proof
+
+If Google asks to link billing, stop and tell me.
 
 Do not send `BT-INTAKE-PROOF-*` emails yet.
