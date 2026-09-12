@@ -1,9 +1,5 @@
-# Stopped for Daniel — Phase B billing
+# Stopped for Daniel — enable Compute Engine API
 
-The proven intake implementation is unchanged and still PASS.
+You authorized the e2-small VM and enabling Compute Engine / Cloud Billing APIs. This Cloud login cannot enable them (permission denied).
 
-I did not create a VM. Compute Engine API is disabled. Creating the host VM is a billing decision.
-
-Reply **billing ok** to proceed with one e2-small VM in `bt-intake-proof`, or tell me to stop.
-
-See `CLOUD_HOST_GUIDE.md`.
+Follow `CLOUD_HOST_GUIDE.md` steps 1–3, then reply **apis on**.

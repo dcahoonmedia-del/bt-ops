@@ -1,31 +1,36 @@
-# Phase B — cloud host (stopped for billing)
+# Phase B — enable Compute Engine, then I will create the VM
 
-The Mac/agent intake path is **PASS**. I did **not** create a VM.
+Billing is authorized for one e2-small in `us-east1`. I did **not** create a VM or a JSON key.
 
-Compute Engine API is **disabled** on `bt-intake-proof`. Cloud Billing API is also disabled, so I cannot see whether billing is already linked. A GCE VM always requires billing. That is a material billing choice.
+This Cloud login cannot enable APIs (`serviceusage` permission denied). Enable these two APIs in project **bt-intake-proof**, signed in as the project owner if `daniel@` is denied.
 
-## What I need from you
+## 1. Compute Engine API
 
-Reply **billing ok** only if you want me to use a small always-on VM in `bt-intake-proof` for this proof.
+https://console.developers.google.com/apis/api/compute.googleapis.com/overview?project=bt-intake-proof
 
-Recommended VM (smallest that can run Docker + isolated Codex):
+Click **Enable**. Do not enable other APIs.
 
-- Machine: **e2-small** (2 GB). e2-micro is too small for the proven 2 GB Codex container.
-- Disk: 20 GB persistent boot disk
-- Zone: `us-central1-a` unless you prefer another
-- Service account: existing `bt-intake-proof-receiver` (Pub/Sub Subscriber already granted)
-- No public application port
-- No JSON key
+## 2. Cloud Billing API
 
-Approximate cost is a small always-on e2-small plus disk. I will not pick a billing account or enable Compute Engine until you say **billing ok**.
+Needed only so I can confirm the project is linked to the billing account you just created.
 
-If Google asks you to link a billing account, do that yourself and tell me. I will not link one.
+https://console.developers.google.com/apis/api/cloudbilling.googleapis.com/overview?project=bt-intake-proof
 
-## After billing ok, I will ask you to click only
+Click **Enable**.
 
-1. Enable **Compute Engine API** in project `bt-intake-proof`  
-   https://console.developers.google.com/apis/api/compute.googleapis.com/overview?project=bt-intake-proof
-2. On the receiver SA Permissions page, grant `daniel@btpestcontrol.com` **Service Account User** (so the VM can attach that SA). Do not grant Owner/Editor.  
-   https://console.cloud.google.com/iam-admin/serviceaccounts/details/bt-intake-proof-receiver@bt-intake-proof.iam.gserviceaccount.com/permissions?project=bt-intake-proof
+## 3. Confirm billing is linked (do not pick a different account)
 
-Do not download a key. Do not send cloud test emails yet.
+https://console.cloud.google.com/billing/linkedaccount?project=bt-intake-proof
+
+- If it already shows the billing account you just created, leave it.
+- If it says the project is not linked, click **Link a billing account** and choose **that same account**. Do not create another billing account.
+
+## 4. Reply **apis on**
+
+I will then create only:
+
+- one `e2-small` VM in `us-east1`
+- persistent boot disk
+- attached service account `bt-intake-proof-receiver`
+- no public application ports
+- no JSON key

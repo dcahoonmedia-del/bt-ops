@@ -1,5 +1,5 @@
 # Phase B — cloud-hosted intake proof
 
-**BLOCKED** on Daniel: Compute Engine billing / API enablement.
+**BLOCKED** on enabling Compute Engine API and Cloud Billing API in the console.
 
-The proven Phase A path is unchanged. Host packaging (attached SA identity, systemd, watch renew, safe logs) is ready. No VM was created. No JSON key was created.
+Daniel authorized one e2-small in `us-east1` and API enablement. This Cloud login received `AUTH_PERMISSION_DENIED` on `serviceusage`. No VM and no JSON key were created.
