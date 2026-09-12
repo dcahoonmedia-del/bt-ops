@@ -6,7 +6,8 @@ body. Do not invent a workaround. Do not send customer mail. Sending
 the control is not proof of a save.
 
 This file is **preparation**. Live host activation is a later
-project-lead step. Do not process or replay Gmail id `1a0979e37a0b0a94`.
+project-lead step. Deployment stays held after the project-lead
+correction. Do not process or replay Gmail id `1a0979e37a0b0a94`.
 
 ---
 
