@@ -25,6 +25,40 @@ from .oauth_consent import (
 )
 
 
+def refresh_cloud_token() -> dict[str, Any]:
+    """Refresh the project-owner Cloud token. Never requests Gmail scopes."""
+    dest = cloud_token_path()
+    if not dest.exists():
+        raise OAuthClientError("project-owner Cloud token is not present")
+    record = json.loads(dest.read_text(encoding="utf-8"))
+    refresh = str(record.get("refresh_token") or "")
+    if not refresh:
+        raise OAuthClientError("stored Cloud token has no refresh_token")
+    client = load_desktop_client()
+    token = _post_form(
+        str(record.get("token_uri") or client.get("token_uri") or "https://oauth2.googleapis.com/token"),
+        {
+            "client_id": str(record.get("client_id") or client["client_id"]),
+            "client_secret": str(record.get("client_secret") or client.get("client_secret") or ""),
+            "refresh_token": refresh,
+            "grant_type": "refresh_token",
+        },
+    )
+    access = str(token.get("access_token") or "")
+    if not access:
+        raise OAuthClientError("Cloud refresh response missing access_token")
+    scopes = str(token.get("scope") or " ".join(record.get("scopes") or [])).split()
+    gmail = [scope for scope in scopes if scope in FORBIDDEN_GMAIL_SCOPES or scope == GMAIL_READONLY_SCOPE]
+    if gmail:
+        raise OAuthClientError(f"Cloud refresh unexpectedly includes Gmail scopes: {gmail}")
+    record["access_token"] = access
+    if scopes:
+        record["scopes"] = scopes
+    dest.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    dest.chmod(0o600)
+    return record
+
+
 def impersonation_possible_without_key() -> dict[str, Any]:
     import os
     from pathlib import Path

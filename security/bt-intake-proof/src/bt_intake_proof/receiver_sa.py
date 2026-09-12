@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import urllib.error
 import urllib.request
@@ -11,10 +12,13 @@ from .cloud_auth import impersonation_possible_without_key
 from .constants import (
     ALLOWED_SENDER,
     DEFAULT_SUBSCRIPTION_ID,
+    MAILBOX,
     RECEIVER_SA_ID,
 )
+from .eligibility import normalize_email
 from .gates import cloud_token_path, project_id
 from .oauth_consent import OAuthClientError
+from .receiver import parse_gmail_notification
 from .setup_google import subscription_path
 
 
@@ -150,6 +154,37 @@ def pull_subscription(access_token: str, max_messages: int = 10) -> dict[str, An
         "ack_ids_present": all(item.get("ackId") for item in received) if received else False,
         "raw_count": len(received),
         "received_messages": received,
+    }
+
+
+def summarize_pull(pull: dict[str, Any]) -> dict[str, Any]:
+    """Keep delivery evidence only. Do not persist raw Pub/Sub payloads."""
+    envelopes = []
+    for item in pull.get("received_messages") or []:
+        message = item.get("message") or {}
+        data = message.get("data") or ""
+        envelope: dict[str, Any] = {
+            "message_id": message.get("messageId"),
+            "publish_time": message.get("publishTime"),
+            "ack_id_present": bool(item.get("ackId")),
+        }
+        if data:
+            try:
+                parsed = parse_gmail_notification(base64.urlsafe_b64decode(data + "==="))
+                envelope["email_address"] = normalize_email(parsed.get("emailAddress") or "")
+                envelope["history_id"] = parsed.get("historyId")
+                envelope["mailbox_match"] = envelope["email_address"] == MAILBOX
+            except (ValueError, json.JSONDecodeError, UnicodeDecodeError):
+                envelope["decode"] = "unrecognized_payload"
+        envelopes.append(envelope)
+    return {
+        "subscription": pull.get("subscription"),
+        "received_count": pull.get("received_count"),
+        "message_ids": pull.get("message_ids"),
+        "ack_ids_present": pull.get("ack_ids_present"),
+        "return_immediately": True,
+        "acked": False,
+        "envelopes": envelopes,
     }
 
 
