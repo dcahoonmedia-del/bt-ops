@@ -1,0 +1,22 @@
+{
+  "phase": "D",
+  "scope": "matching_and_context_logic_only",
+  "overall_matching": "PASS",
+  "live_fieldwork_connectivity": "BLOCKED",
+  "fixture_id": "PHASE-D-MATT-001",
+  "source_label": "FIELDWORK_FIXTURE_VERIFIED",
+  "live_label_forbidden": "LIVE_FIELDWORK_VERIFIED",
+  "gates": {
+    "multi_identifier_match": "PASS",
+    "identity_vs_booking_state": "PASS",
+    "no_wo_vs_verified_wo": "PASS",
+    "fixture_evidence_labels": "PASS",
+    "draft_before_booking_verification": "PASS",
+    "draft_after_booking_verification": "PASS",
+    "sold_scheduled_completed_separate": "PASS",
+    "no_infer_confirmation_from_pending_write": "PASS",
+    "one_identifier_ambiguous": "PASS",
+    "zero_fieldwork_writes": "PASS",
+    "live_fieldwork_mcp_oauth": "BLOCKED"
+  }
+}

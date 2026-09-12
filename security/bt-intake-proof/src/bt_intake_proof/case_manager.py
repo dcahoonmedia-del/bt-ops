@@ -1,4 +1,4 @@
-"""Case Manager orchestration on top of proven intake. No customer send. No Fieldwork."""
+"""Case Manager orchestration on top of proven intake. No customer send. Read-only Fieldwork only."""
 
 from __future__ import annotations
 
@@ -10,6 +10,8 @@ from typing import Any
 
 from .cases import APPROVAL_CHANGES, STAGE_NEEDS_DRAFT, STAGE_REOPENED, CaseLayer
 from .constants import MAILBOX
+from .fieldwork_match import match_and_context
+from .fieldwork_readonly import grok_bot_client
 from .knowledge import trusted_rules_text
 from .review import format_review_email
 from .store import ReceiptStore, utc_now
@@ -40,9 +42,36 @@ def receipt_for_case(store: ReceiptStore, case: dict[str, Any]) -> dict[str, Any
     return store.get_receipt(case.get("mailbox") or MAILBOX, mid)
 
 
-def build_case_payload(case: dict[str, Any], receipt: dict[str, Any], nonce: str) -> dict[str, Any]:
+def build_case_payload(case: dict[str, Any], receipt: dict[str, Any], nonce: str, fieldwork: dict[str, Any] | None = None) -> dict[str, Any]:
     return {
         "trusted_rules": trusted_rules_text(),
+        "trusted_fieldwork": {
+            "label": (fieldwork or {}).get("source_label") or "FIELDWORK_FIXTURE_VERIFIED",
+            "live": False,
+            "read_only": True,
+            "writes_allowed": False,
+            "capabilities": [
+                "search_customers",
+                "search_customers_by_phone",
+                "get_customer",
+                "list_locations",
+                "list_contacts",
+                "list_notes",
+                "search_work_orders",
+                "list_agreements",
+            ],
+            "forbidden": [
+                "create",
+                "update",
+                "cancel",
+                "schedule",
+                "reschedule",
+                "charge",
+                "refund",
+                "pipeline_write",
+            ],
+            "snapshot": fieldwork or {"status": "not_run"},
+        },
         "constructor": {
             "tool_name": "lead_email_ingest",
             "namespace": "external_untrusted",
@@ -147,8 +176,10 @@ def draft_pending_cases(store: ReceiptStore) -> list[dict[str, Any]]:
                 }
             )
             continue
+        fieldwork = match_and_context(grok_bot_client(), receipt)
+        layer.save_fieldwork(case["case_id"], fieldwork, receipt.get("gmail_message_id"))
         payload_path = store.path.parent / f"case-draft-{case['case_id']}.json"
-        payload_path.write_text(json.dumps(build_case_payload(case, receipt, nonce), indent=2) + "\n", encoding="utf-8")
+        payload_path.write_text(json.dumps(build_case_payload(case, receipt, nonce, fieldwork), indent=2) + "\n", encoding="utf-8")
         payload_path.chmod(0o644)
         ran = run_codex_draft(payload_path)
         if not ran.get("ok"):

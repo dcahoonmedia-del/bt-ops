@@ -22,6 +22,30 @@ def format_review_email(packet: dict[str, Any]) -> dict[str, str]:
     fact_lines = "\n".join(f"- {item}" for item in facts) or "- (none listed)"
     missing_lines = "\n".join(f"- {item}" for item in missing) or "- (none listed)"
     proposed = draft.get("proposed_response") or "(no draft yet)"
+    fw = packet.get("fieldwork") or {}
+    fw_evidence = _loads(fw.get("evidence_json") or {})
+    if not isinstance(fw_evidence, dict):
+        fw_evidence = {}
+    fw_status = fw.get("match_status") or fw_evidence.get("status") or "not_run"
+    fw_label = fw_evidence.get("source_label") or "FIELDWORK_FIXTURE_VERIFIED"
+    fw_block = f"""--- Fieldwork (read-only fixture) ---
+Label: {fw_label}
+Not live Fieldwork. Fixture label only.
+Match: {fw_status}
+Confidence: {fw.get("confidence") or fw_evidence.get("confidence")}
+{fw_label} customer ID: {fw.get("customer_id") or "(none)"}
+{fw_label} location ID: {fw.get("location_id") or "(none)"}
+Identity: {fw_evidence.get("identity_kind") or "(none)"}
+Pipeline lead: {(fw_evidence.get("pipeline") or {}).get("lead_id") if isinstance(fw_evidence.get("pipeline"), dict) else "(none)"}
+Booking state: {fw_evidence.get("booking_state") or "(none)"}
+Active agreement: {fw.get("active_agreement_json") or fw_evidence.get("active_agreement") or "(none)"}
+Upcoming work orders: {fw.get("upcoming_work_orders_json") or fw_evidence.get("upcoming_work_orders") or "[]"}
+Last service: {fw.get("last_service_json") or fw_evidence.get("last_service") or "(none)"}
+Office/hold: {fw_evidence.get("office_context") or "(none)"}
+Retrieved: {fw.get("retrieved_at") or fw_evidence.get("retrieved_at") or "(none)"}
+Write attempted: {fw.get("write_attempted", 0)}
+A proposed Fieldwork write is not a verified booking. Distinguish {fw_label} from CUSTOMER REPORTED from AI INFERENCE.
+"""
     body = f"""B&T Case Manager review (internal). {MARKER_REVIEW}
 
 CASE={case_id} DRAFT={version}
@@ -46,6 +70,7 @@ Classification: {inbound.get("classification")}
 
 {inbound.get("body_text") or "(body not stored)"}
 
+{fw_block}
 --- Codex summary ---
 Classification: {draft.get("classification")}
 Channel: {draft.get("channel")}
