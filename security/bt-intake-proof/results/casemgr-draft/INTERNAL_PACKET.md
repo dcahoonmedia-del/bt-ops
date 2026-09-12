@@ -90,9 +90,9 @@ sudo -u btintake python3 -m bt_intake_proof.cli lead-desk-packets \
 ```
 
 2. Spoken: "Make that draft shorter."
-   **[SIMULATED until the live walkthrough]** → `INTENT=revise_draft` with the
-   shorter `DRAFT - NOT SENT` body in `NOTE`, plus the machine binding from
-   `desk-case.txt` (do not read nonce/hash to Daniel).
+   Generate-only: `lead-desk-packets --control-intent revise_draft --control-note-file …`
+   Copy `desk-control.json` `packet_hash` (64 characters). Do not transcribe from
+   a screenshot. Long/multiline NOTE uses `CTRL-ENC=v1`, not a raw wrapped `NOTE=`.
 
 3. Spoken: "Hold this for Brenda."
    → `INTENT=office_owned` `OWNER=brenda` with the **new** binding after revise.

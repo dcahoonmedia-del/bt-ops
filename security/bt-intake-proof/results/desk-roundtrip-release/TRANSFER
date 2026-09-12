@@ -1,18 +1,18 @@
 # Non-secret browser-SSH transfer card. No tokens or client JSON.
 
 FILE=bt-intake-desk-roundtrip.tar.gz
-SHA256=3eb86d3e961c6a3cd8d8c5ac700e2ba727a1f12bf96e35e75d9adbca26458e6e
-SOURCE_COMMIT=c3c762929e597b6f5c58b5cc40d6b078bdb18ce7
-ARTIFACT_COMMIT=1cd083a176e2a10fa47f63460643df90fcdeec51
-RAW=https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/1cd083a176e2a10fa47f63460643df90fcdeec51/security/bt-intake-proof/results/desk-roundtrip-release/bt-intake-desk-roundtrip.tar.gz
+SHA256=2ec5186023ca9a7dacc9dfc51b67e2aaae4de563630b33ae39b223514c2e38e2
+SOURCE_COMMIT=c41404e75bbc768d034814a5ec3bca90ad927b6e
+ARTIFACT_COMMIT=1d32efee25c5cf0c79a953135421ee3899bd9a1e
+RAW=https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/1d32efee25c5cf0c79a953135421ee3899bd9a1e/security/bt-intake-proof/results/desk-roundtrip-release/bt-intake-desk-roundtrip.tar.gz
 DEST=/tmp/bt-intake-desk-roundtrip.tar.gz
 
 # On the VM (Google Cloud SSH-in-browser). Keep secrets on the host.
 # Deploy transaction only. Do not send BT-DESK-ROUNDTRIP-SEND-E9A8.
 # Do not reset SQLite. Do not prepare/deliver mail in this command.
 
-curl -fsSLo /tmp/bt-intake-desk-roundtrip.tar.gz https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/1cd083a176e2a10fa47f63460643df90fcdeec51/security/bt-intake-proof/results/desk-roundtrip-release/bt-intake-desk-roundtrip.tar.gz
-echo "3eb86d3e961c6a3cd8d8c5ac700e2ba727a1f12bf96e35e75d9adbca26458e6e  /tmp/bt-intake-desk-roundtrip.tar.gz" | sha256sum -c
+curl -fsSLo /tmp/bt-intake-desk-roundtrip.tar.gz https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/1d32efee25c5cf0c79a953135421ee3899bd9a1e/security/bt-intake-proof/results/desk-roundtrip-release/bt-intake-desk-roundtrip.tar.gz
+echo "2ec5186023ca9a7dacc9dfc51b67e2aaae4de563630b33ae39b223514c2e38e2  /tmp/bt-intake-desk-roundtrip.tar.gz" | sha256sum -c
 rm -rf /tmp/bt-intake-desk-roundtrip-src
 mkdir -p /tmp/bt-intake-desk-roundtrip-src
 tar -xzf /tmp/bt-intake-desk-roundtrip.tar.gz -C /tmp/bt-intake-desk-roundtrip-src
@@ -24,6 +24,7 @@ sudo bash /tmp/bt-intake-desk-roundtrip-src/bt-intake-proof/scripts/guarded_desk
 # sudo bash /opt/bt-intake-proof/scripts/rollback_to_predeploy.sh
 
 # Do not recover --execute. Do not resend BT-DESK-ROUNDTRIP-SEND-E9A8.
-# Do not repeat action 2 --verify-recipient. Do not send the CASEMGR draft inquiry
-# from this deploy. Do not reset SQLite or reissue approval.
+# Do not repeat action 2 --verify-recipient. Do not send mail from this deploy.
+# Do not touch or replay BTC-contactus-1a096d60643b3b1a.
+# Do not reset SQLite or reissue approval.
 # Keep customer sends and broad capture OFF.

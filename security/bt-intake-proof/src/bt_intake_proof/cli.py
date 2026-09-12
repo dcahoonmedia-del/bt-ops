@@ -301,8 +301,19 @@ def cmd_lead_desk_packets(args: argparse.Namespace) -> int:
 
     store = Path(args.store) if args.store else store_path()
     dest = Path(args.out) if args.out else RESULTS / "live" / "desk-packets"
-    payload = build_desk_packets(store, case_id=args.case_id or None)
+    note = args.control_note or None
+    if args.control_note_file:
+        note = Path(args.control_note_file).read_text(encoding="utf-8")
+    payload = build_desk_packets(
+        store,
+        case_id=args.case_id or None,
+        control_intent=args.control_intent or None,
+        control_owner=args.control_owner or None,
+        control_note=note,
+    )
     write_desk_packets(payload, dest)
+    control = payload.get("control") or {}
+    binding = control.get("binding") or {}
     safe = {
         "status": "PASS",
         "generated_at": payload.get("generated_at"),
@@ -313,6 +324,12 @@ def cmd_lead_desk_packets(args: argparse.Namespace) -> int:
         "queue_count": payload.get("queue_count"),
         "subjects": [item.get("subject") for item in payload.get("emails") or []],
         "out": str(dest),
+        "control_json": str(dest / "desk-control.json") if control else None,
+        "packet_hash": binding.get("packet_hash"),
+        "packet_hash_len": len(str(binding.get("packet_hash") or "")),
+        "nonce": binding.get("nonce"),
+        "control_selected": bool(control.get("selected")),
+        "generate_only": True,
         "public_ingress": False,
         "chatgpt_mcp_mobile": "not_used",
     }
@@ -454,6 +471,10 @@ def main(argv: list[str] | None = None) -> int:
     desk.add_argument("--store", default="", help="readonly SQLite path; defaults to BT_INTAKE_STORE")
     desk.add_argument("--out", default="", help="directory for desk-queue/case/health files")
     desk.add_argument("--case-id", default="", help="optional case to detail; default is newest inbound")
+    desk.add_argument("--control-intent", default="", help="generate-only control body; does not send")
+    desk.add_argument("--control-owner", default="", help="owner for office_owned generate-only control")
+    desk.add_argument("--control-note", default="", help="exact NOTE text for generate-only revise_draft")
+    desk.add_argument("--control-note-file", default="", help="read exact NOTE from a UTF-8 file")
     desk.set_defaults(func=cmd_lead_desk_packets)
     sub.add_parser("intake-mode").set_defaults(func=cmd_intake_mode)
     dc = sub.add_parser("desk-control", help="Process one ChatGPT Gmail control message. Origin is fail-closed without Gmail-fetched evidence. Does not execute a send.")

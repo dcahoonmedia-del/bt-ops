@@ -10,8 +10,16 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .constants import ALLOWED_SENDER
-from .desk_bridge import compute_packet_binding, format_binding_block
+from .constants import ALLOWED_SENDER, MAILBOX, MARKER_DESK_CTRL
+from .desk_bridge import compute_packet_binding, format_binding_block, format_control_mail
+from .desk_control import (
+    INTENT_HOLD,
+    INTENT_NO_RESPONSE,
+    INTENT_OFFICE,
+    INTENT_REVISE,
+    INTENT_APPROVE_SEND,
+)
+from .desk_control_codec import CTRL_ENC_VERSION
 from .lead_desk import LeadDesk, db_fingerprint
 from .store import utc_now
 
@@ -340,7 +348,67 @@ def format_health_email(health: dict[str, Any], *, generated_at: str, fingerprin
     }
 
 
-def build_desk_packets(store_path: str | Path, *, case_id: str | None = None) -> dict[str, Any]:
+def build_control_packet(
+    binding: dict[str, Any] | None,
+    *,
+    intent: str | None = None,
+    owner: str | None = None,
+    note: str | None = None,
+) -> dict[str, Any] | None:
+    """Generate-only machine-readable control. Does not send."""
+    if not binding:
+        return None
+    ready = {
+        "hold": format_control_mail(INTENT_HOLD, binding),
+        "office_owned_brenda": format_control_mail(INTENT_OFFICE, binding, owner="brenda"),
+        "office_owned_ally": format_control_mail(INTENT_OFFICE, binding, owner="ally"),
+        "no_response_needed": format_control_mail(INTENT_NO_RESPONSE, binding),
+    }
+    selected = None
+    if intent:
+        selected = format_control_mail(intent, binding, owner=owner, note=note)
+    return {
+        "kind": "control",
+        "generate_only": True,
+        "from": ALLOWED_SENDER,
+        "to": MAILBOX,
+        "subject": MARKER_DESK_CTRL,
+        "encoding": CTRL_ENC_VERSION,
+        "binding": {
+            "case_id": binding.get("case_id"),
+            "draft_version": binding.get("draft_version"),
+            "nonce": binding.get("nonce"),
+            "packet_hash": binding.get("packet_hash"),
+            "latest_inbound_message_id": binding.get("latest_inbound_message_id"),
+            "to_addr": binding.get("to_addr"),
+            "body_hash": binding.get("body_hash"),
+        },
+        "intents": [
+            INTENT_APPROVE_SEND,
+            INTENT_REVISE,
+            INTENT_HOLD,
+            INTENT_OFFICE,
+            INTENT_NO_RESPONSE,
+        ],
+        "bodies": {name: item["body"] for name, item in ready.items()},
+        "selected": selected,
+        "revise_draft": {
+            "intent": INTENT_REVISE,
+            "note_required": True,
+            "copy_packet_hash_from": "binding.packet_hash",
+            "do_not_transcribe_from_screenshot": True,
+        },
+    }
+
+
+def build_desk_packets(
+    store_path: str | Path,
+    *,
+    case_id: str | None = None,
+    control_intent: str | None = None,
+    control_owner: str | None = None,
+    control_note: str | None = None,
+) -> dict[str, Any]:
     path = Path(store_path)
     before = db_fingerprint(path)
     desk = LeadDesk(path)
@@ -364,12 +432,20 @@ def build_desk_packets(store_path: str | Path, *, case_id: str | None = None) ->
         blob = f"{email['subject']}\n{email['body']}"
         if "BT-INTAKE-PROOF-CASE-APPROVE" in blob or "BT-INTAKE-PROOF-CASE-CHANGES" in blob:
             raise RuntimeError("desk packet must not include approval markers")
+    case_mail = next((item for item in emails if item.get("kind") == "case"), None)
+    control = build_control_packet(
+        (case_mail or {}).get("binding"),
+        intent=control_intent,
+        owner=control_owner,
+        note=control_note,
+    )
     return {
         "generated_at": generated_at,
         "store_fingerprint": fingerprint,
         "store_unchanged": True,
         "case_id": latest_id,
         "emails": emails,
+        "control": control,
         "queue_count": listed.get("count"),
         "health_overall": health.get("overall"),
     }
@@ -396,5 +472,19 @@ def write_desk_packets(payload: dict[str, Any], dest: str | Path) -> list[Path]:
         text.write_text(f"Subject: {email['subject']}\n\n{email['body']}", encoding="utf-8")
         written.extend([path, text])
         index["files"].append(str(path.name))
+    control = payload.get("control")
+    if control:
+        path = folder / "desk-control.json"
+        path.write_text(json.dumps(control, indent=2) + "\n", encoding="utf-8")
+        written.append(path)
+        index["files"].append(path.name)
+        selected = control.get("selected")
+        if selected:
+            text = folder / "desk-control.txt"
+            text.write_text(f"Subject: {selected['subject']}\n\n{selected['body']}", encoding="utf-8")
+            written.append(text)
+            index["files"].append(text.name)
+        index["packet_hash"] = (control.get("binding") or {}).get("packet_hash")
+        index["nonce"] = (control.get("binding") or {}).get("nonce")
     (folder / "desk-index.json").write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
     return written

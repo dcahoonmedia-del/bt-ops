@@ -74,8 +74,9 @@ sudo bash /tmp/bt-intake-desk-roundtrip-src/bt-intake-proof/scripts/guarded_desk
 # sudo bash /opt/bt-intake-proof/scripts/rollback_to_predeploy.sh
 
 # Do not recover --execute. Do not resend BT-DESK-ROUNDTRIP-SEND-E9A8.
-# Do not repeat action 2 --verify-recipient. Do not send the CASEMGR draft inquiry
-# from this deploy. Do not reset SQLite or reissue approval.
+# Do not repeat action 2 --verify-recipient. Do not send mail from this deploy.
+# Do not touch or replay BTC-contactus-1a096d60643b3b1a.
+# Do not reset SQLite or reissue approval.
 # Keep customer sends and broad capture OFF.
 EOF
 cat > "${DEST}/MANIFEST.json" <<EOF
