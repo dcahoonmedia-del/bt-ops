@@ -1,0 +1,9 @@
+secrets/
+results/live/
+results/*.sqlite
+results/*.sqlite-journal
+results/*.sqlite-wal
+results/*.sqlite-shm
+__pycache__/
+*.pyc
+.venv/
