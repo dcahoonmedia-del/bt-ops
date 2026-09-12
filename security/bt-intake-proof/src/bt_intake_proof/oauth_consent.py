@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
+import urllib.error
+import urllib.parse
+import urllib.request
 from typing import Any
 from urllib.parse import urlencode
 
 from .constants import FORBIDDEN_GMAIL_SCOPES, GMAIL_READONLY_SCOPE, MAILBOX
-from .gates import is_usable_project_id, oauth_client_path, project_id
+from .eligibility import normalize_email
+from .gates import is_usable_project_id, oauth_client_path, project_id, token_path
 
 
 class OAuthClientError(RuntimeError):
@@ -109,6 +113,86 @@ def extract_auth_code(redirect_or_code: str) -> str:
             raise OAuthClientError("redirect URL does not contain a code parameter")
         return codes[0]
     return text
+
+
+def _post_form(url: str, data: dict[str, str]) -> dict[str, Any]:
+    body = urllib.parse.urlencode(data).encode("utf-8")
+    request = urllib.request.Request(url, data=body, method="POST")
+    request.add_header("Content-Type", "application/x-www-form-urlencoded")
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise OAuthClientError(f"token endpoint HTTP {exc.code}: {detail}") from exc
+
+
+def _get_json(url: str, access_token: str | None = None) -> dict[str, Any]:
+    request = urllib.request.Request(url, method="GET")
+    if access_token:
+        request.add_header("Authorization", f"Bearer {access_token}")
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise OAuthClientError(f"HTTP {exc.code} from {url}: {detail}") from exc
+
+
+def exchange_code(redirect_or_code: str) -> dict[str, Any]:
+    client = load_desktop_client()
+    code = extract_auth_code(redirect_or_code)
+    token = _post_form(
+        str(client.get("token_uri") or "https://oauth2.googleapis.com/token"),
+        {
+            "code": code,
+            "client_id": client["client_id"],
+            "client_secret": str(client.get("client_secret") or ""),
+            "redirect_uri": redirect_uri(client),
+            "grant_type": "authorization_code",
+        },
+    )
+    scopes = str(token.get("scope") or "").split()
+    forbidden = [scope for scope in scopes if scope in FORBIDDEN_GMAIL_SCOPES]
+    if forbidden:
+        raise OAuthClientError(f"token includes forbidden Gmail scopes: {forbidden}")
+    if GMAIL_READONLY_SCOPE not in scopes:
+        raise OAuthClientError("token does not include gmail.readonly")
+    access = str(token.get("access_token") or "")
+    if not access:
+        raise OAuthClientError("token response missing access_token")
+    profile = _get_json("https://gmail.googleapis.com/gmail/v1/users/me/profile", access)
+    email = normalize_email(str(profile.get("emailAddress") or ""))
+    if email != MAILBOX:
+        raise OAuthClientError(f"authenticated mailbox is {email or '(unknown)'}, expected {MAILBOX}")
+    record = {
+        "token_uri": client.get("token_uri") or "https://oauth2.googleapis.com/token",
+        "client_id": client["client_id"],
+        "client_secret": client.get("client_secret"),
+        "refresh_token": token.get("refresh_token"),
+        "access_token": access,
+        "token_type": token.get("token_type") or "Bearer",
+        "scopes": scopes,
+        "scope": GMAIL_READONLY_SCOPE,
+        "email": email,
+        "account": email,
+    }
+    dest = token_path()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    dest.chmod(0o600)
+    return {
+        "status": "PASS",
+        "email": email,
+        "scopes": scopes,
+        "readonly_only": scopes == [GMAIL_READONLY_SCOPE] or (
+            GMAIL_READONLY_SCOPE in scopes and not forbidden
+        ),
+        "refresh_token_present": bool(token.get("refresh_token")),
+        "token_path": str(dest),
+        "history_id": str(profile.get("historyId") or "") or None,
+        "messages_total": profile.get("messagesTotal"),
+    }
 
 
 def blocked_oauth_url() -> dict[str, Any]:

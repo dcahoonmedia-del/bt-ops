@@ -1,27 +1,27 @@
 {
   "overall": "BLOCKED",
   "stopped_at": "phase_1_google_setup",
-  "reason": "Project bt-intake-proof is named. Waiting for Desktop OAuth client JSON, then contactus@ read-only consent.",
+  "reason": "contactus@ Gmail read-only consent passed. Pub/Sub create is blocked on Cloud admin credentials or console-created topic.",
   "gates": {
     "gmail_watch_registration": {
       "result": "BLOCKED",
-      "detail": "Project bt-intake-proof is named. Waiting for Desktop OAuth client JSON, then contactus@ read-only consent."
+      "detail": "contactus@ Gmail read-only consent passed. Pub/Sub create is blocked on Cloud admin credentials or console-created topic."
     },
     "pubsub_delivery": {
       "result": "BLOCKED",
-      "detail": "Project bt-intake-proof is named. Waiting for Desktop OAuth client JSON, then contactus@ read-only consent."
+      "detail": "contactus@ Gmail read-only consent passed. Pub/Sub create is blocked on Cloud admin credentials or console-created topic."
     },
     "new_message_automatic_capture": {
       "result": "BLOCKED",
-      "detail": "Project bt-intake-proof is named. Waiting for Desktop OAuth client JSON, then contactus@ read-only consent."
+      "detail": "contactus@ Gmail read-only consent passed. Pub/Sub create is blocked on Cloud admin credentials or console-created topic."
     },
     "old_thread_reply_capture": {
       "result": "BLOCKED",
-      "detail": "Project bt-intake-proof is named. Waiting for Desktop OAuth client JSON, then contactus@ read-only consent."
+      "detail": "contactus@ Gmail read-only consent passed. Pub/Sub create is blocked on Cloud admin credentials or console-created topic."
     },
     "state_preservation": {
       "result": "BLOCKED",
-      "detail": "Project bt-intake-proof is named. Waiting for Desktop OAuth client JSON, then contactus@ read-only consent."
+      "detail": "contactus@ Gmail read-only consent passed. Pub/Sub create is blocked on Cloud admin credentials or console-created topic."
     },
     "durable_storage": {
       "result": "BLOCKED",
@@ -35,39 +35,35 @@
     },
     "recovery_after_receiver_downtime": {
       "result": "BLOCKED",
-      "detail": "Project bt-intake-proof is named. Waiting for Desktop OAuth client JSON, then contactus@ read-only consent."
+      "detail": "contactus@ Gmail read-only consent passed. Pub/Sub create is blocked on Cloud admin credentials or console-created topic."
     },
     "codex_external_message_delivery": {
       "result": "BLOCKED",
-      "detail": "Project bt-intake-proof is named. Waiting for Desktop OAuth client JSON, then contactus@ read-only consent."
+      "detail": "contactus@ Gmail read-only consent passed. Pub/Sub create is blocked on Cloud admin credentials or console-created topic."
     }
   },
   "google": {
-    "status": "BLOCKED",
+    "status": "READY",
     "mailbox_required": "contactus@btpestcontrol.com",
     "readonly_scope": "https://www.googleapis.com/auth/gmail.readonly",
     "project_id": "bt-intake-proof",
     "rejected_project_id": null,
     "allow_resource_create": true,
     "oauth_client_present": true,
-    "contactus_token_present": false,
-    "token_email": null,
-    "token_scopes": [],
+    "contactus_token_present": true,
+    "token_email": "contactus@btpestcontrol.com",
+    "token_scopes": [
+      "https://www.googleapis.com/auth/gmail.readonly"
+    ],
     "scope_violations": [],
     "gmail_mcp_note": "Cursor Gmail MCP is authenticated as daniel@btpestcontrol.com and can send/modify. It is not used for this proof and is not a users.watch + Pub/Sub substitute.",
     "gcloud_present": false,
-    "decisions_required": [
-      {
-        "id": "contactus_readonly_consent",
-        "status": "required",
-        "ask": "Sign in as contactus@btpestcontrol.com \u2014 not daniel@ \u2014 and consent to Gmail read-only. I will print an authorization URL and stop. Do not approve send/modify scopes."
-      }
-    ],
+    "decisions_required": [],
     "failures": [],
-    "next_action": "Stop for Daniel. Do not choose a Cloud project, enable billing, or complete consent."
+    "next_action": "Google local gates are present; continue watch registration."
   },
   "local_contract_tests": {
     "passed": true,
-    "output": "Desktop OAuth client accepted for bt-intake-proof; waiting for contactus@ read-only consent"
+    "output": "contactus readonly consent PASS; Pub/Sub blocked on Cloud scopes"
   }
 }

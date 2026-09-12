@@ -1,0 +1,9 @@
+{
+  "status": "PASS",
+  "email": "contactus@btpestcontrol.com",
+  "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+  "readonly_only": true,
+  "refresh_token_present": true,
+  "profile_history_id": "6007776",
+  "daniel_mailbox_used": false
+}

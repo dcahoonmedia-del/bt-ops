@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from .gates import diagnose_google
-from .oauth_consent import OAuthClientError, authorization_url, blocked_oauth_url
+from .oauth_consent import OAuthClientError, authorization_url, blocked_oauth_url, exchange_code
 from .scorecard import apply_local_contract_results, empty_scorecard, markdown_table, write_scorecard
 from .setup_google import blocked_setup
 
@@ -29,7 +29,7 @@ def cmd_gate(_args: argparse.Namespace) -> int:
         encoding="utf-8",
     )
     scorecard = empty_scorecard(
-        "Project bt-intake-proof is named. Waiting for Desktop OAuth client JSON, then contactus@ read-only consent."
+        "contactus@ Gmail read-only consent passed. Pub/Sub create is blocked on Cloud admin credentials or console-created topic."
     )
     write_scorecard(RESULTS / "scorecard.json", scorecard)
     _print({"google": diagnosis, "setup": blocked_setup(diagnosis), "scorecard_overall": scorecard["overall"]})
@@ -71,9 +71,23 @@ def cmd_oauth_url(_args: argparse.Namespace) -> int:
     return 0 if payload.get("authorization_url") else 2
 
 
+def cmd_oauth_exchange(args: argparse.Namespace) -> int:
+    RESULTS.mkdir(parents=True, exist_ok=True)
+    try:
+        payload = exchange_code(args.redirect)
+    except OAuthClientError as exc:
+        payload = {"status": "FAIL", "error": str(exc)}
+        _print(payload)
+        return 1
+    safe = {k: v for k, v in payload.items() if k != "token_path"}
+    (RESULTS / "gmail-consent.json").write_text(json.dumps(safe, indent=2) + "\n", encoding="utf-8")
+    _print(safe)
+    return 0
+
+
 def cmd_record_local_tests(args: argparse.Namespace) -> int:
     scorecard = empty_scorecard(
-        "Project bt-intake-proof is named. Waiting for Desktop OAuth client JSON, then contactus@ read-only consent."
+        "contactus@ Gmail read-only consent passed. Pub/Sub create is blocked on Cloud admin credentials or console-created topic."
     )
     apply_local_contract_results(scorecard, bool(args.passed), args.output or "")
     write_scorecard(RESULTS / "scorecard.json", scorecard)
@@ -92,6 +106,9 @@ def main(argv: list[str] | None = None) -> int:
     rec.add_argument("--output", default="")
     rec.set_defaults(func=cmd_record_local_tests)
     sub.add_parser("oauth-url").set_defaults(func=cmd_oauth_url)
+    ex = sub.add_parser("oauth-exchange")
+    ex.add_argument("redirect", help="localhost redirect URL or code from contactus consent")
+    ex.set_defaults(func=cmd_oauth_exchange)
     args = parser.parse_args(argv)
     return args.func(args)
 

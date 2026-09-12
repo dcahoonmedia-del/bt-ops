@@ -1,13 +1,30 @@
-# Stopped for Daniel — contactus Gmail read-only consent
+# Stopped for Daniel — Cloud permission for Pub/Sub
 
-Authorized project: **bt-intake-proof**. Desktop OAuth client JSON is present and matches that project. The client secret is stored only in gitignored `secrets/` and was not committed.
+## Completed
 
-## Open this URL
+- Project: `bt-intake-proof`
+- Gmail sign-in: **contactus@btpestcontrol.com**
+- Scope: `gmail.readonly` only
+- Refresh token stored in gitignored secrets
+- `daniel@` was not used
 
-Sign in as **contactus@btpestcontrol.com** only. Approve **Gmail read-only** only. Decline if Google shows send, modify, or draft.
+## Blocked
 
-https://accounts.google.com/o/oauth2/v2/auth?client_id=1028131400538-5r57fq95el2uhmmtp2m38m3lgab7loa8.apps.googleusercontent.com&redirect_uri=http%3A%2F%2Flocalhost&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fgmail.readonly&access_type=offline&prompt=consent&include_granted_scopes=false&login_hint=contactus%40btpestcontrol.com
+`users.watch` needs topic `bt-intake-proof-contactus`. Creating that topic with the Gmail read-only token failed:
 
-After approve, the browser will try to open `http://localhost` and fail. Copy the **full address-bar URL** and send it back.
+`ACCESS_TOKEN_SCOPE_INSUFFICIENT` for `CreateTopic`
 
-Do not sign in as daniel@. Do not send `BT-INTAKE-PROOF-*` emails yet.
+That is a **broader permission** than you authorized for Gmail. I did not request Cloud scopes, link billing, or create any Pub/Sub resource.
+
+## Choose one
+
+1. **You create the three authorized Pub/Sub resources** in Cloud Console. Follow `PUBSUB_CONSOLE_GUIDE.md`, then tell me they exist. I will register watch.
+2. **You authorize a separate Cloud login** that can create only:
+   - topic `bt-intake-proof-contactus`
+   - subscription `bt-intake-proof-contactus-sub`
+   - Publisher for `gmail-api-push@system.gserviceaccount.com` on that topic  
+   This is not a Gmail send/modify grant. Say yes if you want me to start that Cloud consent.
+
+If Google asks to link billing on the project, tell me instead of letting me pick a billing account.
+
+Do not send `BT-INTAKE-PROOF-*` emails yet. Watch is not PASS.
