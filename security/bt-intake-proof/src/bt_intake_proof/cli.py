@@ -10,10 +10,10 @@ from pathlib import Path
 
 from .constants import MAILBOX
 from .dispatch import build_constructor
-from .gates import diagnose_google
 from .cloud_auth import cloud_authorization_url
+from .gates import diagnose_google, store_path
 from .live_google import contactus_gmail
-from .live_receive import impersonated_receiver_token, receive_once
+from .live_receive import receiver_access_token, receive_once
 from .receiver import recover_from_cursor
 from .oauth_consent import OAuthClientError, authorization_url, blocked_oauth_url, exchange_code
 from .scorecard import apply_local_contract_results, empty_scorecard, markdown_table, write_scorecard
@@ -107,14 +107,14 @@ def cmd_oauth_exchange(args: argparse.Namespace) -> int:
 
 
 def _live_store() -> ReceiptStore:
-    return ReceiptStore(RESULTS / "live" / "receipts.sqlite")
+    return ReceiptStore(store_path())
 
 
 def cmd_receive_once(_args: argparse.Namespace) -> int:
     RESULTS.mkdir(parents=True, exist_ok=True)
     store = _live_store()
     try:
-        payload = receive_once(store, contactus_gmail(), impersonated_receiver_token())
+        payload = receive_once(store, contactus_gmail(), receiver_access_token())
     except OAuthClientError as exc:
         payload = {"status": "FAIL", "error": str(exc)}
         _print(payload)
@@ -133,12 +133,12 @@ def cmd_receive_loop(args: argparse.Namespace) -> int:
     store = _live_store()
     try:
         gmail = contactus_gmail()
-        sa_token = impersonated_receiver_token()
+        sa_token = receiver_access_token()
         started = time.time()
         while True:
             if time.time() - started > 50 * 60:
                 gmail = contactus_gmail()
-                sa_token = impersonated_receiver_token()
+                sa_token = receiver_access_token()
                 started = time.time()
             payload = receive_once(store, gmail, sa_token)
             (RESULTS / "live" / "last-receive.json").write_text(

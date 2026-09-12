@@ -1,0 +1,19 @@
+{
+  "overall": "BLOCKED",
+  "stopped_at": "compute_engine_billing",
+  "reason": "Compute Engine API is disabled and billing status is unknown. No VM created. No JSON key created.",
+  "gates": {
+    "mac_independent_operation": {"result": "BLOCKED", "detail": "Waiting for billing ok and a GCE VM."},
+    "automatic_service_startup": {"result": "BLOCKED", "detail": "systemd unit packaged, not installed on a VM."},
+    "pubsub_delivery": {"result": "BLOCKED", "detail": "Cloud host not running yet. Phase A pull remains PASS."},
+    "gmail_history_recovery": {"result": "BLOCKED", "detail": "Cloud host not running yet. Phase A recovery remains PASS."},
+    "watch_renewal": {"result": "BLOCKED", "detail": "renew_watch_preserving_cursor packaged, not live on GCE."},
+    "durable_persistence_across_vm_restart": {"result": "BLOCKED", "detail": "Waiting for VM + persistent disk."},
+    "deduplication": {"result": "BLOCKED", "detail": "Local contract PASS. Cloud live proof waiting for VM."},
+    "codex_authentication_persistence": {"result": "BLOCKED", "detail": "Isolated ChatGPT volume not copied to a VM yet."},
+    "external_message_authority_boundary": {"result": "BLOCKED", "detail": "Phase A isolated dispatch remains PASS. Cloud live proof waiting for VM."}
+  },
+  "json_key_created": false,
+  "compute_engine_api": "disabled",
+  "vm_created": false
+}

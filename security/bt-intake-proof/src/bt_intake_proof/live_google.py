@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 import urllib.error
 import urllib.request
 from typing import Any
@@ -20,7 +21,7 @@ from .gates import allow_resource_create, project_id, token_path
 from .gmail_readonly import GmailAuthError, assert_readonly_credentials
 from .oauth_consent import OAuthClientError, _get_json, refresh_access_token
 from .setup_google import subscription_path, topic_path
-from .store import ReceiptStore
+from .store import ReceiptStore, utc_now
 
 
 class BillingRequired(RuntimeError):
@@ -223,6 +224,45 @@ def register_watch_on_existing_topic(store: ReceiptStore) -> dict[str, Any]:
         "subscription": sub,
     }
     evidence["status"] = evidence["watch"]["status"]
+    return evidence
+
+
+def _later_history_id(current: str, incoming: str) -> str:
+    if current.isdigit() and incoming.isdigit() and int(incoming) < int(current):
+        return current
+    return incoming or current
+
+
+def renew_watch_preserving_cursor(store: ReceiptStore, *, min_remaining_seconds: int = 86400) -> dict[str, Any]:
+    """Re-register users.watch before expiry without rewinding the history cursor."""
+    cursor = store.get_watch(MAILBOX) or {}
+    expiration = str(cursor.get("watch_expiration") or "")
+    remaining = None
+    if expiration.isdigit():
+        remaining = (int(expiration) / 1000) - time.time()
+        if remaining > min_remaining_seconds:
+            return {
+                "status": "SKIPPED",
+                "reason": "watch_not_near_expiry",
+                "remaining_seconds": int(remaining),
+                "history_id": cursor.get("history_id"),
+                "expiration": expiration,
+            }
+    evidence = register_watch_on_existing_topic(store)
+    if evidence.get("status") != "PASS":
+        return evidence
+    new_history = str((evidence.get("watch") or {}).get("history_id") or "")
+    kept = _later_history_id(str(cursor.get("history_id") or ""), new_history)
+    store.upsert_watch(
+        MAILBOX,
+        history_id=kept,
+        expiration=str((evidence.get("watch") or {}).get("expiration") or expiration),
+        topic=str((evidence.get("watch") or {}).get("topic") or cursor.get("topic") or ""),
+    )
+    evidence["watch"]["history_id"] = kept
+    evidence["preserved_cursor"] = kept != new_history
+    evidence["renewed_at"] = utc_now()
+    evidence["remaining_seconds_before"] = int(remaining) if remaining is not None else None
     return evidence
 
 

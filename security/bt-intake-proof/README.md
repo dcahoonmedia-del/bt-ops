@@ -10,7 +10,7 @@ Test 0 isolation stays unchanged. Codex delivery reuses `security/codex-external
 
 ## Current gate
 
-**PASS.** See `RESULTS.md`.
+Phase A intake proof: **PASS.** Phase B cloud host: **BLOCKED** on Compute Engine billing. See `CLOUD_HOST_GUIDE.md`.
 
 The Cursor Gmail MCP is `daniel@btpestcontrol.com` and can send/modify mail; it is not used here.
 
