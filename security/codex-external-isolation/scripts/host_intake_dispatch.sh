@@ -30,7 +30,7 @@ DISPATCH_SCRIPT="${ROOT}/scripts/run_intake_dispatch.py"
   --cap-drop ALL \
   --security-opt no-new-privileges:true \
   --pids-limit 256 \
-  --memory 2g \
+  --memory "${CODEX_CONTAINER_MEMORY:-1g}" \
   --cpus 2 \
   --network bridge \
   --user 1000:1000 \

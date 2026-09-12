@@ -21,7 +21,7 @@ from .constants import (
 from .dispatch import build_constructor
 from .gce_identity import receiver_identity
 from .gates import store_path
-from .live_google import contactus_gmail, renew_watch_preserving_cursor
+from .live_google import contactus_gmail, register_watch_on_existing_topic, renew_watch_preserving_cursor
 from .live_receive import receive_once, receiver_access_token
 from .receiver import recover_from_cursor
 from .store import ReceiptStore, utc_now
@@ -124,6 +124,13 @@ def serve(interval: float = 2.0) -> int:
     identity = receiver_identity()
     safe_log("cloud_host_start", **identity, store=str(store.path), mailbox=MAILBOX)
     try:
+        if not store.get_watch(MAILBOX):
+            watch0 = register_watch_on_existing_topic(store)
+            safe_log(
+                "initial_watch",
+                status=watch0.get("status"),
+                history_id=(watch0.get("watch") or {}).get("history_id"),
+            )
         gmail = contactus_gmail()
         token = receiver_access_token()
         recover = recover_from_cursor(store, gmail)
