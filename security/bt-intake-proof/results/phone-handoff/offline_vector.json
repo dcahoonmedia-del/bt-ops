@@ -1,0 +1,46 @@
+{
+  "synthetic": true,
+  "live": false,
+  "source_commit": "c41404e75bbc768d034814a5ec3bca90ad927b6e",
+  "release_sha256": "2ec5186023ca9a7dacc9dfc51b67e2aaae4de563630b33ae39b223514c2e38e2",
+  "encoding": "v1",
+  "from": "daniel@btpestcontrol.com",
+  "to": "contactus@btpestcontrol.com",
+  "cc": "",
+  "subject": "BT-INTAKE-PROOF-DESK-CTRL-E9A8",
+  "binding": {
+    "case_id": "BTC-contactus-phone-handoff-fixture-e9a8",
+    "draft_version": 3,
+    "nonce": "nonce-phone-handoff-e9a8",
+    "packet_hash": "c337c20ef7d505c4fb11a0e1e2cc26e8e22af0983e632b79d70cde7b1ac53dad"
+  },
+  "intent": "revise_draft",
+  "owner": "",
+  "note": "DRAFT - NOT SENT\n\nCafé — please share the service address and a callback number.  \n",
+  "note_repr": "'DRAFT - NOT SENT\\n\\nCafé — please share the service address and a callback number.  \\n'",
+  "payload": {
+    "intent": "revise_draft",
+    "owner": "",
+    "note": "DRAFT - NOT SENT\n\nCafé — please share the service address and a callback number.  \n",
+    "case_id": "BTC-contactus-phone-handoff-fixture-e9a8",
+    "draft_version": 3,
+    "nonce": "nonce-phone-handoff-e9a8",
+    "packet_hash": "c337c20ef7d505c4fb11a0e1e2cc26e8e22af0983e632b79d70cde7b1ac53dad"
+  },
+  "raw_json": "{\"case_id\":\"BTC-contactus-phone-handoff-fixture-e9a8\",\"draft_version\":3,\"intent\":\"revise_draft\",\"nonce\":\"nonce-phone-handoff-e9a8\",\"note\":\"DRAFT - NOT SENT\\n\\nCafé — please share the service address and a callback number.  \\n\",\"owner\":\"\",\"packet_hash\":\"c337c20ef7d505c4fb11a0e1e2cc26e8e22af0983e632b79d70cde7b1ac53dad\"}",
+  "raw_utf8_hex": "7b22636173655f6964223a224254432d636f6e7461637475732d70686f6e652d68616e646f66662d666978747572652d65396138222c2264726166745f76657273696f6e223a332c22696e74656e74223a227265766973655f6472616674222c226e6f6e6365223a226e6f6e63652d70686f6e652d68616e646f66662d65396138222c226e6f7465223a224452414654202d204e4f542053454e545c6e5c6e436166c3a920e2809420706c65617365207368617265207468652073657276696365206164647265737320616e6420612063616c6c6261636b206e756d6265722e20205c6e222c226f776e6572223a22222c227061636b65745f68617368223a2263333337633230656637643530356334666231316130653165326363323665386532326166303938336536333262373964373063646537623161633533646164227d",
+  "enc_len": 322,
+  "enc_sha256": "1aeebd99c769a50ffe51e1b676232c153aa16b19732a879385bbd8ae1e4205d1",
+  "body": "BT-INTAKE-PROOF-DESK-CTRL-E9A8\nCTRL-ENC=v1\nENC_LEN=322\nENC_SHA256\n1aeebd99c769a50ffe51e1b676232c153aa16b19732a879385bbd8ae1e4205d1\nENC_B64\neyJjYXNlX2lkIjoiQlRDLWNvbnRhY3R1cy1waG9uZS1oYW5kb2ZmLWZpeHR1cmUt\nZTlhOCIsImRyYWZ0X3ZlcnNpb24iOjMsImludGVudCI6InJldmlzZV9kcmFmdCIs\nIm5vbmNlIjoibm9uY2UtcGhvbmUtaGFuZG9mZi1lOWE4Iiwibm90ZSI6IkRSQUZU\nIC0gTk9UIFNFTlRcblxuQ2Fmw6kg4oCUIHBsZWFzZSBzaGFyZSB0aGUgc2Vydmlj\nZSBhZGRyZXNzIGFuZCBhIGNhbGxiYWNrIG51bWJlci4gIFxuIiwib3duZXIiOiIi\nLCJwYWNrZXRfaGFzaCI6ImMzMzdjMjBlZjdkNTA1YzRmYjExYTBlMWUyY2MyNmU4\nZTIyYWYwOTgzZTYzMmI3OWQ3MGNkZTdiMWFjNTNkYWQifQ==\nENC_B64_END\n",
+  "canonical": {
+    "intent": "revise_draft",
+    "owner": "",
+    "note": "DRAFT - NOT SENT\n\nCafé — please share the service address and a callback number.  \n",
+    "case_id": "BTC-contactus-phone-handoff-fixture-e9a8",
+    "draft_version": 3,
+    "nonce": "nonce-phone-handoff-e9a8",
+    "packet_hash": "c337c20ef7d505c4fb11a0e1e2cc26e8e22af0983e632b79d70cde7b1ac53dad",
+    "marker": "BT-INTAKE-PROOF-DESK-CTRL-E9A8"
+  },
+  "parse_ok": true
+}
