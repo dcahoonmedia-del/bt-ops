@@ -1,54 +1,61 @@
-# Phase B — delete the messed-up VM and create one e2-small
+# Phase B — create page: use the LEFT menu
 
-Do this in project **bt-intake-proof**. Do not download a JSON key. Do not enable HTTP.
+The new Create instance screen only shows name/region/machine at first. Boot disk, network, and service account are **left-side tabs**, not on the first page.
 
-## 1. Delete the current VM and its disk
+Stay in project **bt-intake-proof**. Delete the old VM first if it is still there.
 
-https://console.cloud.google.com/compute/instances?project=bt-intake-proof
-
-1. Check the box next to `instance-20260912-024540`.
-2. Click **Delete**.
-3. Confirm it will delete the **boot disk** too. If there is a checkbox **Delete boot disk**, leave it **checked**.
-4. Delete. Wait until the VM disappears from the list.
-
-If a disk is left behind: **Compute Engine → Disks** → delete the disk named like `instance-20260912-024540`.
-
-## 2. If the receiver SA is missing later, do this first
-
-https://console.cloud.google.com/iam-admin/serviceaccounts/details/bt-intake-proof-receiver@bt-intake-proof.iam.gserviceaccount.com/permissions?project=bt-intake-proof
-
-**Grant Access** → principal: the Google account you are using now → role: **Service Account User** → Save.
-
-## 3. Create the replacement VM
+Open:
 
 https://console.cloud.google.com/compute/instancesAdd?project=bt-intake-proof
 
-Set these **before** you click Create:
+## A. First screen (Machine configuration)
+
+This is the page you already see.
 
 - **Name:** `bt-intake-cloud`
 - **Region:** `us-east1 (South Carolina)`
-- **Zone:** `us-east1-c` (or `us-east1-b` if `-c` is greyed out)
+- **Zone:** `us-east1-c`
 - **Series:** E2
-- **Machine type:** **e2-small** (2 vCPU, 2 GB). Not e2-medium.
-- **Boot disk → Change:** Debian 12, size **20**, type Balanced. Confirm.
-- **Firewall:** **Allow HTTP** and **Allow HTTPS** both **unchecked**
-- **Management / Security / Disks / Networking / Sole tenancy** (or **Advanced**):
-  - **Identity and API access**
-    - Service account: `bt-intake-proof-receiver@bt-intake-proof.iam.gserviceaccount.com`
-    - Access scopes: **Set access for each API** → **Cloud Pub/Sub = Enabled**. Everything else Disabled.
-  - **Networking** → Network interface → External IPv4: **Ephemeral** (not None)
-  - **Security** → **Manage access** / SSH keys → add this **one** line:
+- **Machine type:** **e2-small**
+
+Do not click Create yet.
+
+## B. Boot disk — left menu **OS and storage**
+
+On the **left** of the form, click **OS and storage**.
+
+1. Click **Change** (or **Configure** / **Show extra features**) on the boot disk.
+2. Operating system: **Debian**
+3. Version: **Debian GNU/Linux 12 (bookworm)**
+4. Size: **20**
+5. Disk type: **Balanced persistent disk**
+6. **Select** / **Confirm**
+
+## C. No website ports — left menu **Networking**
+
+Click **Networking** on the left.
+
+- **Allow HTTP traffic:** unchecked
+- **Allow HTTPS traffic:** unchecked
+- Network interface → **External IPv4 address:** **Ephemeral** (not None)
+
+## D. Receiver account — left menu **Security**
+
+Click **Security** on the left.
+
+1. **Service account:** `bt-intake-proof-receiver@bt-intake-proof.iam.gserviceaccount.com`  
+   If it is not in the list, leave this tab, grant yourself **Service Account User** here, then come back and refresh:  
+   https://console.cloud.google.com/iam-admin/serviceaccounts/details/bt-intake-proof-receiver@bt-intake-proof.iam.gserviceaccount.com/permissions?project=bt-intake-proof
+2. **Access scopes:** if you see **Set access for each API**, turn on **Cloud Pub/Sub** only.  
+   If you only see Default / Full access, choose **Allow full access to all Cloud APIs**. That is OK **only** with the receiver SA (it can still only subscribe to our one topic).
+3. **SSH keys** / **Manage access:** add this exact line:
 
 ```
 btadmin:ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIC/DKOmrbwVG08WuDE4IREYQoVVmgXy5coIYC3pxPbzu bt-intake-cloud-e9a8
 ```
 
-Click **Create**. Wait until Status is **Running**.
+## E. Create
 
-## 4. Send me these three values from the new VM details page
+Click **Create**. Wait until Running.
 
-- Name (should be `bt-intake-cloud`)
-- Machine type (should be `e2-small`)
-- External IP (search the page for `Network interfaces`)
-
-Reply **vm up** and the External IP. I will SSH as `btadmin` and install. No JSON key.
+Reply **vm up** and the **External IP** (details page → **Network interfaces**, or `Cmd+F` for `External IP`).
