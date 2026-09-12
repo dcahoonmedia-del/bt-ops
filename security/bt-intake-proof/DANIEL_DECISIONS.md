@@ -19,3 +19,5 @@ Phase F1 iPhone Lead Desk uses Gmail packets in `daniel@`, not a ChatGPT custom 
 Production intake will capture every contactus@ inbound, then classify. The `BT-INTAKE-PROOF-*` filters stay on for isolated testing until you separately authorize shadow intake of all real contactus@ mail. Real-customer processing is off.
 
 Talk to ChatGPT in ordinary speech. You do not need case IDs or a magic phrase. ChatGPT interprets what you meant and sends a private control email that you should never have to see. The backend still checks the exact current case, draft, recipient, and latest inbound. I will not send a stale or office-owned packet.
+
+The 2026-09-12 desk round-trip milestone is engineering readiness only. It is not a send approval and does not reuse the consumed Phase E approval. Any live `BT-DESK-ROUNDTRIP-SEND-E9A8` reply still needs a fresh exact version-bound approval.

@@ -1,7 +1,7 @@
 # Lead Desk control
 
-Version: 2026-09-12-gmail-bridge
-Production path: Daniel speaks naturally to ChatGPT → ChatGPT interprets intent → ChatGPT sends a private Gmail control message from daniel@ → backend validates exact case/version/nonce/hash/freshness → `submit_desk_action`.
+Version: 2026-09-12-roundtrip
+Production path: Daniel speaks naturally to ChatGPT → ChatGPT interprets intent → ChatGPT sends a private Gmail control message from daniel@ → backend authenticates origin with Gmail-fetched Authentication-Results → validates exact case/version/nonce/hash/freshness → `submit_desk_action` → durable result/case packets to daniel@ → desk-queued bounded execute + independent verify.
 
 Daniel does not need case IDs, draft numbers, hashes, nonces, approval codes, or a magic phrase. ChatGPT holds the conversation. The Python backend does not model his speech.
 
@@ -31,9 +31,11 @@ The isolated Gmail review packets may still use CASE=/DRAFT= markers. That is no
 
 Any send still binds to the exact current case, draft version, recipient, channel, payload, and latest inbound. A newer inbound, changed draft, changed recipient, hold, office ownership, or stale displayed context blocks execution. ChatGPT meaning "send" does not bypass Phase E.
 
-`submit_desk_action` authorizes only. The Gmail bridge may queue a Phase E send after a valid `approve_and_send_current`. It does not call `execute_action`.
+`submit_desk_action` authorizes only. The Gmail bridge may queue a desk-roundtrip send after a valid `approve_and_send_current`. The host executes only `queued_by=desk_control` actions. Phase E leftovers stay queued and are not executed. Ambiguous/unknown sends must reconcile before any retry.
 
-Control mail must come from verified `daniel@btpestcontrol.com`. It is never a customer case, never Codex `external_untrusted`, and never shown to a customer. Copied control syntax from anyone else authorizes nothing.
+Control origin is fail-closed. From: and PACKET_HASH are not identity. The receiver trusts only the first `mx.google.com` Authentication-Results on a message fetched via the contactus Gmail API. Quoted `>` copies of control syntax do not authorize. See `desk_origin.py`.
+
+Control mail is never a customer case, never Codex `external_untrusted`, and never shown to a customer. Result/case/queue/health packets inbound to contactus are loop-guarded and do not become cases.
 
 ## Office ownership
 
@@ -41,4 +43,4 @@ Brenda and Ally are office staff. Office-owned cases stay with the office. Do no
 
 ## Live tonight
 
-This is the Gmail control-bridge contract and unit tests. Ready for a real ChatGPT iPhone test on internal cases only. Conversational send is not a new live customer-send path.
+Internal conversational control round trip is implemented in code: origin auth, durable result/case delivery, desk-only execute + independent verify. Real-phone PASS stays pending until Daniel runs the iPhone script with his Mac off. The isolated internal send still needs a fresh exact version-bound approval; this milestone is not that approval and does not reuse Phase E's consumed row.

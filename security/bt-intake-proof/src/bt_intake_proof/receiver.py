@@ -6,7 +6,14 @@ import json
 from typing import Any, Callable
 
 from . import eligibility
-from .constants import CLASS_DESK_CONTROL, DETECTION_EVENT_DRIVEN, MAILBOX, MARKER_DESK_CTRL
+from .constants import (
+    CLASS_DESK_CONTROL,
+    CLASS_DESK_TRANSPORT,
+    DETECTION_EVENT_DRIVEN,
+    MAILBOX,
+    MARKER_DESK_CTRL,
+)
+from .desk_origin import FETCHED_VIA_GMAIL
 from .intake_mode import require_isolated_live_receiver
 from .gmail_readonly import added_message_ids, decode_raw_message, gmail_internal_date
 from .oauth_consent import OAuthClientError
@@ -47,16 +54,21 @@ def hydrate_receipt(
     recipients = decoded.get("recipients") or []
     subject = decoded.get("subject") or ""
     body = decoded.get("body_text") or ""
-    from .desk_bridge import inspect_inbound
+    from .desk_bridge import inspect_inbound, looks_like_desk_transport
 
-    inspection = inspect_inbound(sender, subject, body)
+    evidence = {
+        "fetched_via": FETCHED_VIA_GMAIL,
+        "gmail_message_id": message.get("id"),
+        "headers": decoded.get("headers") or [],
+    }
+    inspection = inspect_inbound(sender, subject, body, provider_evidence=evidence)
     if inspection.get("shaped"):
         return {
             "eligible": False,
             "reasons": (
                 ["desk_control_intercept"]
                 if inspection.get("sender_ok")
-                else ["control_imitation", "sender_not_verified_daniel"]
+                else ["control_imitation", str(inspection.get("reason") or "sender_not_verified_daniel")]
             ),
             "mailbox": mailbox,
             "sender": sender,
@@ -76,6 +88,30 @@ def hydrate_receipt(
             "detection_path": detection_path,
             "test_marker": MARKER_DESK_CTRL,
             "desk_control": inspection,
+            "_provider_evidence": evidence,
+            "_headers": decoded.get("headers") or [],
+        }
+    if looks_like_desk_transport(subject, body):
+        return {
+            "eligible": False,
+            "reasons": ["desk_transport_loop_guard"],
+            "mailbox": mailbox,
+            "sender": sender,
+            "recipients": recipients,
+            "marker": "BT-INTAKE-PROOF-DESK-TRANSPORT-E9A8",
+            "classification": CLASS_DESK_TRANSPORT,
+            "gmail_message_id": message["id"],
+            "thread_id": message.get("threadId") or "",
+            "rfc_message_id": decoded.get("rfc_message_id"),
+            "subject": subject,
+            "gmail_received_at": decoded.get("gmail_received_at") or gmail_internal_date(message),
+            "detected_at": utc_now(),
+            "body_text": None,
+            "raw_message": None,
+            "labels_before": labels,
+            "labels_after": labels,
+            "detection_path": detection_path,
+            "test_marker": "BT-INTAKE-PROOF-DESK-TRANSPORT-E9A8",
         }
     decision = eligibility.evaluate_message(
         mailbox=mailbox,

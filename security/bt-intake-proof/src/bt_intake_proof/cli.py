@@ -456,7 +456,7 @@ def main(argv: list[str] | None = None) -> int:
     desk.add_argument("--case-id", default="", help="optional case to detail; default is newest inbound")
     desk.set_defaults(func=cmd_lead_desk_packets)
     sub.add_parser("intake-mode").set_defaults(func=cmd_intake_mode)
-    dc = sub.add_parser("desk-control", help="Process one ChatGPT Gmail control message. Does not auto-send.")
+    dc = sub.add_parser("desk-control", help="Process one ChatGPT Gmail control message. Origin is fail-closed without Gmail-fetched evidence. Does not execute a send.")
     dc.add_argument("--sender", default="daniel@btpestcontrol.com")
     dc.add_argument("--subject", default="BT-INTAKE-PROOF-DESK-CTRL-E9A8")
     dc.add_argument("--body", default="")

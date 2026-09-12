@@ -11,12 +11,11 @@ from .eligibility import emails_from_header, normalize_email
 from .gmail_readonly import decode_raw_message, gmail_internal_date
 from .phasee_constants import (
     PHASEE_FROM,
-    PHASEE_SEND_MARKER,
     PHASEE_TO,
     STATUS_RECEIPT_VERIFIED,
     STATUS_SENT_VERIFIED,
 )
-from .send_bind import action_row, binding_from_action, mark_action, record_verification
+from .send_bind import action_row, binding_from_action, mark_action, outbound_marker, record_verification
 
 
 class VerifyTransport(Protocol):
@@ -102,7 +101,7 @@ def _norm_body(text: Any) -> str:
 
 def compare_outbound(binding: dict[str, Any], found: dict[str, Any], *, require_thread: bool = True) -> list[str]:
     mismatches = []
-    if normalize_email(found.get("from") or found.get("sender")) != PHASEE_FROM:
+    if normalize_email(found.get("from") or found.get("sender") or found.get("from_addr")) != PHASEE_FROM:
         mismatches.append("from")
     if _norm_list(found.get("to") or found.get("to_addr")) != [PHASEE_TO]:
         mismatches.append("to")
@@ -114,7 +113,7 @@ def compare_outbound(binding: dict[str, Any], found: dict[str, Any], *, require_
         mismatches.append("subject")
     if _norm_body(found.get("body")) != _norm_body(binding.get("body")):
         mismatches.append("body")
-    if PHASEE_SEND_MARKER not in str(found.get("body") or ""):
+    if outbound_marker(binding.get("body")) not in str(found.get("body") or ""):
         mismatches.append("marker")
     found_thread = str(found.get("thread_id") or found.get("threadId") or "")
     bound_thread = str(binding.get("thread_id") or "")
@@ -128,7 +127,12 @@ def verify_sent(layer: CaseLayer, action_id: int, transport: VerifyTransport) ->
     if not action:
         return {"ok": False, "reason": "unknown_action"}
     binding = binding_from_action(action)
-    found = transport.search_sent(PHASEE_SEND_MARKER)
+    marker = outbound_marker(binding.get("body"))
+    found = [
+        item
+        for item in transport.search_sent(marker)
+        if str(item.get("subject") or "") == binding["subject"]
+    ]
     if len(found) == 0:
         record_verification(layer, action_id, "contactus_sent", "missing", detail={"count": 0})
         return {"ok": False, "reason": "no_matching_outbound", "count": 0}
@@ -163,7 +167,12 @@ def verify_recipient(layer: CaseLayer, action_id: int, transport: VerifyTranspor
     if not action:
         return {"ok": False, "reason": "unknown_action"}
     binding = binding_from_action(action)
-    found = transport.search_inbox(PHASEE_SEND_MARKER)
+    marker = outbound_marker(binding.get("body"))
+    found = [
+        item
+        for item in transport.search_inbox(marker)
+        if str(item.get("subject") or "") == binding["subject"]
+    ]
     if len(found) != 1:
         record_verification(layer, action_id, "daniel_inbox", "missing" if not found else "duplicate", detail={"count": len(found)})
         return {"ok": False, "reason": "recipient_count", "count": len(found)}

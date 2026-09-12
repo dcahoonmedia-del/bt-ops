@@ -107,6 +107,11 @@ def run_once(store: ReceiptStore) -> dict[str, Any]:
     received = receive_once(store, gmail, token)
     dispatched = dispatch_pending(store)
     cases = process_cases(store)
+    from .desk_runtime import finish_desk_roundtrip
+    from .send_verify import ContactusReadonlySentVerify
+
+    verify = ContactusReadonlySentVerify(gmail)
+    desk = finish_desk_roundtrip(store, verify_transport=verify)
     return {
         "identity": identity,
         "recover": {
@@ -141,6 +146,20 @@ def run_once(store: ReceiptStore) -> dict[str, Any]:
                     "status": (item.get("action") or {}).get("status"),
                 }
                 for item in cases.get("phasee_queued") or []
+            ],
+        },
+        "desk": {
+            "delivered": [
+                {k: item.get(k) for k in ("ok", "id", "kind", "control_gmail_id", "provider_message_id", "reason", "unknown", "blocked")}
+                for item in desk.get("delivered") or []
+            ],
+            "executed": [
+                {k: item.get(k) for k in ("ok", "action_id", "status", "reason", "unknown", "blocked", "provider_message_id")}
+                for item in desk.get("executed") or []
+            ],
+            "verified": [
+                {k: item.get(k) for k in ("ok", "status", "reason", "provider_message_id")}
+                for item in desk.get("verified") or []
             ],
         },
     }
@@ -192,10 +211,30 @@ def serve(interval: float = 2.0) -> int:
             dispatch_pending(store)
             try:
                 cases = process_cases(store)
+                from .desk_runtime import finish_desk_roundtrip
+                from .send_verify import ContactusReadonlySentVerify
+
+                desk = finish_desk_roundtrip(store, verify_transport=ContactusReadonlySentVerify(gmail))
             except Exception as exc:  # noqa: BLE001
                 safe_log("case_manager", error=type(exc).__name__, detail=str(exc)[:200])
                 time.sleep(interval)
                 continue
+            if desk.get("delivered") or desk.get("executed") or desk.get("verified"):
+                safe_log(
+                    "desk_roundtrip",
+                    delivered=[
+                        {k: item.get(k) for k in ("ok", "kind", "provider_message_id", "reason")}
+                        for item in desk.get("delivered") or []
+                    ],
+                    executed=[
+                        {k: item.get(k) for k in ("ok", "action_id", "status", "reason")}
+                        for item in desk.get("executed") or []
+                    ],
+                    verified=[
+                        {k: item.get(k) for k in ("ok", "status", "reason")}
+                        for item in desk.get("verified") or []
+                    ],
+                )
             if cases.get("synced") or cases.get("drafted") or cases.get("phasee_queued"):
                 safe_log(
                     "case_manager",

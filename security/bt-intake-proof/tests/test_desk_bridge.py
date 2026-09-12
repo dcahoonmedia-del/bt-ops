@@ -10,10 +10,12 @@ from bt_intake_proof.desk_bridge import (
     compute_packet_binding,
     format_control_mail,
     inspect_inbound,
+    install_desk_send_draft,
     parse_control_mail,
     parse_packet_binding,
     process_control_mail,
 )
+from bt_intake_proof.desk_origin import daniel_origin_evidence
 from bt_intake_proof.desk_control import (
     INTENT_APPROVE_SEND,
     INTENT_HOLD,
@@ -74,11 +76,27 @@ class FakeGmail:
         return [mid for mid, item in self.messages.items() if item["threadId"] == thread_id]
 
 
-def _raw(subject: str, body: str, sender: str = ALLOWED_SENDER) -> str:
+def _raw(subject: str, body: str, sender: str = ALLOWED_SENDER, ar: str | None = None) -> str:
     import base64
     from email.message import EmailMessage
 
+    from bt_intake_proof.eligibility import normalize_email
+
     msg = EmailMessage()
+    if ar is None:
+        if normalize_email(sender) == ALLOWED_SENDER:
+            ar = (
+                "mx.google.com; "
+                "dkim=pass header.i=@btpestcontrol.com; "
+                "spf=pass smtp.mailfrom=daniel@btpestcontrol.com"
+            )
+        else:
+            ar = (
+                "mx.google.com; "
+                "dkim=fail header.i=@example.com; "
+                "spf=fail smtp.mailfrom=amy@example.com"
+            )
+    msg["Authentication-Results"] = ar
     msg["From"] = sender
     msg["To"] = MAILBOX
     msg["Subject"] = subject
@@ -117,12 +135,17 @@ class DeskBridgeTests(unittest.TestCase):
 
     def _apply(self, intent: str, binding: dict, **extra) -> dict:
         mail = format_control_mail(intent, binding, owner=extra.get("owner"), note=extra.get("note"))
+        mid = extra.get("gmail_message_id", f"ctrl-{intent}")
+        evidence = extra.get("provider_evidence")
+        if evidence is None and extra.get("origin", True) and extra.get("sender", ALLOWED_SENDER) == ALLOWED_SENDER:
+            evidence = daniel_origin_evidence(mid)
         return process_control_mail(
             self.layer,
             sender=extra.get("sender", ALLOWED_SENDER),
             subject=mail["subject"],
             body=mail["body"],
-            gmail_message_id=extra.get("gmail_message_id", f"ctrl-{intent}"),
+            gmail_message_id=mid,
+            provider_evidence=evidence,
         )
 
     def test_control_mail_maps_to_structured_action(self) -> None:
@@ -134,7 +157,16 @@ class DeskBridgeTests(unittest.TestCase):
         self.assertEqual(parsed["case_id"], binding["case_id"])
         self.assertEqual(parsed["packet_hash"], binding["packet_hash"])
         self.assertFalse(parsed["requires_case_id_from_daniel"])
-        inspection = inspect_inbound(ALLOWED_SENDER, mail["subject"], mail["body"])
+        bare = inspect_inbound(ALLOWED_SENDER, mail["subject"], mail["body"])
+        self.assertTrue(bare["shaped"])
+        self.assertFalse(bare["sender_ok"])
+        self.assertEqual(bare["reason"], "origin_evidence_missing")
+        inspection = inspect_inbound(
+            ALLOWED_SENDER,
+            mail["subject"],
+            mail["body"],
+            provider_evidence=daniel_origin_evidence("inspect-1"),
+        )
         self.assertTrue(inspection["shaped"])
         self.assertTrue(inspection["sender_ok"])
         self.assertFalse(inspection["becomes_case"])
@@ -180,7 +212,7 @@ class DeskBridgeTests(unittest.TestCase):
         case_id, binding = self._open_phasee()
         result = self._apply(INTENT_APPROVE_SEND, binding, sender="customer@example.com", gmail_message_id="imitation")
         self.assertFalse(result["ok"])
-        self.assertEqual(result["reason"], "sender_not_verified_daniel")
+        self.assertIn(result["reason"], {"origin_evidence_missing", "from_not_daniel", "sender_not_verified_daniel"})
         case = self.layer.get_case(case_id)
         self.assertNotEqual(case.get("approval_state"), "approved")
         self.assertIsNone(latest_action(self.layer, case_id))
@@ -243,16 +275,24 @@ class DeskBridgeTests(unittest.TestCase):
         current = compute_packet_binding(self.layer.get_case(case_id), self.layer.latest_draft(case_id))
         blocked = self._apply(INTENT_APPROVE_SEND, current, gmail_message_id="send-not-phasee")
         self.assertFalse(blocked["ok"])
-        self.assertEqual(blocked["reason"], "not_phasee_draft")
+        self.assertEqual(blocked["reason"], "not_desk_send_draft")
         self.assertIsNone(latest_action(self.layer, case_id))
 
-        case_id2, binding2 = self._open_phasee("pe-send-ok")
-        allowed = self._apply(INTENT_APPROVE_SEND, binding2, gmail_message_id="send-ok")
+        case_id_pe, binding_pe = self._open_phasee("pe-leftover")
+        leftover = self._apply(INTENT_APPROVE_SEND, binding_pe, gmail_message_id="send-phasee-leftover")
+        self.assertFalse(leftover["ok"])
+        self.assertEqual(leftover["reason"], "phasee_leftover_not_reusable")
+
+        case_id2, _binding2 = self._open_phasee("pe-send-ok")
+        install_desk_send_draft(self.layer, case_id2, "nonce-desk-send")
+        desk_binding = compute_packet_binding(self.layer.get_case(case_id2), self.layer.latest_draft(case_id2))
+        allowed = self._apply(INTENT_APPROVE_SEND, desk_binding, gmail_message_id="send-ok")
         self.assertTrue(allowed["ok"], allowed)
         self.assertTrue(allowed["send_queued"])
         action = latest_action(self.layer, case_id2)
         self.assertIsNotNone(action)
         self.assertEqual(action["status"], "queued")
+        self.assertEqual(action["queued_by"], "desk_control")
         self.assertEqual(int(action["consumed"] or 0), 0)
         self.assertEqual(self.layer.conn.execute("SELECT COUNT(*) FROM case_send_attempts").fetchone()[0], 0)
 
@@ -333,9 +373,10 @@ class DeskBridgeTests(unittest.TestCase):
             subject=mail["subject"],
             body=mail["body"],
             gmail_message_id="cust-1",
+            provider_evidence=receipt.get("_provider_evidence"),
         )
         self.assertFalse(applied["ok"])
-        self.assertEqual(applied["reason"], "sender_not_verified_daniel")
+        self.assertIn(applied["reason"], {"provider_auth_failed", "from_not_daniel", "sender_not_verified_daniel"})
 
 
 if __name__ == "__main__":

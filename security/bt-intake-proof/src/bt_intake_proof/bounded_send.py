@@ -8,9 +8,12 @@ from typing import Any, Protocol
 
 from .cases import CaseLayer
 from .phasee_constants import STATUS_ATTEMPTED, STATUS_FAILED, STATUS_REJECTED, STATUS_UNKNOWN
+from .constants import ALLOWED_SENDER, MAILBOX
 from .send_bind import (
+    QUEUED_BY_DESK,
     action_row,
     binding_from_action,
+    ensure_send_tables,
     mark_action,
     record_attempt,
     revalidate_action,
@@ -40,6 +43,17 @@ class MemorySendTransport:
         self.sent.append({**binding, "provider_message_id": mid})
         return {"ok": True, "unknown": False, "provider_message_id": mid}
 
+    def send_internal_desk(self, mail: dict[str, Any]) -> dict[str, Any]:
+        return self.send_exact(
+            {
+                "from_addr": mail.get("from_addr") or MAILBOX,
+                "to_addr": mail.get("to") or mail.get("to_addr") or ALLOWED_SENDER,
+                "subject": mail.get("subject") or "",
+                "body": mail.get("body") or "",
+                "thread_id": mail.get("thread_id") or "",
+            }
+        )
+
 
 class MissingContactusSendTransport:
     """Live contactus send is unavailable without a dedicated send token. Intake readonly is not used."""
@@ -51,6 +65,9 @@ class MissingContactusSendTransport:
             "blocked": True,
             "reason": "contactus_send_token_not_configured",
         }
+
+    def send_internal_desk(self, mail: dict[str, Any]) -> dict[str, Any]:
+        return self.send_exact(mail)
 
 
 def mime_from_binding(binding: dict[str, Any]) -> bytes:
@@ -134,3 +151,17 @@ def execute_due_sends(layer: CaseLayer, transport: SendTransport) -> list[dict[s
         "SELECT id FROM case_send_actions WHERE consumed = 0 AND status = 'queued' ORDER BY id"
     ).fetchall()
     return [execute_action(layer, row["id"], transport) for row in rows]
+
+
+def execute_desk_queued_sends(layer: CaseLayer, transport: SendTransport) -> list[dict[str, Any]]:
+    """Execute only desk-control queued actions. Phase E leftovers stay queued."""
+    ensure_send_tables(layer)
+    rows = layer.conn.execute(
+        """
+        SELECT id FROM case_send_actions
+        WHERE consumed = 0 AND status = 'queued' AND queued_by = ?
+        ORDER BY id
+        """,
+        (QUEUED_BY_DESK,),
+    ).fetchall()
+    return [execute_action(layer, row["id"], transport, owner="desk-sender") for row in rows]

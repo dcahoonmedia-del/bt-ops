@@ -8,7 +8,12 @@ import re
 from typing import Any
 
 from .cases import APPROVAL_APPROVED, CaseLayer, _json, _loads
-from .constants import MAILBOX
+from .constants import (
+    DESK_SEND_SUBJECT,
+    MAILBOX,
+    MARKER_DESK_SEND,
+    OFFICE_OWNER_KEYS,
+)
 from .phasee_constants import (
     PHASEE_FROM,
     PHASEE_SEND_MARKER,
@@ -18,7 +23,11 @@ from .phasee_constants import (
     STATUS_QUEUED,
     STATUS_REJECTED,
 )
+
 from .store import utc_now
+
+QUEUED_BY_PHASEE = "phasee"
+QUEUED_BY_DESK = "desk_control"
 
 LINK_RE = re.compile(r"https?://|www\.", re.I)
 
@@ -49,6 +58,17 @@ def ensure_send_tables(layer: CaseLayer) -> None:
             lock_owner TEXT,
             UNIQUE (case_id, draft_version)
         );
+        """
+    )
+    cols = {row[1] for row in layer.conn.execute("PRAGMA table_info(case_send_actions)")}
+    if "queued_by" not in cols:
+        layer.conn.execute("ALTER TABLE case_send_actions ADD COLUMN queued_by TEXT")
+    if "control_gmail_id" not in cols:
+        layer.conn.execute("ALTER TABLE case_send_actions ADD COLUMN control_gmail_id TEXT")
+    # Keep the remaining CREATE statements in a second script so ALTER can run
+    # against DBs that already had the original table.
+    layer.conn.executescript(
+        """
 
         CREATE TABLE IF NOT EXISTS case_send_attempts (
             id INTEGER PRIMARY KEY,
@@ -102,6 +122,20 @@ def is_phasee_body(text: str | None) -> bool:
     return PHASEE_SEND_MARKER in str(text or "")
 
 
+def is_desk_roundtrip_body(text: str | None) -> bool:
+    return MARKER_DESK_SEND in str(text or "")
+
+
+def is_authorized_internal_send_body(text: str | None) -> bool:
+    return is_phasee_body(text) or is_desk_roundtrip_body(text)
+
+
+def outbound_marker(text: str | None) -> str:
+    if is_desk_roundtrip_body(text):
+        return MARKER_DESK_SEND
+    return PHASEE_SEND_MARKER
+
+
 def phasee_binding_from_case(layer: CaseLayer, case_id: str) -> dict[str, Any] | None:
     case = layer.get_case(case_id)
     draft = layer.latest_draft(case_id)
@@ -139,9 +173,16 @@ def reject_reasons(binding: dict[str, Any], *, case: dict[str, Any] | None = Non
         reasons.append("attachments_present")
     if LINK_RE.search(str(binding.get("body") or "")):
         reasons.append("links_present")
-    if not is_phasee_body(binding.get("body")):
+    desk = is_desk_roundtrip_body(binding.get("body"))
+    phasee = is_phasee_body(binding.get("body"))
+    if desk and not phasee:
+        if binding.get("subject") != DESK_SEND_SUBJECT:
+            reasons.append("subject_mismatch")
+    elif not phasee:
         reasons.append("missing_phasee_marker")
-    if binding.get("subject") != PHASEE_SUBJECT:
+        if binding.get("subject") != PHASEE_SUBJECT:
+            reasons.append("subject_mismatch")
+    elif binding.get("subject") != PHASEE_SUBJECT:
         reasons.append("subject_mismatch")
     if binding.get("mailbox") != MAILBOX:
         reasons.append("mailbox_mismatch")
@@ -154,6 +195,11 @@ def reject_reasons(binding: dict[str, Any], *, case: dict[str, Any] | None = Non
             reasons.append("inbound_changed")
         if (case.get("thread_id") or "") != (binding.get("thread_id") or ""):
             reasons.append("thread_changed")
+        if int(case.get("hold") or 0):
+            reasons.append("hold")
+        who = str(case.get("owner") or "").lower()
+        if who in OFFICE_OWNER_KEYS:
+            reasons.append("office_owned")
     if draft is not None and str(draft.get("proposed_response") or "") != str(binding.get("body") or ""):
         reasons.append("body_changed")
     return reasons
@@ -182,8 +228,8 @@ def queue_phasee_send(layer: CaseLayer, case_id: str) -> dict[str, Any]:
         INSERT INTO case_send_actions (
             case_id, draft_version, created_at, mailbox, from_addr, to_addr, cc_json, bcc_json,
             thread_id, subject, body, attachments_json, latest_inbound_message_id,
-            payload_sha256, send_timing, status, consumed
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+            payload_sha256, send_timing, status, consumed, queued_by
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
         """,
         (
             binding["case_id"],
@@ -202,6 +248,7 @@ def queue_phasee_send(layer: CaseLayer, case_id: str) -> dict[str, Any]:
             digest,
             binding["send_timing"],
             STATUS_QUEUED,
+            QUEUED_BY_PHASEE,
         ),
     )
     layer.add_event(case_id, "phasee_send_queued", draft_version=binding["draft_version"], payload_sha256=digest)
@@ -209,7 +256,97 @@ def queue_phasee_send(layer: CaseLayer, case_id: str) -> dict[str, Any]:
         "SELECT * FROM case_send_actions WHERE case_id = ? AND draft_version = ?",
         (case_id, binding["draft_version"]),
     ).fetchone()
-    return {"ok": True, "action": dict(row)}
+    return {"ok": True, "action": dict(row), "queued_by": QUEUED_BY_PHASEE}
+
+
+def desk_binding_from_case(layer: CaseLayer, case_id: str) -> dict[str, Any] | None:
+    case = layer.get_case(case_id)
+    draft = layer.latest_draft(case_id)
+    if not case or not draft:
+        return None
+    body = str(draft.get("proposed_response") or "")
+    if not is_desk_roundtrip_body(body):
+        return None
+    return {
+        "case_id": case_id,
+        "draft_version": int(draft["version"]),
+        "mailbox": case.get("mailbox") or MAILBOX,
+        "from_addr": PHASEE_FROM,
+        "to_addr": PHASEE_TO,
+        "cc": [],
+        "bcc": [],
+        "thread_id": case.get("thread_id") or "",
+        "subject": DESK_SEND_SUBJECT,
+        "body": body,
+        "attachments": [],
+        "latest_inbound_message_id": case.get("latest_inbound_message_id") or "",
+        "send_timing": PHASEE_TIMING,
+    }
+
+
+def queue_desk_send(layer: CaseLayer, case_id: str, *, control_gmail_id: str | None = None) -> dict[str, Any]:
+    """Queue only a desk-roundtrip send. Phase E leftovers are not executable here."""
+    ensure_send_tables(layer)
+    case = layer.get_case(case_id)
+    draft = layer.latest_draft(case_id)
+    binding = desk_binding_from_case(layer, case_id)
+    if not binding:
+        return {"ok": False, "reason": "not_desk_send_draft"}
+    reasons = reject_reasons(binding, case=case, draft=draft)
+    if reasons:
+        return {"ok": False, "reason": "rejected", "reasons": reasons}
+    digest = payload_sha256(binding)
+    existing = layer.conn.execute(
+        "SELECT * FROM case_send_actions WHERE case_id = ? AND draft_version = ?",
+        (case_id, binding["draft_version"]),
+    ).fetchone()
+    if existing:
+        row = dict(existing)
+        if str(row.get("queued_by") or "") != QUEUED_BY_DESK:
+            return {"ok": False, "reason": "phasee_leftover_not_executable", "action": row}
+        return {"ok": True, "skipped": True, "reason": "already_queued", "action": row}
+    now = utc_now()
+    layer.conn.execute(
+        """
+        INSERT INTO case_send_actions (
+            case_id, draft_version, created_at, mailbox, from_addr, to_addr, cc_json, bcc_json,
+            thread_id, subject, body, attachments_json, latest_inbound_message_id,
+            payload_sha256, send_timing, status, consumed, queued_by, control_gmail_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+        """,
+        (
+            binding["case_id"],
+            binding["draft_version"],
+            now,
+            binding["mailbox"],
+            binding["from_addr"],
+            binding["to_addr"],
+            _json(binding["cc"]),
+            _json(binding["bcc"]),
+            binding["thread_id"],
+            binding["subject"],
+            binding["body"],
+            _json(binding["attachments"]),
+            binding["latest_inbound_message_id"],
+            digest,
+            binding["send_timing"],
+            STATUS_QUEUED,
+            QUEUED_BY_DESK,
+            control_gmail_id,
+        ),
+    )
+    layer.add_event(
+        case_id,
+        "desk_send_queued",
+        draft_version=binding["draft_version"],
+        payload_sha256=digest,
+        control_gmail_id=control_gmail_id,
+    )
+    row = layer.conn.execute(
+        "SELECT * FROM case_send_actions WHERE case_id = ? AND draft_version = ?",
+        (case_id, binding["draft_version"]),
+    ).fetchone()
+    return {"ok": True, "action": dict(row), "queued_by": QUEUED_BY_DESK}
 
 
 def queue_approved_phasee_sends(layer: CaseLayer) -> list[dict[str, Any]]:

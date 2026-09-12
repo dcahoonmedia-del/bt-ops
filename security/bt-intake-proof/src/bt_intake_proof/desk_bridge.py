@@ -20,7 +20,17 @@ from .cases import (
     DECISION_NONE,
     CaseLayer,
 )
-from .constants import ALLOWED_SENDER, CLASS_DESK_CONTROL, MAILBOX, MARKER_DESK_BIND, MARKER_DESK_CTRL, MARKER_DESK_RESULT
+from .constants import (
+    ALLOWED_SENDER,
+    CLASS_DESK_CONTROL,
+    DESK_PACKET_MARKERS,
+    DESK_SEND_BODY,
+    MAILBOX,
+    MARKER_DESK_BIND,
+    MARKER_DESK_CTRL,
+    MARKER_DESK_RESULT,
+    MARKER_DESK_SEND,
+)
 from .desk_control import (
     INTENT_APPROVE_SEND,
     INTENT_HOLD,
@@ -31,13 +41,15 @@ from .desk_control import (
     SOURCE_CHATGPT,
     submit_desk_action,
 )
+from .desk_origin import authenticate_control_origin, unquoted_control_text
 from .eligibility import normalize_email
 from .phasee_constants import PHASEE_TO
 from .send_bind import (
+    desk_binding_from_case,
     ensure_send_tables,
+    is_desk_roundtrip_body,
     is_phasee_body,
-    phasee_binding_from_case,
-    queue_phasee_send,
+    queue_desk_send,
 )
 from .store import ReceiptStore, utc_now
 
@@ -144,6 +156,27 @@ def parse_packet_binding(text: str | None) -> dict[str, Any] | None:
     }
 
 
+def exact_desk_send_draft() -> dict[str, Any]:
+    return {
+        "classification": "internal_desk_roundtrip_send_test",
+        "known_facts": [
+            "Internal B&T Lead Desk round-trip test only",
+            "From contactus@ to daniel@ only",
+            "No CC, BCC, attachments, or links",
+        ],
+        "missing_info": [],
+        "recommended_next_step": "Daniel approves this exact version to authorize one bounded send",
+        "proposed_response": DESK_SEND_BODY,
+        "channel": "email",
+        "judgment_needed": "Approve only if the exact body below is what should be sent once",
+        "reasoning_summary": "Desk round-trip exact-approval send test. Not a customer promise.",
+    }
+
+
+def install_desk_send_draft(layer: CaseLayer, case_id: str, nonce: str) -> dict[str, Any]:
+    return layer.save_draft(case_id, exact_desk_send_draft(), nonce, label_not_sent=False)
+
+
 def body_sha256(text: str | None) -> str:
     return hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()
 
@@ -153,7 +186,7 @@ def compute_packet_binding(case: dict[str, Any], draft: dict[str, Any] | None) -
     draft = draft or {}
     body = str(draft.get("proposed_response") or "")
     to_addr = ""
-    if is_phasee_body(body):
+    if is_phasee_body(body) or is_desk_roundtrip_body(body):
         to_addr = PHASEE_TO
     payload = {
         "case_id": case.get("case_id"),
@@ -192,6 +225,7 @@ def format_result_email(result: dict[str, Any]) -> dict[str, str]:
     lines = [
         "B&T Lead Desk result (internal). Tell Daniel this in plain language.",
         "Do not read machine fields to him.",
+        "The ChatGPT iPhone app may show its own sent-mail confirmation; that is the app, not a hidden transport.",
         "",
         MARKER_RESULT,
         human,
@@ -201,10 +235,15 @@ def format_result_email(result: dict[str, Any]) -> dict[str, str]:
         f"CASE={result.get('case_id') or ''}",
         f"DRAFT={result.get('draft_version') or ''}",
         f"REASON={result.get('reason') or ''}",
+        f"CONTROL_ID={result.get('control_gmail_id') or ''}",
+        f"NONCE={result.get('nonce') or ''}",
         f"EXECUTE_SEND={'yes' if result.get('execute_send') else 'no'}",
         f"SEND_QUEUED={'yes' if result.get('send_queued') else 'no'}",
+        f"SEND_STATUS={result.get('send_status') or ''}",
+        f"PROVIDER_ID={result.get('provider_message_id') or ''}",
     ]
     return {
+        "from": MAILBOX,
         "to": ALLOWED_SENDER,
         "cc": "",
         "subject": f"{MARKER_RESULT} {result.get('intent') or 'action'} {result.get('case_id') or ''}".strip(),
@@ -214,20 +253,48 @@ def format_result_email(result: dict[str, Any]) -> dict[str, str]:
     }
 
 
-def inspect_inbound(sender: str | None, subject: str | None, body: str | None) -> dict[str, Any]:
-    """Classify an inbound before ordinary intake. Does not authorize."""
+def looks_like_desk_transport(subject: str | None, body: str | None) -> bool:
+    blob = f"{subject or ''}\n{body or ''}"
+    return any(marker in blob for marker in DESK_PACKET_MARKERS) or MARKER_DESK_SEND in blob
+
+
+def inspect_inbound(
+    sender: str | None,
+    subject: str | None,
+    body: str | None,
+    *,
+    provider_evidence: dict[str, Any] | None = None,
+    headers: Any = None,
+) -> dict[str, Any]:
+    """Classify an inbound before ordinary intake. Origin is fail-closed."""
     if not looks_like_control_mail(subject, body):
         return {"shaped": False, "kind": "not_control"}
     sender_n = normalize_email(sender)
-    parsed = parse_control_mail(subject, body)
-    sender_ok = sender_n == ALLOWED_SENDER
+    unquoted = unquoted_control_text(body)
+    parsed = parse_control_mail(subject, unquoted)
+    origin = authenticate_control_origin(headers, sender_n, provider_evidence)
+    quoted_only = bool(
+        MARKER_CTRL in str(body or "")
+        and MARKER_CTRL not in unquoted
+        and not re.search(r"^INTENT=", unquoted, re.M)
+    )
+    sender_ok = bool(origin.get("accepted"))
+    reason = None
+    if not sender_ok:
+        reason = str(origin.get("reason") or "sender_not_verified_daniel")
+    elif quoted_only or not parsed.get("ok") or not parsed.get("intent"):
+        reason = "control_not_in_unquoted_text" if quoted_only or not parsed.get("intent") else None
+        if quoted_only:
+            sender_ok = False
     return {
         "shaped": True,
         "kind": CLASS_DESK_CONTROL,
         "sender_ok": sender_ok,
         "sender": sender_n,
-        "parsed": parsed if parsed.get("ok") else None,
-        "reason": None if sender_ok else "sender_not_verified_daniel",
+        "origin": origin,
+        "parsed": parsed if parsed.get("ok") and parsed.get("intent") else None,
+        "reason": reason,
+        "quoted_only": quoted_only,
         "eligible_for_intake": False,
         "eligible_for_codex": False,
         "becomes_case": False,
@@ -255,6 +322,20 @@ def ensure_bridge_tables(layer: CaseLayer) -> None:
             gmail_message_id TEXT,
             PRIMARY KEY (nonce, draft_version)
         );
+
+        CREATE TABLE IF NOT EXISTS desk_result_outbox (
+            id INTEGER PRIMARY KEY,
+            control_gmail_id TEXT NOT NULL,
+            nonce TEXT,
+            kind TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            body TEXT NOT NULL,
+            status TEXT NOT NULL,
+            provider_id TEXT,
+            created_at TEXT NOT NULL,
+            sent_at TEXT,
+            UNIQUE (control_gmail_id, kind)
+        );
         """
     )
     cols = {row[1] for row in layer.conn.execute("PRAGMA table_info(cases)")}
@@ -262,16 +343,36 @@ def ensure_bridge_tables(layer: CaseLayer) -> None:
         layer.conn.execute("ALTER TABLE cases ADD COLUMN owner TEXT")
     if "hold" not in cols:
         layer.conn.execute("ALTER TABLE cases ADD COLUMN hold INTEGER NOT NULL DEFAULT 0")
+    inbox_cols = {row[1] for row in layer.conn.execute("PRAGMA table_info(desk_control_inbox)")}
+    if "origin_authenticated" not in inbox_cols:
+        layer.conn.execute(
+            "ALTER TABLE desk_control_inbox ADD COLUMN origin_authenticated INTEGER NOT NULL DEFAULT 0"
+        )
 
 
-def record_control_inbox(layer: CaseLayer, *, gmail_message_id: str, sender: str, parsed: dict[str, Any]) -> None:
+def record_control_inbox(
+    layer: CaseLayer,
+    *,
+    gmail_message_id: str,
+    sender: str,
+    parsed: dict[str, Any],
+    origin_authenticated: bool = False,
+) -> None:
     ensure_bridge_tables(layer)
     layer.conn.execute(
         """
-        INSERT OR IGNORE INTO desk_control_inbox (gmail_message_id, sender, parsed_json, created_at, processed)
-        VALUES (?, ?, ?, ?, 0)
+        INSERT OR IGNORE INTO desk_control_inbox (
+            gmail_message_id, sender, parsed_json, created_at, processed, origin_authenticated
+        )
+        VALUES (?, ?, ?, ?, 0, ?)
         """,
-        (gmail_message_id, sender, json.dumps(parsed, sort_keys=True, default=str), utc_now()),
+        (
+            gmail_message_id,
+            sender,
+            json.dumps(parsed, sort_keys=True, default=str),
+            utc_now(),
+            1 if origin_authenticated else 0,
+        ),
     )
 
 
@@ -308,7 +409,10 @@ def _human_success(intent: str, *, owner: str | None = None, version: int | None
     if intent == INTENT_REVISE:
         return f"I saved a new draft version{f' (v{version})' if version else ''}."
     if intent == INTENT_APPROVE_SEND:
-        return "That version is approved and queued only if the exact Phase E packet still matches. It was not auto-sent."
+        return (
+            "That version is approved and queued for the bounded sender. "
+            "Delivery is not proven until independent verify."
+        )
     return "The desk action was recorded."
 
 
@@ -364,8 +468,8 @@ def consume_binding(layer: CaseLayer, parsed: dict[str, Any], *, gmail_message_i
     )
 
 
-def _phasee_kwargs(layer: CaseLayer, case: dict[str, Any], draft: dict[str, Any]) -> dict[str, Any]:
-    binding = phasee_binding_from_case(layer, case["case_id"])
+def _send_kwargs(layer: CaseLayer, case: dict[str, Any], draft: dict[str, Any]) -> dict[str, Any]:
+    binding = desk_binding_from_case(layer, case["case_id"])
     return {
         "binding": binding,
         "case": case,
@@ -448,12 +552,19 @@ def apply_authorized_action(
         }
 
     if intent == INTENT_APPROVE_SEND:
-        if not is_phasee_body(draft.get("proposed_response")):
+        if is_phasee_body(draft.get("proposed_response")) and not is_desk_roundtrip_body(draft.get("proposed_response")):
             return _fail(
-                "not_phasee_draft",
+                "phasee_leftover_not_reusable",
                 intent=intent,
                 case_id=case_id,
-                human="Send still requires the exact Phase E internal packet.",
+                human="That Phase E packet is not this round-trip send. A new exact approval is required.",
+            )
+        if not is_desk_roundtrip_body(draft.get("proposed_response")):
+            return _fail(
+                "not_desk_send_draft",
+                intent=intent,
+                case_id=case_id,
+                human="Send still requires the exact isolated internal round-trip packet.",
             )
         if case.get("approval_state") != APPROVAL_APPROVED:
             decided = layer.apply_decision(
@@ -468,7 +579,7 @@ def apply_authorized_action(
             case = layer.get_case(case_id) or case
         authorized = submit_desk_action(
             {"intent": intent, "owner": owner, "note": note, "source": SOURCE_CHATGPT},
-            **_phasee_kwargs(layer, case, draft),
+            **_send_kwargs(layer, case, draft),
         )
         if not authorized.get("ok") or not authorized.get("execute_send"):
             return {
@@ -478,17 +589,35 @@ def apply_authorized_action(
                 "send_queued": False,
                 "human": "That send is blocked. The exact packet no longer matches.",
             }
-        queued = queue_phasee_send(layer, case_id)
+        queued = queue_desk_send(layer, case_id, control_gmail_id=parsed.get("control_gmail_id"))
         return {
             **authorized,
             "ok": bool(queued.get("ok")),
             "send_queued": bool(queued.get("ok")),
             "queued": queued,
+            "action_id": (queued.get("action") or {}).get("id"),
             "applied": "approve_and_send_current",
             "human": _human_success(intent),
         }
 
     return _fail("unknown_intent", intent=intent, case_id=case_id)
+
+
+def _finish_control_result(
+    layer: CaseLayer,
+    result: dict[str, Any],
+    *,
+    gmail_message_id: str | None,
+    nonce: str | None = None,
+    enqueue: bool = True,
+) -> dict[str, Any]:
+    result["control_gmail_id"] = gmail_message_id
+    result["nonce"] = nonce or result.get("nonce")
+    result["result_email"] = format_result_email(result)
+    if enqueue and gmail_message_id:
+        enqueue_control_deliveries(layer, result)
+    _mark_inbox(layer, gmail_message_id, {k: v for k, v in result.items() if k != "result_email"})
+    return result
 
 
 def process_control_mail(
@@ -498,37 +627,46 @@ def process_control_mail(
     subject: str | None,
     body: str | None,
     gmail_message_id: str | None = None,
+    provider_evidence: dict[str, Any] | None = None,
+    headers: Any = None,
+    origin_already_authenticated: bool = False,
 ) -> dict[str, Any]:
-    """Authorize one control message. Never interprets speech. Never auto-executes a send."""
+    """Authorize one control message. Never interprets speech. Does not execute a send."""
     ensure_bridge_tables(layer)
     ensure_send_tables(layer)
-    inspection = inspect_inbound(sender, subject, body)
+    inspection = inspect_inbound(
+        sender,
+        subject,
+        body,
+        provider_evidence=provider_evidence,
+        headers=headers,
+    )
+    if origin_already_authenticated and inspection.get("shaped"):
+        inspection = {**inspection, "sender_ok": True, "reason": None}
     if not inspection.get("shaped"):
         result = _fail("not_control_mail")
-        _mark_inbox(layer, gmail_message_id, result)
-        return result
+        return _finish_control_result(layer, result, gmail_message_id=gmail_message_id, enqueue=False)
     if not inspection.get("sender_ok"):
         result = _fail(
-            "sender_not_verified_daniel",
+            str(inspection.get("reason") or "sender_not_verified_daniel"),
             human="Only verified Daniel mail can control the desk.",
         )
         record_control_inbox(
             layer,
             gmail_message_id=gmail_message_id or f"imitation-{utc_now()}",
             sender=normalize_email(sender),
-            parsed={"imitation": True},
+            parsed={"imitation": True, "reason": result["reason"]},
+            origin_authenticated=False,
         )
-        _mark_inbox(layer, gmail_message_id, result)
-        return result
+        return _finish_control_result(layer, result, gmail_message_id=gmail_message_id)
 
-    parsed = inspection.get("parsed") or parse_control_mail(subject, body)
-    if not parsed.get("ok"):
-        result = _fail("unparsed_control_mail")
-        return result
+    parsed = inspection.get("parsed") or parse_control_mail(subject, unquoted_control_text(body))
+    if not parsed.get("ok") or not parsed.get("intent"):
+        result = _fail(str(inspection.get("reason") or "unparsed_control_mail"))
+        return _finish_control_result(layer, result, gmail_message_id=gmail_message_id)
     if parsed.get("intent") not in BRIDGE_INTENTS:
         result = _fail("unsupported_bridge_intent", intent=parsed.get("intent"))
-        _mark_inbox(layer, gmail_message_id, result)
-        return result
+        return _finish_control_result(layer, result, gmail_message_id=gmail_message_id, nonce=parsed.get("nonce"))
 
     if gmail_message_id:
         already = layer.conn.execute(
@@ -536,14 +674,19 @@ def process_control_mail(
             (gmail_message_id,),
         ).fetchone()
         if already and already["result_json"]:
-            return json.loads(already["result_json"])
+            cached = json.loads(already["result_json"])
+            cached["result_email"] = format_result_email(cached)
+            cached["replayed"] = True
+            return cached
         record_control_inbox(
             layer,
             gmail_message_id=gmail_message_id,
             sender=ALLOWED_SENDER,
             parsed=parsed,
+            origin_authenticated=True,
         )
 
+    parsed = {**parsed, "control_gmail_id": gmail_message_id}
     case = layer.get_case(str(parsed.get("case_id") or ""))
     draft = layer.latest_draft(str(parsed.get("case_id") or "")) if case else None
     blocks = validate_control_binding(parsed, case=case, draft=draft, layer=layer)
@@ -560,8 +703,7 @@ def process_control_mail(
             case_id=parsed.get("case_id"),
             human="That action is stale or blocked. I did not change the case.",
         )
-        _mark_inbox(layer, gmail_message_id, result)
-        return result
+        return _finish_control_result(layer, result, gmail_message_id=gmail_message_id, nonce=parsed.get("nonce"))
 
     assert case is not None and draft is not None
     applied = apply_authorized_action(layer, parsed, case=case, draft=draft)
@@ -570,12 +712,18 @@ def process_control_mail(
     applied.setdefault("source", SOURCE_CHATGPT)
     applied.setdefault("execute_send", False)
     applied.setdefault("send_queued", False)
+    applied["draft_version"] = applied.get("draft_version") or draft.get("version")
     if applied.get("ok"):
         consume_binding(layer, parsed, gmail_message_id=gmail_message_id)
-        applied.setdefault("human", _human_success(parsed["intent"], owner=applied.get("owner") or parsed.get("owner"), version=applied.get("draft_version")))
-    applied["result_email"] = format_result_email(applied)
-    _mark_inbox(layer, gmail_message_id, {k: v for k, v in applied.items() if k != "result_email"})
-    return applied
+        applied.setdefault(
+            "human",
+            _human_success(
+                parsed["intent"],
+                owner=applied.get("owner") or parsed.get("owner"),
+                version=applied.get("draft_version"),
+            ),
+        )
+    return _finish_control_result(layer, applied, gmail_message_id=gmail_message_id, nonce=parsed.get("nonce"))
 
 
 def process_control_receipt(store: ReceiptStore, receipt: dict[str, Any]) -> dict[str, Any]:
@@ -586,6 +734,8 @@ def process_control_receipt(store: ReceiptStore, receipt: dict[str, Any]) -> dic
         subject=receipt.get("subject"),
         body=receipt.get("body_text"),
         gmail_message_id=receipt.get("gmail_message_id"),
+        provider_evidence=receipt.get("_provider_evidence") or receipt.get("provider_evidence"),
+        headers=receipt.get("_headers") or receipt.get("headers"),
     )
 
 
@@ -598,13 +748,11 @@ def process_pending_controls(store: ReceiptStore) -> list[dict[str, Any]]:
     results = []
     for row in rows:
         parsed = json.loads(row["parsed_json"])
-        if parsed.get("imitation"):
-            result = _fail("sender_not_verified_daniel")
-            _mark_inbox(layer, row["gmail_message_id"], result)
+        if parsed.get("imitation") or not int(row["origin_authenticated"] if "origin_authenticated" in row.keys() else 0):
+            result = _fail(str(parsed.get("reason") or "sender_not_verified_daniel"))
+            _finish_control_result(layer, result, gmail_message_id=row["gmail_message_id"])
             results.append(result)
             continue
-        case = layer.get_case(str(parsed.get("case_id") or ""))
-        draft = layer.latest_draft(str(parsed.get("case_id") or "")) if case else None
         fake_body = format_control_mail(
             str(parsed.get("intent") or ""),
             {
@@ -623,7 +771,150 @@ def process_pending_controls(store: ReceiptStore) -> list[dict[str, Any]]:
                 subject=MARKER_CTRL,
                 body=fake_body,
                 gmail_message_id=row["gmail_message_id"],
+                origin_already_authenticated=True,
             )
         )
-        del draft
     return results
+
+
+def _fresh_case_email(layer: CaseLayer, case_id: str | None) -> dict[str, str] | None:
+    if not case_id:
+        return None
+    from .desk_packets import format_case_email
+    from .lead_desk import LeadDesk, db_fingerprint
+
+    path = layer.store.path
+    before = db_fingerprint(path)
+    desk = LeadDesk(path)
+    try:
+        detail = desk.get_case(case_id, debug=True)
+    except Exception:
+        return None
+    finally:
+        desk.close()
+    after = db_fingerprint(path)
+    if before["sha256"] != after["sha256"]:
+        return None
+    return format_case_email(detail, generated_at=utc_now(), fingerprint=before["sha256"])
+
+
+def enqueue_control_deliveries(layer: CaseLayer, result: dict[str, Any], *, kind_suffix: str = "") -> None:
+    """Durable, duplicate-safe result + fresh case packet for success and reject."""
+    ensure_bridge_tables(layer)
+    control_id = str(result.get("control_gmail_id") or "")
+    if not control_id:
+        return
+    nonce = result.get("nonce")
+    now = utc_now()
+    result_mail = result.get("result_email") or format_result_email(result)
+    kind_result = f"result{kind_suffix}"
+    kind_case = f"case{kind_suffix}"
+    layer.conn.execute(
+        """
+        INSERT OR IGNORE INTO desk_result_outbox
+            (control_gmail_id, nonce, kind, subject, body, status, created_at)
+        VALUES (?, ?, ?, ?, ?, 'pending', ?)
+        """,
+        (control_id, nonce, kind_result, result_mail["subject"], result_mail["body"], now),
+    )
+    case_mail = _fresh_case_email(layer, result.get("case_id"))
+    if case_mail:
+        layer.conn.execute(
+            """
+            INSERT OR IGNORE INTO desk_result_outbox
+                (control_gmail_id, nonce, kind, subject, body, status, created_at)
+            VALUES (?, ?, ?, ?, ?, 'pending', ?)
+            """,
+            (control_id, nonce, kind_case, case_mail["subject"], case_mail["body"], now),
+        )
+
+
+def deliver_pending_desk_mail(layer: CaseLayer, transport: Any) -> list[dict[str, Any]]:
+    """Send pending desk packets contactus → daniel. Duplicate-safe; unknown does not retry."""
+    ensure_bridge_tables(layer)
+    rows = layer.conn.execute(
+        "SELECT * FROM desk_result_outbox WHERE status = 'pending' ORDER BY id"
+    ).fetchall()
+    out = []
+    sender = getattr(transport, "send_internal_desk", None)
+    if sender is None:
+        return [{"ok": False, "reason": "desk_sender_missing"}]
+    for row in rows:
+        claimed = layer.conn.execute(
+            "UPDATE desk_result_outbox SET status = 'sending' WHERE id = ? AND status = 'pending'",
+            (row["id"],),
+        )
+        if claimed.rowcount != 1:
+            continue
+        result = sender(
+            {
+                "from_addr": MAILBOX,
+                "to": ALLOWED_SENDER,
+                "subject": row["subject"],
+                "body": row["body"],
+            }
+        )
+        if result.get("unknown"):
+            layer.conn.execute(
+                "UPDATE desk_result_outbox SET status = 'unknown', provider_id = ? WHERE id = ?",
+                (result.get("provider_message_id"), row["id"]),
+            )
+            out.append({"ok": False, "unknown": True, "id": row["id"], "reason": result.get("reason")})
+            continue
+        if not result.get("ok"):
+            layer.conn.execute(
+                "UPDATE desk_result_outbox SET status = 'pending' WHERE id = ? AND status = 'sending'",
+                (row["id"],),
+            )
+            if result.get("blocked"):
+                layer.conn.execute(
+                    "UPDATE desk_result_outbox SET status = 'blocked' WHERE id = ?",
+                    (row["id"],),
+                )
+            out.append({"ok": False, "id": row["id"], "reason": result.get("reason"), "blocked": result.get("blocked")})
+            continue
+        layer.conn.execute(
+            "UPDATE desk_result_outbox SET status = 'sent', provider_id = ?, sent_at = ? WHERE id = ?",
+            (result.get("provider_message_id"), utc_now(), row["id"]),
+        )
+        out.append(
+            {
+                "ok": True,
+                "id": row["id"],
+                "kind": row["kind"],
+                "control_gmail_id": row["control_gmail_id"],
+                "provider_message_id": result.get("provider_message_id"),
+            }
+        )
+    return out
+
+
+def enqueue_send_followup(layer: CaseLayer, executed: dict[str, Any]) -> None:
+    action_id = executed.get("action_id")
+    if not action_id:
+        return
+    action = layer.conn.execute("SELECT * FROM case_send_actions WHERE id = ?", (action_id,)).fetchone()
+    if not action:
+        return
+    control_id = action["control_gmail_id"]
+    if not control_id:
+        return
+    payload = {
+        "ok": bool(executed.get("ok")),
+        "intent": INTENT_APPROVE_SEND,
+        "case_id": action["case_id"],
+        "draft_version": action["draft_version"],
+        "control_gmail_id": control_id,
+        "send_queued": True,
+        "execute_send": True,
+        "send_status": executed.get("status") or executed.get("reason"),
+        "provider_message_id": executed.get("provider_message_id"),
+        "reason": executed.get("reason"),
+        "human": (
+            "The bounded sender attempted that internal message. Independent verify is still required."
+            if executed.get("ok")
+            else "The bounded sender did not complete that send."
+        ),
+    }
+    payload["result_email"] = format_result_email(payload)
+    enqueue_control_deliveries(layer, payload, kind_suffix="_send")

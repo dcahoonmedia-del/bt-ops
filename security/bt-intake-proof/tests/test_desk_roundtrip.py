@@ -1,0 +1,353 @@
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from bt_intake_proof.bounded_send import MemorySendTransport, execute_desk_queued_sends, execute_due_sends
+from bt_intake_proof.cases import CaseLayer
+from bt_intake_proof.constants import (
+    ALLOWED_SENDER,
+    CLASS_DESK_TRANSPORT,
+    DESK_SEND_BODY,
+    DETECTION_EVENT_DRIVEN,
+    MAILBOX,
+    MARKER_DESK_CASE,
+    MARKER_DESK_CTRL,
+    MARKER_DESK_RESULT,
+    MARKER_DESK_SEND,
+)
+from bt_intake_proof.desk_bridge import (
+    compute_packet_binding,
+    deliver_pending_desk_mail,
+    format_control_mail,
+    inspect_inbound,
+    install_desk_send_draft,
+    process_control_mail,
+)
+from bt_intake_proof.desk_control import INTENT_APPROVE_SEND, INTENT_HOLD, INTENT_REVISE
+from bt_intake_proof.desk_origin import authenticate_control_origin, daniel_origin_evidence, unquoted_control_text
+from bt_intake_proof.desk_runtime import finish_desk_roundtrip
+from bt_intake_proof.phasee import install_phasee_draft
+from bt_intake_proof.phasee_constants import PHASEE_CASE_MARKER, STATUS_ATTEMPTED, STATUS_QUEUED, STATUS_UNKNOWN
+from bt_intake_proof.receiver import hydrate_receipt
+from bt_intake_proof.send_bind import QUEUED_BY_DESK, QUEUED_BY_PHASEE, ensure_send_tables, latest_action, queue_phasee_send
+from bt_intake_proof.send_verify import MemoryVerifyTransport, verify_sent
+from bt_intake_proof.store import ReceiptStore, body_hash
+
+
+def _receipt(message_id: str, **extra) -> dict:
+    body = extra.pop("body_text", f"Internal desk inbound. {PHASEE_CASE_MARKER}")
+    return {
+        "eligible": True,
+        "mailbox": MAILBOX,
+        "gmail_message_id": message_id,
+        "thread_id": extra.pop("thread_id", f"thr-{message_id}"),
+        "rfc_message_id": f"<{message_id}@bt>",
+        "sender": ALLOWED_SENDER,
+        "recipients": [MAILBOX],
+        "subject": extra.pop("subject", PHASEE_CASE_MARKER),
+        "gmail_received_at": "2026-09-12T06:00:00+00:00",
+        "detected_at": "2026-09-12T06:00:05+00:00",
+        "body_text": body,
+        "raw_message": body,
+        "body_hash": body_hash(body),
+        "labels_before": ["INBOX", "UNREAD"],
+        "labels_after": ["INBOX", "UNREAD"],
+        "classification": extra.pop("classification", "new_message"),
+        "test_marker": extra.pop("test_marker", PHASEE_CASE_MARKER),
+        "reasons": [],
+    }
+
+
+class DeskRoundtripTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self.tmp.name) / "receipts.sqlite"
+        self.store = ReceiptStore(self.path)
+        self.layer = CaseLayer(self.store)
+        ensure_send_tables(self.layer)
+
+    def tearDown(self) -> None:
+        self.store.close()
+        self.tmp.cleanup()
+
+    def _open_desk(self, message_id: str = "desk-1") -> tuple[str, dict]:
+        self.store.commit_notification(
+            mailbox=MAILBOX,
+            history_id=message_id,
+            detection_path=DETECTION_EVENT_DRIVEN,
+            pubsub_message_id=f"n-{message_id}",
+            receipts=[_receipt(message_id, thread_id=f"thr-{message_id}")],
+        )
+        row = self.store.get_receipt(MAILBOX, message_id)
+        opened = self.layer.upsert_from_receipt(row)
+        install_desk_send_draft(self.layer, opened["case_id"], f"nonce-{message_id}")
+        case = self.layer.get_case(opened["case_id"])
+        draft = self.layer.latest_draft(opened["case_id"])
+        return opened["case_id"], compute_packet_binding(case, draft)
+
+    def _apply(self, intent: str, binding: dict, **extra) -> dict:
+        mail = format_control_mail(intent, binding, owner=extra.get("owner"), note=extra.get("note"))
+        mid = extra.get("gmail_message_id", f"ctrl-{intent}-{binding.get('nonce')}")
+        return process_control_mail(
+            self.layer,
+            sender=extra.get("sender", ALLOWED_SENDER),
+            subject=mail["subject"],
+            body=extra.get("body", mail["body"]),
+            gmail_message_id=mid,
+            provider_evidence=extra.get("provider_evidence", daniel_origin_evidence(mid)),
+        )
+
+    def test_from_alone_and_forged_ar_fail_closed(self) -> None:
+        _case_id, binding = self._open_desk()
+        mail = format_control_mail(INTENT_HOLD, binding)
+        bare = inspect_inbound(ALLOWED_SENDER, mail["subject"], mail["body"])
+        self.assertFalse(bare["sender_ok"])
+        forged = authenticate_control_origin(
+            [("Authentication-Results", "evil.example; dkim=pass header.i=@btpestcontrol.com")],
+            ALLOWED_SENDER,
+            {"fetched_via": "contactus_gmail_api", "gmail_message_id": "x"},
+        )
+        self.assertFalse(forged["accepted"])
+        self.assertEqual(forged["reason"], "authentication_results_not_gmail")
+        spoofed = self._apply(
+            INTENT_HOLD,
+            binding,
+            gmail_message_id="spoof-from",
+            provider_evidence={
+                "fetched_via": "contactus_gmail_api",
+                "gmail_message_id": "spoof-from",
+                "headers": [
+                    (
+                        "Authentication-Results",
+                        "mx.google.com; dkim=pass header.i=@attacker.test; spf=pass smtp.mailfrom=attacker@attacker.test",
+                    ),
+                    ("From", ALLOWED_SENDER),
+                ],
+            },
+        )
+        self.assertFalse(spoofed["ok"])
+        self.assertEqual(spoofed["reason"], "provider_auth_failed")
+        self.assertEqual(int(self.layer.get_case(_case_id)["hold"] or 0), 0)
+
+    def test_quoted_control_syntax_does_not_authorize(self) -> None:
+        case_id, binding = self._open_desk("desk-quote")
+        mail = format_control_mail(INTENT_HOLD, binding)
+        quoted = "Thanks, we will wait.\n\n" + "\n".join(f"> {line}" for line in mail["body"].splitlines())
+        self.assertNotIn("INTENT=hold", unquoted_control_text(quoted))
+        result = self._apply(INTENT_HOLD, binding, gmail_message_id="quoted-1", body=quoted)
+        self.assertFalse(result["ok"])
+        self.assertEqual(int(self.layer.get_case(case_id)["hold"] or 0), 0)
+
+    def test_malformed_and_bad_binding(self) -> None:
+        case_id, binding = self._open_desk("desk-malformed")
+        bad = self._apply(INTENT_HOLD, {**binding, "packet_hash": "0" * 64}, gmail_message_id="bad-bind")
+        self.assertFalse(bad["ok"])
+        self.assertIn("packet_hash_invalid", bad.get("blocks") or [])
+        mail = format_control_mail("not_an_intent", binding)
+        mid = "bad-intent"
+        result = process_control_mail(
+            self.layer,
+            sender=ALLOWED_SENDER,
+            subject=mail["subject"],
+            body=mail["body"],
+            gmail_message_id=mid,
+            provider_evidence=daniel_origin_evidence(mid),
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["reason"], "unsupported_bridge_intent")
+        self.assertEqual(int(self.layer.get_case(case_id)["hold"] or 0), 0)
+
+    def test_result_delivery_and_fresh_case_packet(self) -> None:
+        case_id, binding = self._open_desk("desk-deliver")
+        result = self._apply(INTENT_HOLD, binding, gmail_message_id="ctrl-deliver")
+        self.assertTrue(result["ok"], result)
+        transport = MemorySendTransport()
+        delivered = deliver_pending_desk_mail(self.layer, transport)
+        kinds = {row["kind"] for row in self.layer.conn.execute("SELECT kind FROM desk_result_outbox").fetchall()}
+        self.assertIn("result", kinds)
+        self.assertIn("case", kinds)
+        self.assertTrue(all(item.get("ok") for item in delivered), delivered)
+        subjects = [item["subject"] for item in transport.sent]
+        self.assertTrue(any(MARKER_DESK_RESULT in subject for subject in subjects))
+        self.assertTrue(any(MARKER_DESK_CASE in subject for subject in subjects))
+        again = deliver_pending_desk_mail(self.layer, transport)
+        self.assertEqual(again, [])
+        self.assertEqual(int(self.layer.get_case(case_id)["hold"] or 0), 1)
+
+    def test_rejected_action_still_enqueues_result(self) -> None:
+        _case_id, binding = self._open_desk("desk-reject")
+        result = self._apply(INTENT_HOLD, {**binding, "nonce": "wrong"}, gmail_message_id="ctrl-reject")
+        self.assertFalse(result["ok"])
+        rows = self.layer.conn.execute("SELECT kind, status FROM desk_result_outbox").fetchall()
+        self.assertTrue(rows)
+        self.assertTrue(any(row["kind"] == "result" for row in rows))
+
+    def test_execute_verify_and_phasee_leftover_ignored(self) -> None:
+        case_id, binding = self._open_desk("desk-exec")
+        accepted = self._apply(INTENT_APPROVE_SEND, binding, gmail_message_id="ctrl-exec")
+        self.assertTrue(accepted["ok"], accepted)
+        action = latest_action(self.layer, case_id)
+        self.assertEqual(action["queued_by"], QUEUED_BY_DESK)
+        self.assertEqual(action["status"], STATUS_QUEUED)
+
+        leftover_id, _ = self._open_desk("phasee-left")
+        install_phasee_draft(self.layer, leftover_id, "nonce-phasee-left")
+        self.layer.apply_decision(leftover_id, "approve", draft_version=int(self.layer.get_case(leftover_id)["draft_version"]), actor=ALLOWED_SENDER)
+        queued = queue_phasee_send(self.layer, leftover_id)
+        self.assertTrue(queued.get("ok"), queued)
+        self.assertEqual(queued["action"]["queued_by"], QUEUED_BY_PHASEE)
+
+        send = MemorySendTransport()
+        executed = execute_desk_queued_sends(self.layer, send)
+        self.assertEqual(len(executed), 1)
+        self.assertTrue(executed[0]["ok"], executed)
+        self.assertEqual(executed[0]["status"], STATUS_ATTEMPTED)
+        leftover = latest_action(self.layer, leftover_id)
+        self.assertEqual(int(leftover["consumed"] or 0), 0)
+        self.assertEqual(leftover["status"], STATUS_QUEUED)
+
+        verify = MemoryVerifyTransport(sent=list(send.sent))
+        checked = verify_sent(self.layer, executed[0]["action_id"], verify)
+        self.assertTrue(checked["ok"], checked)
+        self.assertEqual(latest_action(self.layer, case_id)["status"], "sent_verified")
+
+    def test_freshness_hold_and_revision_block_before_execute(self) -> None:
+        case_id, binding = self._open_desk("desk-fresh")
+        accepted = self._apply(INTENT_APPROVE_SEND, binding, gmail_message_id="ctrl-fresh")
+        self.assertTrue(accepted["ok"], accepted)
+        self.layer.conn.execute("UPDATE cases SET hold = 1 WHERE case_id = ?", (case_id,))
+        send = MemorySendTransport()
+        executed = execute_desk_queued_sends(self.layer, send)
+        self.assertEqual(len(executed), 1)
+        self.assertFalse(executed[0]["ok"])
+        self.assertEqual(executed[0]["reason"], "invalid_approval")
+        self.assertIn("hold", executed[0]["reasons"])
+        self.assertEqual(send.send_count, 0)
+
+        case_id2, binding2 = self._open_desk("desk-rev")
+        queued = self._apply(INTENT_APPROVE_SEND, binding2, gmail_message_id="ctrl-rev-q")
+        self.assertTrue(queued["ok"], queued)
+        self.layer.save_draft(
+            case_id2,
+            {
+                "classification": "revised",
+                "proposed_response": DESK_SEND_BODY + "\nchanged",
+                "channel": "email",
+            },
+            nonce="nonce-changed",
+            label_not_sent=False,
+        )
+        executed2 = execute_desk_queued_sends(self.layer, MemorySendTransport())
+        self.assertFalse(executed2[0]["ok"])
+        self.assertTrue({"superseded_draft", "stale_draft_version", "body_changed"} & set(executed2[0]["reasons"]))
+
+    def test_replay_concurrency_and_restart(self) -> None:
+        case_id, binding = self._open_desk("desk-replay")
+        first = self._apply(INTENT_APPROVE_SEND, binding, gmail_message_id="ctrl-replay-1")
+        self.assertTrue(first["ok"], first)
+        replay_same = self._apply(INTENT_APPROVE_SEND, binding, gmail_message_id="ctrl-replay-1")
+        self.assertTrue(replay_same.get("replayed"))
+        replay_new = self._apply(INTENT_APPROVE_SEND, binding, gmail_message_id="ctrl-replay-2")
+        self.assertFalse(replay_new["ok"])
+        self.assertIn("nonce_consumed", replay_new.get("blocks") or [])
+        self.assertEqual(self.layer.conn.execute("SELECT COUNT(*) FROM case_send_actions").fetchone()[0], 1)
+
+        path = self.store.path
+        self.store.close()
+        store2 = ReceiptStore(path)
+        layer2 = CaseLayer(store2)
+        ensure_send_tables(layer2)
+        send = MemorySendTransport()
+        executed = execute_desk_queued_sends(layer2, send)
+        self.assertTrue(executed[0]["ok"], executed)
+        store2.close()
+        store3 = ReceiptStore(path)
+        layer3 = CaseLayer(store3)
+        ensure_send_tables(layer3)
+        verify = MemoryVerifyTransport(sent=list(send.sent))
+        checked = verify_sent(layer3, executed[0]["action_id"], verify)
+        self.assertTrue(checked["ok"], checked)
+        self.assertEqual(execute_desk_queued_sends(layer3, MemorySendTransport()), [])
+        store3.close()
+        self.store = ReceiptStore(path)
+        self.layer = CaseLayer(self.store)
+
+    def test_unknown_send_does_not_retry(self) -> None:
+        case_id, binding = self._open_desk("desk-unknown")
+        self.assertTrue(self._apply(INTENT_APPROVE_SEND, binding, gmail_message_id="ctrl-unknown")["ok"])
+        timed_out = execute_desk_queued_sends(self.layer, MemorySendTransport(timeout=True))
+        self.assertTrue(timed_out[0].get("unknown"))
+        self.assertEqual(latest_action(self.layer, case_id)["status"], STATUS_UNKNOWN)
+        again = execute_desk_queued_sends(self.layer, MemorySendTransport())
+        self.assertEqual(again, [])
+        leftovers = execute_due_sends(self.layer, MemorySendTransport())
+        self.assertEqual(leftovers, [])
+
+    def test_host_finish_delivers_and_executes_only_desk(self) -> None:
+        case_id, binding = self._open_desk("desk-host")
+        self.assertTrue(self._apply(INTENT_APPROVE_SEND, binding, gmail_message_id="ctrl-host")["ok"])
+        send = MemorySendTransport()
+        verify = MemoryVerifyTransport()
+        finished = finish_desk_roundtrip(self.store, send_transport=send, verify_transport=verify)
+        self.assertTrue(any(item.get("ok") for item in finished["executed"]))
+        verify.sent.extend(send.sent)
+        finished2 = finish_desk_roundtrip(self.store, send_transport=send, verify_transport=verify)
+        self.assertEqual(finished2["executed"], [])
+        self.assertTrue(any(item.get("ok") for item in finished2["verified"] or finished["verified"]))
+        self.assertGreaterEqual(len(send.sent), 2)
+        self.assertEqual(latest_action(self.layer, case_id)["queued_by"], QUEUED_BY_DESK)
+
+    def test_stale_inbound_rejects_send(self) -> None:
+        case_id, binding = self._open_desk("desk-inbound")
+        self.layer.conn.execute(
+            "UPDATE cases SET latest_inbound_message_id = ? WHERE case_id = ?",
+            ("newer-inbound", case_id),
+        )
+        result = self._apply(INTENT_APPROVE_SEND, binding, gmail_message_id="ctrl-inbound")
+        self.assertFalse(result["ok"])
+        self.assertTrue({"inbound_changed", "packet_hash_invalid"} & set(result.get("blocks") or []))
+        self.assertIsNone(latest_action(self.layer, case_id))
+
+    def test_desk_transport_is_not_a_case(self) -> None:
+        receipt = hydrate_receipt(
+            MAILBOX,
+            {
+                "id": "pkt-1",
+                "threadId": "thr-pkt",
+                "labelIds": ["INBOX"],
+                "raw": __import__("base64").urlsafe_b64encode(
+                    (
+                        "From: contactus@btpestcontrol.com\r\n"
+                        "To: daniel@btpestcontrol.com\r\n"
+                        f"Subject: {MARKER_DESK_RESULT}\r\n\r\n"
+                        f"{MARKER_DESK_RESULT}\r\nSTATUS=ok\r\n"
+                    ).encode("utf-8")
+                ).decode("ascii"),
+            },
+            ["pkt-1"],
+            DETECTION_EVENT_DRIVEN,
+        )
+        self.assertEqual(receipt["classification"], CLASS_DESK_TRANSPORT)
+        self.assertFalse(receipt["eligible"])
+
+    def test_control_loop_forbidden_on_result_sender(self) -> None:
+        from bt_intake_proof.contactus_send import HttpContactusSendGmail
+
+        class Fake(HttpContactusSendGmail):
+            def __init__(self) -> None:  # noqa: D107
+                pass
+
+            def _submit_raw(self, binding):
+                raise AssertionError("must not submit CTRL")
+
+        fake = Fake()
+        blocked = HttpContactusSendGmail.send_internal_desk(
+            fake,
+            {"from_addr": MAILBOX, "to": ALLOWED_SENDER, "subject": MARKER_DESK_CTRL, "body": MARKER_DESK_CTRL},
+        )
+        self.assertEqual(blocked["reason"], "desk_ctrl_loop_forbidden")
+
+
+if __name__ == "__main__":
+    unittest.main()
