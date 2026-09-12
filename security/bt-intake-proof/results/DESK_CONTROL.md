@@ -1,5 +1,5 @@
-# Natural-language control
+# Lead Desk control
 
-**Contract/tests: PASS.** Conversational send is not a new live customer-send path.
+**Contract/tests: PASS.** Structured ChatGPT actions are the primary path. The Python utterance helper is a temporary fallback and was not expanded. Conversational send is not a new live customer-send path.
 
-The model infers intent. The backend binds. No exact phrase such as `send it` is required. Phase E mismatches, holds, and office ownership still block send.
+ChatGPT interprets. The backend binds. Phase E mismatches, holds, and office ownership still block send.

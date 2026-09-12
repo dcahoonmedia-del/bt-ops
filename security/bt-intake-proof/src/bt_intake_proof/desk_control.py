@@ -1,14 +1,16 @@
-"""Natural-language Lead Desk control.
+"""Lead Desk control: ChatGPT sends a structured action; the backend authorizes.
 
-The conversational model (or this helper) infers intent. The backend authorizes.
-No exact-phrase allowlist. No case IDs or magic codes required from Daniel.
-Inferred send never bypasses Phase E binding.
+Production path: Daniel speaks to ChatGPT → ChatGPT chooses one intent →
+submit_desk_action → Phase E / ownership / freshness checks.
+
+normalize_desk_intent is a temporary Python fallback only. Do not grow its
+phrase lists or model Daniel's speech here.
 """
 
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Mapping
 
 from .send_bind import reject_reasons
 
@@ -21,6 +23,9 @@ INTENT_NO_RESPONSE = "no_response_needed"
 INTENT_REQUEST_INFO = "request_information"
 INTENT_CONDITIONAL = "conditional_instruction"
 INTENT_AMBIGUOUS = "ambiguous_needs_confirmation"
+
+SOURCE_CHATGPT = "chatgpt_structured"
+SOURCE_FALLBACK = "python_utterance_fallback"
 
 INTENTS = (
     INTENT_APPROVE_SEND,
@@ -120,8 +125,70 @@ def _clarification(intent: str, *, office_people: list[str] | None = None) -> st
     return None
 
 
+def structured_action(
+    intent: str | Mapping[str, Any] | None = None,
+    *,
+    owner: str | None = None,
+    note: str | None = None,
+    reassign_to_daniel: bool = False,
+) -> dict[str, Any]:
+    """Validate a small ChatGPT action. This is not speech interpretation."""
+    if isinstance(intent, Mapping):
+        owner = intent.get("owner") if owner is None else owner
+        note = intent.get("note") if note is None else note
+        reassign_to_daniel = bool(intent.get("reassign_to_daniel", reassign_to_daniel))
+        intent = intent.get("intent")
+    if not intent:
+        return {
+            "ok": False,
+            "source": SOURCE_CHATGPT,
+            "intent": intent,
+            "execute_send": False,
+            "reason": "missing_structured_intent",
+        }
+    if intent not in INTENTS:
+        return {
+            "ok": False,
+            "source": SOURCE_CHATGPT,
+            "intent": intent,
+            "execute_send": False,
+            "reason": "unknown_intent",
+        }
+    who = (owner or "").lower() or None
+    return {
+        "ok": True,
+        "source": SOURCE_CHATGPT,
+        "intent": intent,
+        "execute_send": intent == INTENT_APPROVE_SEND,
+        "owner": who,
+        "note": note,
+        "reassign_to_daniel": reassign_to_daniel,
+        "preserve_existing_office_owner": who in OFFICE_STAFF or who == "office",
+        "requires_case_id_from_daniel": False,
+        "requires_magic_phrase": False,
+    }
+
+
+def submit_desk_action(
+    action: Mapping[str, Any] | str,
+    **authorize_kwargs: Any,
+) -> dict[str, Any]:
+    """Primary ChatGPT path: accept a structured action and authorize it.
+
+    Never sends. A later execute_action call still needs a stored Phase E
+    action id and the same case/version/payload/freshness checks.
+    """
+    parsed = structured_action(action if isinstance(action, Mapping) else {"intent": action})
+    if not parsed.get("ok"):
+        return parsed
+    result = authorize_desk_intent(parsed, **authorize_kwargs)
+    result["source"] = SOURCE_CHATGPT
+    result["action"] = parsed
+    return result
+
+
 def normalize_desk_intent(utterance: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Infer one internal intent from Daniel's full newest utterance plus desk context."""
+    """Temporary fallback if ChatGPT cannot submit a structured action. Do not expand."""
     ctx = context or {}
     text = _norm(utterance)
     question = str(ctx.get("last_question_kind") or "")
@@ -180,6 +247,7 @@ def normalize_desk_intent(utterance: str, context: dict[str, Any] | None = None)
 
     execute_send = intent == INTENT_APPROVE_SEND
     return {
+        "source": SOURCE_FALLBACK,
         "intent": intent,
         "execute_send": execute_send,
         "owner": owner,
@@ -210,11 +278,13 @@ def authorize_desk_intent(
 ) -> dict[str, Any]:
     """Backend authorization. The model's intent is not execution."""
     intent = inferred.get("intent")
+    source = inferred.get("source") or SOURCE_FALLBACK
     if intent not in INTENTS:
-        return {"ok": False, "execute_send": False, "reason": "unknown_intent"}
+        return {"ok": False, "source": source, "execute_send": False, "reason": "unknown_intent"}
     if intent != INTENT_APPROVE_SEND:
         return {
             "ok": True,
+            "source": source,
             "execute_send": False,
             "intent": intent,
             "reason": "non_send_intent",
@@ -242,6 +312,7 @@ def authorize_desk_intent(
     if blocks:
         return {
             "ok": False,
+            "source": source,
             "execute_send": False,
             "intent": intent,
             "reason": "blocked_by_backend",
@@ -249,6 +320,7 @@ def authorize_desk_intent(
         }
     return {
         "ok": True,
+        "source": source,
         "execute_send": True,
         "intent": intent,
         "reason": "bound_current_packet",

@@ -23,4 +23,4 @@ Phase F1 (2026-09-12): read-only Lead Desk for iPhone ChatGPT via backend-genera
 
 Production intake (2026-09-12): capture every contactus@ inbound and reply, then classify. Subject markers are not a production capture filter. Live processing of real customer mail is not authorized yet. See `PRODUCTION_INTAKE.md`.
 
-Lead Desk control (2026-09-12): Daniel speaks naturally. The model infers intent; the backend authorizes. No exact-phrase allowlist. Phase E binding still required for send. See `DESK_CONTROL.md`.
+Lead Desk control (2026-09-12): Daniel speaks to ChatGPT. ChatGPT submits a small structured action. The backend authorizes and binds. The Python utterance helper is a temporary fallback only; do not grow phrase lists there. Phase E binding still required for send. See `DESK_CONTROL.md`.

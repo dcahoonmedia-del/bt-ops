@@ -344,7 +344,30 @@ def cmd_desk_intent(args: argparse.Namespace) -> int:
         },
     )
     authorized = authorize_desk_intent(inferred)
-    payload = {"inferred": inferred, "authorized": authorized, "execute_send": False}
+    payload = {
+        "path": "python_utterance_fallback",
+        "inferred": inferred,
+        "authorized": authorized,
+        "execute_send": False,
+    }
+    _print(payload)
+    return 0
+
+
+def cmd_desk_action(args: argparse.Namespace) -> int:
+    from .desk_control import submit_desk_action
+
+    if args.json:
+        action = json.loads(args.json)
+    else:
+        action = {"intent": args.intent, "owner": args.owner or None, "note": args.note or None}
+    authorized = submit_desk_action(action)
+    payload = {
+        "path": "chatgpt_structured",
+        "action": action,
+        "authorized": authorized,
+        "execute_send": False,
+    }
     _print(payload)
     return 0
 
@@ -399,8 +422,14 @@ def main(argv: list[str] | None = None) -> int:
     desk.add_argument("--case-id", default="", help="optional case to detail; default is newest inbound")
     desk.set_defaults(func=cmd_lead_desk_packets)
     sub.add_parser("intake-mode").set_defaults(func=cmd_intake_mode)
-    di = sub.add_parser("desk-intent")
-    di.add_argument("utterance", help="Daniel's newest utterance; not a magic phrase")
+    da = sub.add_parser("desk-action", help="Primary path: authorize a ChatGPT structured intent. Does not send.")
+    da.add_argument("--intent", default="", help="One of the desk intents, e.g. approve_and_send_current")
+    da.add_argument("--json", default="", help="Small JSON action from ChatGPT: {intent, owner, note}")
+    da.add_argument("--owner", default="")
+    da.add_argument("--note", default="")
+    da.set_defaults(func=cmd_desk_action)
+    di = sub.add_parser("desk-intent", help="Temporary Python fallback if ChatGPT cannot submit a structured action")
+    di.add_argument("utterance", help="Raw utterance for the fallback helper only")
     di.add_argument("--last-question", default="", help="offer_send | review_wording | ask_owner")
     di.add_argument("--owner", default="daniel")
     di.set_defaults(func=cmd_desk_intent)

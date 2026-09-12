@@ -10,7 +10,7 @@ Test 0 isolation stays unchanged. Codex delivery reuses `security/codex-external
 
 ## Current gate
 
-Phase A intake proof: **PASS.** Phase B cloud host: **PASS.** Phase C Case Manager: **PASS** (`results/PHASEC.md`). Phase D matching/context: **PASS**; live Fieldwork **BLOCKED**. Phase E exact-approval send: **PASS** (`results/PHASEE.md`). Phase F1 Lead Desk: **PASS** via Gmail packets (`results/PHASEF1.md`). Production capture-then-classify is documented and tested (`knowledge/PRODUCTION_INTAKE.md`) but **not live**. Isolated `BT-INTAKE-PROOF-*` filters stay on. Conversational control is natural speech → intent, then Phase E binding (`knowledge/DESK_CONTROL.md`); no magic phrase. Custom ChatGPT MCP is web-only and was not opened. Customer sending remains off except the one internal Phase E test.
+Phase A intake proof: **PASS.** Phase B cloud host: **PASS.** Phase C Case Manager: **PASS** (`results/PHASEC.md`). Phase D matching/context: **PASS**; live Fieldwork **BLOCKED**. Phase E exact-approval send: **PASS** (`results/PHASEE.md`). Phase F1 Lead Desk: **PASS** via Gmail packets (`results/PHASEF1.md`). Production capture-then-classify is documented and tested (`knowledge/PRODUCTION_INTAKE.md`) but **not live**. Isolated `BT-INTAKE-PROOF-*` filters stay on. Lead Desk control is ChatGPT structured action → Phase E binding (`knowledge/DESK_CONTROL.md`); the Python utterance helper is fallback only. Custom ChatGPT MCP is web-only and was not opened. Customer sending remains off except the one internal Phase E test.
 
 The Cursor Gmail MCP is `daniel@btpestcontrol.com` and can send/modify mail. Phase C used it only to send marked internal tests and Daniel's review packets. It is not a watch/Pub/Sub substitute.
 

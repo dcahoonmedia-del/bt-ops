@@ -6,14 +6,19 @@ from bt_intake_proof.desk_control import (
     INTENT_AMBIGUOUS,
     INTENT_APPROVE_SEND,
     INTENT_CONDITIONAL,
+    INTENT_HOLD,
     INTENT_OFFICE,
     INTENT_NO_RESPONSE,
     INTENT_REVISE,
     OFFICE_STAFF,
     QUESTION_OFFER_SEND,
     QUESTION_REVIEW_WORDING,
+    SOURCE_CHATGPT,
+    SOURCE_FALLBACK,
     authorize_desk_intent,
     normalize_desk_intent,
+    structured_action,
+    submit_desk_action,
 )
 from bt_intake_proof.phasee_constants import PHASEE_BODY, PHASEE_FROM, PHASEE_SUBJECT, PHASEE_TO
 
@@ -56,6 +61,7 @@ class DeskIntentTests(unittest.TestCase):
             _ctx(last_question_kind=QUESTION_OFFER_SEND),
         )
         self.assertEqual(result["intent"], INTENT_APPROVE_SEND)
+        self.assertEqual(result["source"], SOURCE_FALLBACK)
         self.assertTrue(result["execute_send"])
         self.assertFalse(result["requires_magic_phrase"])
         self.assertFalse(result["requires_case_id_from_daniel"])
@@ -189,6 +195,114 @@ class DeskAuthorizeTests(unittest.TestCase):
         )
         self.assertFalse(result["execute_send"])
         self.assertIn("stale_displayed_context", result["blocks"])
+
+
+class DeskStructuredActionTests(unittest.TestCase):
+    """ChatGPT submits a small action. Python does not interpret speech here."""
+
+    def _case(self) -> dict:
+        return {
+            "approval_state": APPROVAL_APPROVED,
+            "draft_version": 1,
+            "latest_inbound_message_id": "in-1",
+            "thread_id": "thr-1",
+        }
+
+    def test_structured_send_still_needs_phase_e_binding(self) -> None:
+        action = structured_action(INTENT_APPROVE_SEND)
+        self.assertEqual(action["source"], SOURCE_CHATGPT)
+        self.assertTrue(action["ok"])
+        allowed = submit_desk_action(
+            action,
+            binding=_binding(),
+            case=self._case(),
+            draft={"proposed_response": PHASEE_BODY},
+        )
+        self.assertTrue(allowed["ok"])
+        self.assertTrue(allowed["execute_send"])
+        self.assertEqual(allowed["source"], SOURCE_CHATGPT)
+        self.assertEqual(allowed["reason"], "bound_current_packet")
+
+        missing = submit_desk_action(action)
+        self.assertFalse(missing["execute_send"])
+        self.assertIn("missing_current_packet", missing["blocks"])
+
+        stale = submit_desk_action(
+            action,
+            binding=_binding(),
+            case={**self._case(), "latest_inbound_message_id": "in-NEWER"},
+            draft={"proposed_response": PHASEE_BODY},
+            latest_inbound_message_id="in-NEWER",
+        )
+        self.assertFalse(stale["ok"])
+        self.assertFalse(stale["execute_send"])
+        self.assertIn("inbound_changed", stale["blocks"])
+
+        changed = submit_desk_action(
+            action,
+            binding=_binding(),
+            case=self._case(),
+            draft={"proposed_response": PHASEE_BODY + "\nchanged"},
+        )
+        self.assertFalse(changed["execute_send"])
+        self.assertIn("body_changed", changed["blocks"])
+
+    def test_unknown_or_missing_intent_is_rejected(self) -> None:
+        unknown = structured_action("please_send_it")
+        self.assertFalse(unknown["ok"])
+        self.assertEqual(unknown["reason"], "unknown_intent")
+        self.assertFalse(unknown["execute_send"])
+        self.assertEqual(unknown["source"], SOURCE_CHATGPT)
+
+        missing = submit_desk_action({})
+        self.assertFalse(missing["ok"])
+        self.assertEqual(missing["reason"], "missing_structured_intent")
+        self.assertFalse(missing["execute_send"])
+
+        from_mapping = structured_action({"intent": "not_a_real_intent", "owner": "brenda"})
+        self.assertFalse(from_mapping["ok"])
+        self.assertEqual(from_mapping["reason"], "unknown_intent")
+
+    def test_office_and_hold_block_chatgpt_send(self) -> None:
+        action = structured_action(INTENT_APPROVE_SEND)
+        held = submit_desk_action(
+            action,
+            binding=_binding(),
+            case=self._case(),
+            draft={"proposed_response": PHASEE_BODY},
+            hold=True,
+        )
+        self.assertFalse(held["execute_send"])
+        self.assertIn("hold", held["blocks"])
+
+        office = submit_desk_action(
+            action,
+            binding=_binding(),
+            case=self._case(),
+            draft={"proposed_response": PHASEE_BODY},
+            owner="ally",
+        )
+        self.assertFalse(office["execute_send"])
+        self.assertIn("office_owned", office["blocks"])
+
+    def test_non_send_structured_intents_never_authorize_send(self) -> None:
+        for intent in (INTENT_HOLD, INTENT_REVISE, INTENT_OFFICE, INTENT_NO_RESPONSE, INTENT_AMBIGUOUS):
+            result = submit_desk_action({"intent": intent}, binding=_binding())
+            self.assertEqual(result["source"], SOURCE_CHATGPT)
+            self.assertFalse(result["execute_send"], intent)
+            self.assertTrue(result["ok"], intent)
+
+    def test_fallback_utterance_path_stays_available(self) -> None:
+        inferred = normalize_desk_intent("go ahead", _ctx(last_question_kind=QUESTION_OFFER_SEND))
+        self.assertEqual(inferred["source"], SOURCE_FALLBACK)
+        allowed = authorize_desk_intent(
+            inferred,
+            binding=_binding(),
+            case=self._case(),
+            draft={"proposed_response": PHASEE_BODY},
+        )
+        self.assertEqual(allowed["source"], SOURCE_FALLBACK)
+        self.assertTrue(allowed["execute_send"])
 
 
 if __name__ == "__main__":
