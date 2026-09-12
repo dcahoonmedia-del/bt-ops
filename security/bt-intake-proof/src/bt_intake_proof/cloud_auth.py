@@ -95,12 +95,15 @@ def exchange_cloud_code(redirect_or_code: str) -> dict[str, Any]:
     access = str(token.get("access_token") or "")
     if not access:
         raise OAuthClientError("Cloud token response missing access_token")
-    info = {}
+    email = ""
     try:
-        info = _get_json(f"https://www.googleapis.com/oauth2/v3/userinfo", access)
+        info = _post_form(
+            "https://oauth2.googleapis.com/tokeninfo",
+            {"access_token": access},
+        )
+        email = normalize_email(str(info.get("email") or info.get("sub") or ""))
     except OAuthClientError:
-        info = _get_json(f"https://www.googleapis.com/oauth2/v1/userinfo", access)
-    email = normalize_email(str(info.get("email") or ""))
+        email = ""
     if email == "contactus@btpestcontrol.com":
         raise OAuthClientError("Cloud login must be the project owner, not contactus@")
     record = {
@@ -119,10 +122,10 @@ def exchange_cloud_code(redirect_or_code: str) -> dict[str, Any]:
     dest.chmod(0o600)
     return {
         "status": "PASS",
-        "email": email,
+        "email": email or None,
         "scopes": scopes,
         "gmail_scopes": False,
         "refresh_token_present": bool(token.get("refresh_token")),
         "expected_owner_hint": CLOUD_OWNER_HINT,
-        "matches_owner_hint": email == ALLOWED_SENDER,
+        "matches_owner_hint": email == ALLOWED_SENDER if email else None,
     }
