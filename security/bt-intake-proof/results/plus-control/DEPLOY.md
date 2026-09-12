@@ -6,6 +6,13 @@ This Cursor cloud VM is **not** the GCE host and does **not** have
 Package: `results/plus-control-release/`. Service/timer ship **disabled**.
 No live mail. No credential minting. No filter/label changes.
 
+| Ref | Value |
+| --- | --- |
+| Source commit | `3e67a45ecd9abccc4c8d6bf7865166c5089e1fa5` |
+| Artifact commit | `11a19a3` (TRANSFER RAW) |
+| Tarball SHA256 | `100823dcdcd8fe68f87e9f8eb40ac57ac78b50b466964a970943176fae252510` |
+| Tree SHA256 | `7fdab6783b4505e4b75a9901649f92dfef0634f6d83d7a520aa31885d246ddd0` |
+
 ## Backup / migration / rollback (narrow)
 
 The existing guarded transaction backs up **code, env, and unit files
