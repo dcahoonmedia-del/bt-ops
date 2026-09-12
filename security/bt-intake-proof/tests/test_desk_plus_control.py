@@ -1,5 +1,8 @@
+import base64
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 from pathlib import Path
 
 from bt_intake_proof.cases import CaseLayer
@@ -19,18 +22,31 @@ from bt_intake_proof.desk_bridge import (
     process_control_mail,
     process_plus_control_mail,
 )
-from bt_intake_proof.desk_control import INTENT_HOLD, INTENT_REVISE
+from bt_intake_proof.desk_control import INTENT_APPROVE_SEND, INTENT_HOLD, INTENT_REVISE
 from bt_intake_proof.desk_origin import daniel_origin_evidence
 from bt_intake_proof.desk_plus_proof import (
     FETCHED_VIA_DANIEL_PLUS,
     FETCHED_VIA_FIXTURE_PLUS,
+    PLUS_FRESHNESS,
     REASON_PLUS_FETCH,
     REASON_PLUS_FROM,
+    REASON_PLUS_FRESHNESS_EXPIRED,
+    REASON_PLUS_FRESHNESS_FUTURE,
+    REASON_PLUS_FRESHNESS_INVALID,
+    REASON_PLUS_FRESHNESS_MISSING,
+    REASON_PLUS_HEADERS,
+    REASON_PLUS_ID,
+    REASON_PLUS_INTENT,
+    REASON_PLUS_MAILBOX,
     REASON_PLUS_OK,
     REASON_PLUS_SENT,
     REASON_PLUS_TO,
     authorize_plus_address_control,
+    fetch_plus_control_from_daniel,
     plus_control_evidence,
+    set_test_plus_client,
+    set_test_plus_fixtures,
+    set_test_plus_now,
 )
 from bt_intake_proof.desk_sent_proof import fixture_sent_lookup, inbound_control_view
 from bt_intake_proof.phasee_constants import PHASEE_CASE_MARKER
@@ -60,6 +76,60 @@ def _receipt(message_id: str) -> dict:
         "test_marker": PHASEE_CASE_MARKER,
         "reasons": [],
     }
+
+
+def _ms(value: datetime) -> str:
+    return str(int(value.timestamp() * 1000))
+
+
+def _raw_plus_message(
+    message_id: str,
+    *,
+    subject: str,
+    body: str,
+    sender: str = ALLOWED_SENDER,
+    to: str = LEAD_DESK_PLUS_MAILBOX,
+    cc: str | None = None,
+    bcc: str | None = None,
+    extra_from: str | None = None,
+    extra_to: str | None = None,
+    internal: datetime,
+    labels: list[str] | None = None,
+    override_id: str | None = None,
+) -> dict:
+    msg = EmailMessage()
+    msg["From"] = sender
+    if extra_from:
+        msg["From"] = extra_from
+    msg["To"] = to
+    if extra_to:
+        msg.add_header("To", extra_to)
+    if cc:
+        msg["Cc"] = cc
+    if bcc:
+        msg["Bcc"] = bcc
+    msg["Subject"] = subject
+    msg["Message-ID"] = f"<{message_id}@desk.btpestcontrol.com>"
+    msg["Date"] = "Sat, 12 Sep 2026 21:00:00 +0000"
+    msg.set_content(body)
+    return {
+        "id": override_id if override_id is not None else message_id,
+        "labelIds": list(labels if labels is not None else ["SENT"]),
+        "internalDate": _ms(internal),
+        "raw": base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii"),
+    }
+
+
+class FakeDanielPlusClient:
+    def __init__(self, *, profile_email: str = ALLOWED_SENDER, messages: dict | None = None) -> None:
+        self.profile_email = profile_email
+        self.messages = dict(messages or {})
+
+    def get_profile(self) -> dict:
+        return {"emailAddress": self.profile_email}
+
+    def get_message(self, message_id: str, fmt: str = "raw") -> dict:
+        return dict(self.messages[message_id])
 
 
 class DeskPlusControlTests(unittest.TestCase):
@@ -101,7 +171,9 @@ class DeskPlusControlTests(unittest.TestCase):
             transport=TRANSPORT_PLUS,
         )
         self.rfc = "<plus-ctrl-1@desk.btpestcontrol.com>"
-        self.received = "2026-09-12T21:00:00+00:00"
+        self.sent_at = datetime(2026, 9, 12, 21, 0, tzinfo=timezone.utc)
+        self.now = self.sent_at + timedelta(minutes=5)
+        self.received = self.sent_at.isoformat()
         self.headers = [
             ("From", f"Daniel Cahoon <{ALLOWED_SENDER}>"),
             ("To", LEAD_DESK_PLUS_MAILBOX),
@@ -111,10 +183,17 @@ class DeskPlusControlTests(unittest.TestCase):
             headers=self.headers,
             rfc_message_id=self.rfc,
             received_at=self.received,
+            internal_date=self.received,
             recipients=[LEAD_DESK_PLUS_MAILBOX],
         )
+        set_test_plus_fixtures(True)
+        set_test_plus_now(self.now)
+        set_test_plus_client(None)
 
     def tearDown(self) -> None:
+        set_test_plus_fixtures(False)
+        set_test_plus_now(None)
+        set_test_plus_client(None)
         self.store.close()
         self.tmp.cleanup()
 
@@ -134,7 +213,7 @@ class DeskPlusControlTests(unittest.TestCase):
             self.layer,
             sender=extra.get("sender", ALLOWED_SENDER),
             subject=extra.get("subject", self.mail["subject"]),
-            body=extra.get("body", self.mail["body"]),
+            body=extra.get("body", extra.get("body", self.mail["body"])),
             gmail_message_id=extra.get("gmail_message_id", "plus-ctrl-1"),
             provider_evidence=extra.get("provider_evidence", self.evidence),
             headers=extra.get("headers", self.headers),
@@ -159,6 +238,7 @@ class DeskPlusControlTests(unittest.TestCase):
         self.assertFalse(origin["requires_authentication_results"])
         self.assertFalse(origin["mailbox_bound"])
         self.assertFalse(origin["full_identity_pass"])
+        self.assertEqual(origin["freshness"]["window_seconds"], int(PLUS_FRESHNESS.total_seconds()))
         proven = inspect_plus_inbound(
             ALLOWED_SENDER,
             self.mail["subject"],
@@ -251,6 +331,87 @@ class DeskPlusControlTests(unittest.TestCase):
         self.assertFalse(origin["accepted"])
         self.assertEqual(origin["reason"], REASON_PLUS_FROM)
 
+    def test_external_bcc_is_rejected(self) -> None:
+        headers = [
+            ("From", ALLOWED_SENDER),
+            ("To", LEAD_DESK_PLUS_MAILBOX),
+            ("Bcc", "outsider@example.com"),
+        ]
+        evidence = plus_control_evidence(
+            "plus-bcc",
+            headers=headers,
+            rfc_message_id="<plus-bcc@desk.btpestcontrol.com>",
+            received_at=self.received,
+            recipients=[LEAD_DESK_PLUS_MAILBOX],
+            bcc=["outsider@example.com"],
+        )
+        origin = authorize_plus_address_control(
+            ALLOWED_SENDER,
+            evidence,
+            self._inbound(provider_evidence=evidence, headers=headers),
+        )
+        self.assertFalse(origin["accepted"])
+        self.assertEqual(origin["reason"], REASON_PLUS_TO)
+
+    def test_duplicate_from_header_with_outsider_is_rejected(self) -> None:
+        headers = [
+            ("From", ALLOWED_SENDER),
+            ("From", "outsider@example.com"),
+            ("To", LEAD_DESK_PLUS_MAILBOX),
+        ]
+        evidence = plus_control_evidence(
+            "plus-dup-from",
+            headers=headers,
+            rfc_message_id="<plus-dup-from@desk.btpestcontrol.com>",
+            received_at=self.received,
+            recipients=[LEAD_DESK_PLUS_MAILBOX],
+        )
+        origin = authorize_plus_address_control(
+            ALLOWED_SENDER,
+            evidence,
+            self._inbound(provider_evidence=evidence, headers=headers),
+        )
+        self.assertFalse(origin["accepted"])
+        self.assertEqual(origin["reason"], REASON_PLUS_FROM)
+
+    def test_malformed_to_header_is_rejected(self) -> None:
+        headers = [("From", ALLOWED_SENDER), ("To", "not-an-address")]
+        evidence = plus_control_evidence(
+            "plus-bad-to",
+            headers=headers,
+            rfc_message_id="<plus-bad-to@desk.btpestcontrol.com>",
+            received_at=self.received,
+            recipients=[LEAD_DESK_PLUS_MAILBOX],
+        )
+        origin = authorize_plus_address_control(
+            ALLOWED_SENDER,
+            evidence,
+            self._inbound(provider_evidence=evidence, headers=headers),
+        )
+        self.assertFalse(origin["accepted"])
+        self.assertEqual(origin["reason"], REASON_PLUS_HEADERS)
+
+    def test_duplicate_to_header_with_outsider_is_rejected(self) -> None:
+        headers = [
+            ("From", ALLOWED_SENDER),
+            ("To", LEAD_DESK_PLUS_MAILBOX),
+            ("To", "outsider@example.com"),
+        ]
+        evidence = plus_control_evidence(
+            "plus-dup-to",
+            headers=headers,
+            rfc_message_id="<plus-dup-to@desk.btpestcontrol.com>",
+            received_at=self.received,
+            recipients=[LEAD_DESK_PLUS_MAILBOX],
+        )
+        origin = authorize_plus_address_control(
+            ALLOWED_SENDER,
+            evidence,
+            self._inbound(provider_evidence=evidence, headers=headers),
+        )
+        self.assertFalse(origin["accepted"])
+        self.assertEqual(origin["reason"], REASON_PLUS_TO)
+
     def test_contactus_recipient_cannot_use_plus_path(self) -> None:
         headers = [("From", ALLOWED_SENDER), ("To", MAILBOX)]
         evidence = plus_control_evidence(
@@ -275,10 +436,17 @@ class DeskPlusControlTests(unittest.TestCase):
             "labels": ["SENT"],
             "rfc_message_id": self.rfc,
             "received_at": self.received,
+            "internal_date": self.received,
             "recipients": [LEAD_DESK_PLUS_MAILBOX],
             "headers": self.headers,
         }
         origin = authorize_plus_address_control(ALLOWED_SENDER, evidence, self._inbound(provider_evidence=evidence))
+        self.assertFalse(origin["accepted"])
+        self.assertEqual(origin["reason"], REASON_PLUS_FETCH)
+
+    def test_fixture_marker_is_rejected_without_test_injection(self) -> None:
+        set_test_plus_fixtures(False)
+        origin = authorize_plus_address_control(ALLOWED_SENDER, self.evidence, self._inbound())
         self.assertFalse(origin["accepted"])
         self.assertEqual(origin["reason"], REASON_PLUS_FETCH)
 
@@ -361,27 +529,93 @@ class DeskPlusControlTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual(proof["recipient"], MAILBOX)
 
-    def test_process_plus_helper_uses_fetched_daniel_evidence(self) -> None:
-        fetched = {
-            "ok": True,
-            "sender": ALLOWED_SENDER,
-            "subject": self.mail["subject"],
-            "body": self.mail["body"],
-            "rfc_message_id": self.rfc,
-            "recipients": [LEAD_DESK_PLUS_MAILBOX],
-            "received_at": self.received,
-            "gmail_message_id": "plus-helper-1",
-            "evidence": plus_control_evidence(
-                "plus-helper-1",
-                fetched_via=FETCHED_VIA_DANIEL_PLUS,
-                headers=self.headers,
-                rfc_message_id=self.rfc,
-                received_at=self.received,
-                recipients=[LEAD_DESK_PLUS_MAILBOX],
-            ),
-        }
+    def test_plus_path_rejects_approve_and_send(self) -> None:
+        mail = format_control_mail(INTENT_APPROVE_SEND, self.binding, transport=TRANSPORT_PLUS)
+        result = self._process(subject=mail["subject"], body=mail["body"], gmail_message_id="plus-send")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["reason"], REASON_PLUS_INTENT)
+        self.assertFalse(result.get("execute_send"))
+        self.assertFalse(result.get("send_queued"))
+        self.assertIsNone(latest_action(self.layer, self.case_id))
+
+    def test_plus_path_rejects_hold_this_milestone(self) -> None:
+        mail = format_control_mail(INTENT_HOLD, self.binding, transport=TRANSPORT_PLUS)
+        result = self._process(subject=mail["subject"], body=mail["body"], gmail_message_id="plus-hold")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["reason"], REASON_PLUS_INTENT)
+        self.assertEqual(int(self.layer.get_case(self.case_id)["hold"] or 0), 0)
+
+    def test_freshness_rejects_missing_invalid_future_and_expired(self) -> None:
+        missing = dict(self.evidence)
+        missing.pop("internal_date", None)
+        missing.pop("received_at", None)
+        origin = authorize_plus_address_control(ALLOWED_SENDER, missing, self._inbound(provider_evidence=missing))
+        self.assertEqual(origin["reason"], REASON_PLUS_FRESHNESS_MISSING)
+
+        invalid = plus_control_evidence(
+            "plus-bad-date",
+            headers=self.headers,
+            internal_date="not-a-date",
+            recipients=[LEAD_DESK_PLUS_MAILBOX],
+        )
+        origin = authorize_plus_address_control(ALLOWED_SENDER, invalid, self._inbound(provider_evidence=invalid))
+        self.assertEqual(origin["reason"], REASON_PLUS_FRESHNESS_INVALID)
+
+        future = plus_control_evidence(
+            "plus-future",
+            headers=self.headers,
+            internal_date=(self.now + timedelta(minutes=5)).isoformat(),
+            recipients=[LEAD_DESK_PLUS_MAILBOX],
+        )
+        origin = authorize_plus_address_control(ALLOWED_SENDER, future, self._inbound(provider_evidence=future))
+        self.assertEqual(origin["reason"], REASON_PLUS_FRESHNESS_FUTURE)
+
+        expired = plus_control_evidence(
+            "plus-expired",
+            headers=self.headers,
+            internal_date=(self.now - timedelta(minutes=16)).isoformat(),
+            recipients=[LEAD_DESK_PLUS_MAILBOX],
+        )
+        origin = authorize_plus_address_control(ALLOWED_SENDER, expired, self._inbound(provider_evidence=expired))
+        self.assertEqual(origin["reason"], REASON_PLUS_FRESHNESS_EXPIRED)
+
+    def test_live_fetch_requires_profile_and_matching_id(self) -> None:
+        sent = _raw_plus_message(
+            "plus-live-1",
+            subject=self.mail["subject"],
+            body=self.mail["body"],
+            internal=self.sent_at,
+        )
+        set_test_plus_client(FakeDanielPlusClient(profile_email="other@example.com", messages={"plus-live-1": sent}))
+        wrong = fetch_plus_control_from_daniel("plus-live-1")
+        self.assertFalse(wrong["ok"])
+        self.assertEqual(wrong["reason"], REASON_PLUS_MAILBOX)
+
+        mismatch = dict(sent)
+        mismatch["id"] = "someone-else"
+        set_test_plus_client(FakeDanielPlusClient(messages={"plus-live-1": mismatch}))
+        bad_id = fetch_plus_control_from_daniel("plus-live-1")
+        self.assertFalse(bad_id["ok"])
+        self.assertEqual(bad_id["reason"], REASON_PLUS_ID)
+
+        set_test_plus_client(FakeDanielPlusClient(messages={"plus-live-1": sent}))
+        loaded = fetch_plus_control_from_daniel("plus-live-1")
+        self.assertTrue(loaded["ok"], loaded)
+        self.assertTrue(loaded["evidence"]["live_profile_verified"])
+        self.assertEqual(loaded["evidence"]["fetched_via"], FETCHED_VIA_DANIEL_PLUS)
+        self.assertEqual(loaded["gmail_message_id"], "plus-live-1")
+        self.assertNotEqual(loaded["evidence"]["fetched_via"], FETCHED_VIA_FIXTURE_PLUS)
+
+    def test_process_plus_helper_uses_live_fetch_hook_not_caller_evidence(self) -> None:
+        sent = _raw_plus_message(
+            "plus-helper-1",
+            subject=self.mail["subject"],
+            body=self.mail["body"],
+            internal=self.sent_at,
+        )
+        set_test_plus_client(FakeDanielPlusClient(messages={"plus-helper-1": sent}))
         before = int(self.layer.get_case(self.case_id)["draft_version"])
-        result = process_plus_control_mail(self.layer, gmail_message_id="plus-helper-1", fetched=fetched)
+        result = process_plus_control_mail(self.layer, gmail_message_id="plus-helper-1")
         self.assertTrue(result["ok"], result)
         self.assertEqual(result["applied"], "revise_draft")
         self.assertEqual(int(self.layer.get_case(self.case_id)["draft_version"]), before + 1)
@@ -389,6 +623,8 @@ class DeskPlusControlTests(unittest.TestCase):
             list(self.layer.conn.execute("SELECT kind FROM desk_result_outbox").fetchall()),
             [],
         )
+        with self.assertRaises(TypeError):
+            process_plus_control_mail(self.layer, gmail_message_id="plus-helper-1", fetched={"ok": True})  # type: ignore[arg-type]
 
 
 if __name__ == "__main__":

@@ -45,11 +45,11 @@ will hide a sent confirmation.
 
 Two authorized backends exist. Do not invent a third.
 
-**Internal Lead Desk controls** (hidden plus-address; preferred for Work/iPhone internal actions):
+**Internal plus-address path** (this milestone: `revise_draft` only):
 
 From `daniel@btpestcontrol.com` to `daniel+lead-desk@btpestcontrol.com`.
 
-The backend authorizes this path only for mail retrieved from the authenticated Daniel Gmail account that is in SENT, with exact From/To as above. It does not require inbound Authentication-Results. Customer or external mail that copies this syntax does nothing.
+The backend authorizes this path only for mail retrieved from the authenticated Daniel Gmail account after a live `users.getProfile` check, with SENT present, every From/To/Cc/Bcc occurrence limited to that From/To pair, fresh Gmail `internalDate`, and current packet binding. It does not require inbound Authentication-Results. Customer or external mail that copies this syntax does nothing. Hold, office ownership, and send are not authorized on this path yet. There is no automatic watch and no result packet on this path.
 
 **Existing contactus@ path** (still authorized; do not remove):
 

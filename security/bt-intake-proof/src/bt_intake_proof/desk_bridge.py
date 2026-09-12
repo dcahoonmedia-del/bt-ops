@@ -2,8 +2,9 @@
 
 Daniel speaks to ChatGPT. ChatGPT chooses one existing desk intent and sends a
 control message on an authorized transport: daniel@ → contactus@, or the
-internal plus-address path daniel@ → daniel+lead-desk@. This module parses
-that mail, validates the packet binding, and calls submit_desk_action.
+internal plus-address path daniel@ → daniel+lead-desk@ (`revise_draft` only).
+This module parses that mail, validates the packet binding, and calls
+submit_desk_action.
 
 It does not interpret natural language.
 """
@@ -48,7 +49,13 @@ from .desk_control import (
 )
 from .desk_control_codec import decode_control_fields, serialize_control_body
 from .desk_origin import unquoted_control_text
-from .desk_plus_proof import PLUS_FETCH_VIAS, authorize_plus_address_control
+from .desk_plus_proof import (
+    FETCHED_VIA_DANIEL_PLUS,
+    PLUS_MILESTONE_INTENT,
+    REASON_PLUS_INTENT,
+    authorize_plus_address_control,
+    fetch_plus_control_from_daniel,
+)
 from .desk_sent_proof import (
     PROOF_VERSION,
     REASON_LEGACY,
@@ -855,7 +862,7 @@ def _finish_control_result(
 def _transport_from_pending(recipients: list[str] | None, evidence: dict[str, Any] | None) -> str:
     recips = {normalize_email(item) for item in (recipients or []) if normalize_email(item)}
     fetched = str((evidence or {}).get("fetched_via") or "")
-    if recips == {LEAD_DESK_PLUS_MAILBOX} and fetched in PLUS_FETCH_VIAS:
+    if recips == {LEAD_DESK_PLUS_MAILBOX} and fetched == FETCHED_VIA_DANIEL_PLUS:
         return TRANSPORT_PLUS
     return TRANSPORT_CONTACTUS
 
@@ -993,6 +1000,21 @@ def process_control_mail(
             gmail_message_id=gmail_message_id,
             nonce=parsed.get("nonce"),
             enqueue=enqueue_deliveries,
+            transport=chosen,
+        )
+    if chosen == TRANSPORT_PLUS and parsed.get("intent") != PLUS_MILESTONE_INTENT:
+        result = _fail(
+            REASON_PLUS_INTENT,
+            intent=parsed.get("intent"),
+            transport=chosen,
+            human="This plus-address milestone only saves a draft revision.",
+        )
+        return _finish_control_result(
+            layer,
+            result,
+            gmail_message_id=gmail_message_id,
+            nonce=parsed.get("nonce"),
+            enqueue=False,
             transport=chosen,
         )
 
@@ -1147,12 +1169,9 @@ def process_plus_control_mail(
     layer: CaseLayer,
     *,
     gmail_message_id: str,
-    fetched: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Process one Daniel-mailbox plus-address control. Never uses contactus@ fetch."""
-    from .desk_plus_proof import fetch_plus_control_from_daniel
-
-    loaded = fetched if fetched is not None else fetch_plus_control_from_daniel(gmail_message_id)
+    """Process one live-fetched plus-address control. Caller evidence is not identity."""
+    loaded = fetch_plus_control_from_daniel(gmail_message_id)
     if not loaded.get("ok"):
         result = _fail(str(loaded.get("reason") or "plus_gmail_message_missing"), transport=TRANSPORT_PLUS)
         return _finish_control_result(
