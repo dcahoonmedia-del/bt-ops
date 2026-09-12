@@ -2,6 +2,8 @@
   "phase": "E",
   "scope": "exact_approval_bounded_send_independent_verify",
   "overall_logic": "PASS",
+  "live_inbound_case_review": "PASS",
+  "live_case_id": "BTC-contactus-1a093f8e919b8787",
   "live_contactus_send": "BLOCKED",
   "live_blocked_reason": "contactus_send_token_not_configured",
   "intake_readonly_untouched": true,

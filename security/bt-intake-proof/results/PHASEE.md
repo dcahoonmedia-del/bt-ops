@@ -1,7 +1,10 @@
 # Phase E — exact approval → bounded Gmail send → independent verification
 
 **Logic/negative-test overall: PASS.**  
-**Live contactus send / Sent verification / recipient receipt / VM restart of a live send: BLOCKED** until a dedicated `contactus@` `gmail.send` token exists and Daniel approves the exact packet. Intake readonly credentials were not used to send.
+**Live inbound → durable case → exact draft → iPhone review packet: PASS.**  
+**Live contactus send / Sent verification / recipient receipt / VM restart of a live send: BLOCKED** until a dedicated `contactus@` `gmail.send` token exists and Daniel approves this exact packet. Intake readonly credentials were not used to send.
+
+Live case: `BTC-contactus-1a093f8e919b8787` draft v1. Review mail id `1a093fa3665da401`. Internal B&T only.
 
 No real-customer mail. No Fieldwork access or write. No LSA/CTM native send. No Independent Auditor.
 

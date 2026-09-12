@@ -1,0 +1,29 @@
+{
+  "phase": "E",
+  "inbound": {
+    "marker": "BT-INTAKE-PROOF-CASEMGR-PHASEE-E9A8",
+    "gmail_message_id": "1a093f8e919b8787",
+    "thread_id": "1a093f8e919b8787",
+    "from": "daniel@btpestcontrol.com",
+    "to": "contactus@btpestcontrol.com",
+    "eligible": true,
+    "labels_unchanged": true
+  },
+  "case_id": "BTC-contactus-1a093f8e919b8787",
+  "draft_version": 1,
+  "draft_source": "host_written_exact_phasee_body",
+  "fieldwork": "FIELDWORK_NOT_ACCESSED",
+  "review": {
+    "subject": "BT-INTAKE-PROOF-CASE-REVIEW-E9A8 BTC-contactus-1a093f8e919b8787 v1",
+    "to": "daniel@btpestcontrol.com",
+    "cc": "contactus@btpestcontrol.com",
+    "gmail_message_id": "1a093fa3665da401",
+    "send_triggered_in_packet": false
+  },
+  "send_marker": "BT-PHASE-E-SEND-E9A8-C4F1",
+  "live_send": {
+    "status": "BLOCKED",
+    "reason": "contactus_send_token_not_configured",
+    "also_waiting": "exact_iphone_approval_of_draft_v1"
+  }
+}
