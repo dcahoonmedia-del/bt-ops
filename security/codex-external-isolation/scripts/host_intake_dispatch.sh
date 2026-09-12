@@ -21,7 +21,9 @@ fi
 
 mkdir -p "${RESULTS_DIR}"
 # Container runs as uid 1000; the GCE service user is btintake (999).
+# Sticky dir bits are not enough if a prior result file is 0644 owned by 999.
 chmod a+rwxt "${RESULTS_DIR}" || true
+chmod a+rw "${RESULTS_DIR}"/* 2>/dev/null || true
 PAYLOAD="$(cd "$(dirname "${PAYLOAD}")" && pwd)/$(basename "${PAYLOAD}")"
 STAGE="${RESULTS_DIR}/$(basename "${PAYLOAD}")"
 cp "${PAYLOAD}" "${STAGE}"

@@ -374,6 +374,20 @@ class CaseLayer:
         case = self.get_case(case_id)
         if not case:
             return {"ok": False, "reason": "unknown_case"}
+        if gmail_message_id:
+            already = self.conn.execute(
+                "SELECT id FROM case_decisions WHERE gmail_message_id = ?",
+                (gmail_message_id,),
+            ).fetchone()
+            if already:
+                return {
+                    "ok": True,
+                    "skipped": True,
+                    "reason": "already_recorded",
+                    "case_id": case_id,
+                    "decision": decision,
+                    "send_triggered": False,
+                }
         version = int(draft_version or case.get("draft_version") or 0)
         if version != int(case.get("draft_version") or 0):
             return {

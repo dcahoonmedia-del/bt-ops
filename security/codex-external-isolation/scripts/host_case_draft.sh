@@ -19,7 +19,9 @@ else
 fi
 
 mkdir -p "${RESULTS_DIR}"
+# Container uid 1000 cannot overwrite 0644 files owned by btintake (999).
 chmod a+rwxt "${RESULTS_DIR}" || true
+chmod a+rw "${RESULTS_DIR}"/* 2>/dev/null || true
 PAYLOAD="$(cd "$(dirname "${PAYLOAD}")" && pwd)/$(basename "${PAYLOAD}")"
 STAGE="${RESULTS_DIR}/$(basename "${PAYLOAD}")"
 cp "${PAYLOAD}" "${STAGE}"

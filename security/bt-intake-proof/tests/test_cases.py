@@ -182,6 +182,43 @@ class CaseLayerTests(unittest.TestCase):
         self.assertEqual(_label_draft_not_sent("Thanks for writing."), f"{DRAFT_NOT_SENT}\n\nThanks for writing.")
         self.assertEqual(_label_draft_not_sent("DRAFT — NOT SENT\n\nHi"), f"{DRAFT_NOT_SENT}\n\nHi")
 
+    def test_same_decision_receipt_is_idempotent(self) -> None:
+        row = self._commit(lead_receipt("m-dec"))[0]
+        opened = self.cases.upsert_from_receipt(row)
+        self.cases.save_draft(
+            opened["case_id"],
+            {
+                "classification": "lead",
+                "known_facts": ["ants"],
+                "missing_info": ["phone"],
+                "recommended_next_step": "ask for phone",
+                "proposed_response": "We can help.",
+                "channel": "email",
+                "judgment_needed": None,
+                "reasoning_summary": "need phone",
+            },
+            "nonce-dec",
+        )
+        first = self.cases.apply_decision(
+            opened["case_id"],
+            DECISION_APPROVE,
+            draft_version=1,
+            actor="daniel@btpestcontrol.com",
+            gmail_message_id="approve-1",
+        )
+        again = self.cases.apply_decision(
+            opened["case_id"],
+            DECISION_APPROVE,
+            draft_version=1,
+            actor="daniel@btpestcontrol.com",
+            gmail_message_id="approve-1",
+        )
+        self.assertTrue(first["ok"])
+        self.assertTrue(again["ok"])
+        self.assertTrue(again.get("skipped"))
+        self.assertEqual(len(self.cases.decisions(opened["case_id"])), 1)
+        self.assertEqual(self.cases.decisions(opened["case_id"])[0]["send_triggered"], 0)
+
     def test_phase_b_markers_do_not_become_cases(self) -> None:
         row = self._commit(
             lead_receipt(
