@@ -30,6 +30,15 @@ QUEUED_BY_PHASEE = "phasee"
 QUEUED_BY_DESK = "desk_control"
 
 LINK_RE = re.compile(r"https?://|www\.", re.I)
+# Gmail thread ids are hex. Local synthetic case keys are not provider identity.
+GMAIL_THREAD_ID_RE = re.compile(r"^[0-9a-fA-F]{10,32}$")
+
+
+def provider_gmail_thread_id(value: str | None) -> str | None:
+    raw = str(value or "").strip()
+    if GMAIL_THREAD_ID_RE.fullmatch(raw):
+        return raw
+    return None
 
 
 def _table_names(layer: CaseLayer) -> set[str]:

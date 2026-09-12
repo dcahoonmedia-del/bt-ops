@@ -72,6 +72,18 @@ sudo bash /tmp/bt-intake-desk-roundtrip-src/bt-intake-proof/scripts/guarded_desk
 
 # Manual rollback restores code/env/unit only, never receipts or approvals:
 # sudo bash /opt/bt-intake-proof/scripts/rollback_to_predeploy.sh
+
+# After deploy + health PASS, inspect failed action 2 only (no send, no re-queue):
+# sudo -u btintake bash /opt/bt-intake-proof/scripts/recover_failed_desk_send.sh \\
+#   --action-id 2 --case-id BTC-contactus-desk-roundtrip-e9a8-20260912
+#
+# If dry-run reports recovery_authorized=true, omit_gmail_thread_id=true,
+# sent_check exact_matches=0, and host_loop_would_select=false, one attempt:
+# sudo -u btintake bash /opt/bt-intake-proof/scripts/recover_failed_desk_send.sh \\
+#   --action-id 2 --case-id BTC-contactus-desk-roundtrip-e9a8-20260912 --execute
+#
+# Do not reset SQLite, reissue approval, mutate thread_id/payload_sha256, or
+# set status back to queued. Do not send from Cursor/Gmail MCP.
 EOF
 
 echo "tarball=${DEST}/bt-intake-desk-roundtrip.tar.gz"

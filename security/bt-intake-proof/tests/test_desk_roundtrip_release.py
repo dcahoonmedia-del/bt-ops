@@ -36,7 +36,7 @@ from bt_intake_proof.desk_sent_proof import (
     diagnose_daniel_sent_access,
 )
 from bt_intake_proof.intake_mode import MODE_ISOLATED_TEST
-from bt_intake_proof.send_bind import latest_action
+from bt_intake_proof.send_bind import latest_action, provider_gmail_thread_id
 from bt_intake_proof.store import ReceiptStore
 
 
@@ -195,6 +195,7 @@ class DeskRoundtripReleaseTests(unittest.TestCase):
         self.assertIn(MARKER_DESK_SEND, proof["body"])
         self.assertNotIn("http", proof["body"].lower())
         self.assertEqual(FRESH_THREAD_ID, "desk-roundtrip-e9a8-20260912")
+        self.assertIsNone(provider_gmail_thread_id(FRESH_THREAD_ID))
 
 
 if __name__ == "__main__":

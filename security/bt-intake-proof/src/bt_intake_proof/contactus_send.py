@@ -22,7 +22,14 @@ from .oauth_consent import (
     redirect_uri,
 )
 from .phasee_constants import PHASEE_FROM, PHASEE_TO
-from .send_bind import LINK_RE, is_authorized_internal_send_body
+from .send_bind import LINK_RE, is_authorized_internal_send_body, provider_gmail_thread_id
+
+_INVALID_THREAD_PHRASES = (
+    "invalid threadid",
+    "invalid thread_id",
+    "invalid thread id",
+    "invalid id value",
+)
 
 GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
 SEND_TOKEN_ALLOWED_SCOPES = {
@@ -220,6 +227,23 @@ def refresh_send_token() -> dict[str, Any]:
     return record
 
 
+def gmail_send_request_payload(binding: dict[str, Any]) -> dict[str, Any]:
+    """JSON body posted to users.messages.send. Omits non-provider thread ids."""
+    payload: dict[str, Any] = {"raw": raw_b64(binding)}
+    thread = provider_gmail_thread_id(binding.get("thread_id"))
+    if thread:
+        payload["threadId"] = thread
+    return payload
+
+
+def classify_gmail_http_error(code: int, detail: str | None) -> str:
+    if int(code) == 400:
+        blob = str(detail or "").lower()
+        if any(phrase in blob for phrase in _INVALID_THREAD_PHRASES):
+            return "invalid_gmail_thread_id"
+    return f"http_{code}"
+
+
 class HttpContactusSendGmail:
     """Submit only the stored Phase E MIME. Does not rewrite subject, body, or recipients."""
 
@@ -230,9 +254,7 @@ class HttpContactusSendGmail:
         self.scopes = list(scopes)
 
     def _submit_raw(self, binding: dict[str, Any]) -> dict[str, Any]:
-        payload: dict[str, Any] = {"raw": raw_b64(binding)}
-        if binding.get("thread_id"):
-            payload["threadId"] = binding["thread_id"]
+        payload = gmail_send_request_payload(binding)
         request = urllib.request.Request(
             "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
             data=json.dumps(payload).encode("utf-8"),
@@ -249,9 +271,10 @@ class HttpContactusSendGmail:
             return {"ok": False, "unknown": True, "reason": "timeout"}
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
+            reason = classify_gmail_http_error(exc.code, detail)
             if exc.code >= 500:
-                return {"ok": False, "unknown": True, "reason": f"http_{exc.code}", "detail": detail}
-            return {"ok": False, "unknown": False, "reason": f"http_{exc.code}", "detail": detail}
+                return {"ok": False, "unknown": True, "reason": reason}
+            return {"ok": False, "unknown": False, "reason": reason}
         except urllib.error.URLError as exc:
             return {"ok": False, "unknown": True, "reason": f"urlerror:{exc.reason}"}
         mid = str(body.get("id") or "")

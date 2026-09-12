@@ -28,6 +28,7 @@ from .phasee_constants import PHASEE_FROM, PHASEE_TO
 from .send_bind import ensure_send_tables, latest_action
 from .store import ReceiptStore, body_hash, utc_now
 
+# Local case key only. Not a Gmail thread id and must not be sent as threadId.
 FRESH_THREAD_ID = "desk-roundtrip-e9a8-20260912"
 FRESH_MESSAGE_ID = "desk-rt-inbound-e9a8-20260912"
 FRESH_RFC = "<desk-rt-inbound-e9a8-20260912@btpestcontrol.com>"
