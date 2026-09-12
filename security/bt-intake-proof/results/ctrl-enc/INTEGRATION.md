@@ -14,6 +14,6 @@
 | Action 1 / 2 | **untouched** | Do not verify-recipient or recover `--execute` |
 | Customer / proof send | **BLOCKED** | None authorized |
 | New OAuth / scopes | **not requested** | Existing packet path only |
-| Immutable release | **yes** | SHA256 `e04fe1b4…` source `f811fc1` artifact `5140331` |
+| Immutable release | **yes** | SHA256 `2ec51860…` source `c41404e` artifact `1d32efe` |
 
 Do not fabricate a model PASS from these unit tests.
