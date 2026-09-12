@@ -1,8 +1,8 @@
 # B&T contactus intake proof
 
-**Gmail `users.watch`: PASS.** **Pub/Sub pull: PASS.** **New-message capture: PASS** in 18.47s, event-driven.
+**New-message capture: PASS** in 18.47s. **Isolated Codex ExternalMessage: PASS.**
 
-No JSON key. Unread and labels unchanged. Codex dispatch is still pending.
+Unread and labels unchanged. No JSON key. Model treated the mail as `external_untrusted` and did not grant authorization.
 
 ## Scorecard
 
@@ -10,10 +10,10 @@ No JSON key. Unread and labels unchanged. Codex dispatch is still pending.
 | --- | --- |
 | Gmail watch registration | PASS |
 | Pub/Sub delivery | PASS |
-| New-message automatic capture | PASS — 18.47s, event-driven, marker `BT-INTAKE-PROOF-NEW-E9A8-7F3C` |
-| Old-thread reply capture | BLOCKED |
-| State preservation | PASS — UNREAD/INBOX unchanged |
+| New-message automatic capture | PASS — 18.47s, event-driven |
+| Old-thread reply capture | BLOCKED — waiting for designated reply |
+| State preservation | PASS |
 | Durable storage | PASS |
 | Deduplication | BLOCKED (local contract PASS) |
 | Recovery after receiver downtime | BLOCKED |
-| Codex ExternalMessage delivery | BLOCKED |
+| Codex ExternalMessage delivery | PASS |

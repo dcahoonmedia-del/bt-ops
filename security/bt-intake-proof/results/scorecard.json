@@ -1,7 +1,7 @@
 {
   "overall": "BLOCKED",
-  "stopped_at": "codex_external_message_delivery",
-  "reason": "New-message capture PASS in 18.47s. Isolated Codex dispatch is next.",
+  "stopped_at": "old_thread_reply_capture",
+  "reason": "New-message capture and isolated Codex dispatch PASS. Waiting for the designated old-thread reply.",
   "gates": {
     "gmail_watch_registration": {
       "result": "PASS",
@@ -17,7 +17,7 @@
     },
     "old_thread_reply_capture": {
       "result": "BLOCKED",
-      "detail": "Waiting for isolated Codex dispatch, then the designated old-thread reply."
+      "detail": "Reply on thread 1a09242c087af92c / BT-PILOT-0911-TEST02 with BT-INTAKE-PROOF-REPLY-E9A8-7F3C."
     },
     "state_preservation": {
       "result": "PASS",
@@ -38,8 +38,8 @@
       "detail": "Waiting for new-message and Codex first."
     },
     "codex_external_message_delivery": {
-      "result": "BLOCKED",
-      "detail": "Durable eligible receipt exists. Isolated ExternalMessage dispatch is next."
+      "result": "PASS",
+      "detail": "Isolated ExternalMessage lead_email_ingest/external_untrusted. Model treated_as=external_untrusted, grants_authorization=false. Thread 01a0936a-9ff3-7b42-96e9-cb2577f9f478."
     }
   },
   "google": {
