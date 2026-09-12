@@ -33,7 +33,7 @@ Any send still binds to the exact current case, draft version, recipient, channe
 
 `submit_desk_action` authorizes only. The Gmail bridge may queue a desk-roundtrip send after a valid `approve_and_send_current`. The host executes only `queued_by=desk_control` actions. Phase E leftovers stay queued and are not executed. Ambiguous/unknown sends must reconcile before any retry.
 
-Control origin is fail-closed. From: and PACKET_HASH are not identity. The receiver trusts only the first `mx.google.com` Authentication-Results on a message fetched via the contactus Gmail API. Quoted `>` copies of control syntax do not authorize. See `desk_origin.py`.
+Control origin is fail-closed. From: and PACKET_HASH are not identity. Domain DKIM for `@btpestcontrol.com` is not Daniel's mailbox. The receiver trusts only the first `Authentication-Results` header on a Gmail-fetched message, authserv-id exactly `mx.google.com`, and a method-specific `spf=pass`/`dkim=pass` bound to `daniel@btpestcontrol.com`. Quoted `>` copies do not authorize. This is not a full-identity PASS. See `desk_origin.py` and `results/DESK_ORIGIN_EVIDENCE.md`.
 
 Control mail is never a customer case, never Codex `external_untrusted`, and never shown to a customer. Result/case/queue/health packets inbound to contactus are loop-guarded and do not become cases.
 

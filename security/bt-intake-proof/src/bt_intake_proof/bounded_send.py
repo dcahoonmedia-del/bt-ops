@@ -7,7 +7,7 @@ from email.message import EmailMessage
 from typing import Any, Protocol
 
 from .cases import CaseLayer
-from .phasee_constants import STATUS_ATTEMPTED, STATUS_FAILED, STATUS_REJECTED, STATUS_UNKNOWN
+from .phasee_constants import STATUS_ATTEMPTED, STATUS_FAILED, STATUS_QUEUED, STATUS_REJECTED, STATUS_UNKNOWN
 from .constants import ALLOWED_SENDER, MAILBOX
 from .send_bind import (
     QUEUED_BY_DESK,
@@ -15,6 +15,7 @@ from .send_bind import (
     binding_from_action,
     ensure_send_tables,
     mark_action,
+    outbound_marker,
     record_attempt,
     revalidate_action,
 )
@@ -53,6 +54,20 @@ class MemorySendTransport:
                 "thread_id": mail.get("thread_id") or "",
             }
         )
+
+
+class CrashAfterAccept(Exception):
+    """Test/helper: provider accepted, local persist has not happened."""
+
+    def __init__(self, result: dict[str, Any]) -> None:
+        super().__init__("crash_after_provider_accept")
+        self.result = result
+
+
+class CrashAfterAcceptTransport(MemorySendTransport):
+    def send_exact(self, binding: dict[str, Any]) -> dict[str, Any]:
+        result = super().send_exact(binding)
+        raise CrashAfterAccept(result)
 
 
 class MissingContactusSendTransport:
@@ -165,3 +180,78 @@ def execute_desk_queued_sends(layer: CaseLayer, transport: SendTransport) -> lis
         (QUEUED_BY_DESK,),
     ).fetchall()
     return [execute_action(layer, row["id"], transport, owner="desk-sender") for row in rows]
+
+
+def reconcile_incomplete_desk_sends(layer: CaseLayer, verify_transport: Any) -> list[dict[str, Any]]:
+    """Recover locks after crash. Found outbound → persist; none → unlock for retry; many → unknown."""
+    ensure_send_tables(layer)
+    rows = layer.conn.execute(
+        """
+        SELECT * FROM case_send_actions
+        WHERE queued_by = ? AND consumed = 0 AND locked_at IS NOT NULL
+        ORDER BY id
+        """,
+        (QUEUED_BY_DESK,),
+    ).fetchall()
+    results = []
+    for row in rows:
+        action = dict(row)
+        binding = binding_from_action(action)
+        found = [
+            item
+            for item in verify_transport.search_sent(outbound_marker(binding.get("body")))
+            if str(item.get("subject") or "") == binding["subject"]
+        ]
+        if len(found) == 1:
+            mid = found[0].get("id") or found[0].get("provider_message_id")
+            mark_action(
+                layer,
+                action["id"],
+                status=STATUS_ATTEMPTED,
+                consumed=1,
+                locked_at=None,
+                lock_owner=None,
+            )
+            record_attempt(layer, action["id"], "recovered", provider_message_id=mid)
+            results.append(
+                {
+                    "ok": True,
+                    "recovered": True,
+                    "action_id": action["id"],
+                    "status": STATUS_ATTEMPTED,
+                    "provider_message_id": mid,
+                }
+            )
+            continue
+        if len(found) > 1:
+            mark_action(
+                layer,
+                action["id"],
+                status=STATUS_UNKNOWN,
+                consumed=1,
+                locked_at=None,
+                lock_owner=None,
+            )
+            record_attempt(layer, action["id"], "unknown", detail="more_than_one_outbound_on_reconcile")
+            results.append(
+                {
+                    "ok": False,
+                    "unknown": True,
+                    "retried": False,
+                    "action_id": action["id"],
+                    "reason": "more_than_one_outbound",
+                }
+            )
+            continue
+        mark_action(layer, action["id"], locked_at=None, lock_owner=None, status=STATUS_QUEUED)
+        record_attempt(layer, action["id"], "stale_lock_cleared")
+        results.append(
+            {
+                "ok": True,
+                "recovered": False,
+                "unlocked": True,
+                "action_id": action["id"],
+                "reason": "stale_lock_cleared",
+            }
+        )
+    return results

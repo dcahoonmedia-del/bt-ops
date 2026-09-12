@@ -32,9 +32,15 @@ QUEUED_BY_DESK = "desk_control"
 LINK_RE = re.compile(r"https?://|www\.", re.I)
 
 
+def _table_names(layer: CaseLayer) -> set[str]:
+    return {row[0] for row in layer.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+
+
 def ensure_send_tables(layer: CaseLayer) -> None:
-    layer.conn.executescript(
-        """
+    names = _table_names(layer)
+    if "case_send_actions" not in names:
+        layer.conn.executescript(
+            """
         CREATE TABLE IF NOT EXISTS case_send_actions (
             id INTEGER PRIMARY KEY,
             case_id TEXT NOT NULL,
@@ -58,18 +64,17 @@ def ensure_send_tables(layer: CaseLayer) -> None:
             lock_owner TEXT,
             UNIQUE (case_id, draft_version)
         );
-        """
-    )
+            """
+        )
     cols = {row[1] for row in layer.conn.execute("PRAGMA table_info(case_send_actions)")}
     if "queued_by" not in cols:
         layer.conn.execute("ALTER TABLE case_send_actions ADD COLUMN queued_by TEXT")
     if "control_gmail_id" not in cols:
         layer.conn.execute("ALTER TABLE case_send_actions ADD COLUMN control_gmail_id TEXT")
-    # Keep the remaining CREATE statements in a second script so ALTER can run
-    # against DBs that already had the original table.
-    layer.conn.executescript(
-        """
-
+    names = _table_names(layer)
+    if "case_send_attempts" not in names:
+        layer.conn.executescript(
+            """
         CREATE TABLE IF NOT EXISTS case_send_attempts (
             id INTEGER PRIMARY KEY,
             action_id INTEGER NOT NULL,
@@ -78,7 +83,11 @@ def ensure_send_tables(layer: CaseLayer) -> None:
             provider_message_id TEXT,
             detail TEXT
         );
-
+            """
+        )
+    if "case_send_verifications" not in _table_names(layer):
+        layer.conn.executescript(
+            """
         CREATE TABLE IF NOT EXISTS case_send_verifications (
             id INTEGER PRIMARY KEY,
             action_id INTEGER NOT NULL,

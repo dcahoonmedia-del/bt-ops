@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sqlite3
 from typing import Any
 
 from .cases import (
@@ -301,9 +302,15 @@ def inspect_inbound(
     }
 
 
+def _table_names(layer: CaseLayer) -> set[str]:
+    return {row[0] for row in layer.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+
+
 def ensure_bridge_tables(layer: CaseLayer) -> None:
-    layer.conn.executescript(
-        """
+    names = _table_names(layer)
+    if "desk_control_inbox" not in names or "desk_control_consumed" not in names or "desk_result_outbox" not in names:
+        layer.conn.executescript(
+            """
         CREATE TABLE IF NOT EXISTS desk_control_inbox (
             id INTEGER PRIMARY KEY,
             gmail_message_id TEXT UNIQUE,
@@ -452,10 +459,11 @@ def validate_control_binding(
 
 
 def consume_binding(layer: CaseLayer, parsed: dict[str, Any], *, gmail_message_id: str | None) -> None:
+    """Insert the nonce. Raises IntegrityError if another worker already consumed it."""
     ensure_bridge_tables(layer)
     layer.conn.execute(
         """
-        INSERT OR IGNORE INTO desk_control_consumed (nonce, draft_version, packet_hash, consumed_at, gmail_message_id)
+        INSERT INTO desk_control_consumed (nonce, draft_version, packet_hash, consumed_at, gmail_message_id)
         VALUES (?, ?, ?, ?, ?)
         """,
         (
@@ -687,14 +695,19 @@ def process_control_mail(
         )
 
     parsed = {**parsed, "control_gmail_id": gmail_message_id}
+
+    def _binding_blocks(case_row: dict[str, Any] | None, draft_row: dict[str, Any] | None) -> list[str]:
+        found = validate_control_binding(parsed, case=case_row, draft=draft_row, layer=layer)
+        if case_row and parsed["intent"] == INTENT_APPROVE_SEND:
+            if case_row.get("hold"):
+                found.append("hold")
+            if (case_row.get("owner") or "").lower() in OFFICE_STAFF:
+                found.append("office_owned")
+        return found
+
     case = layer.get_case(str(parsed.get("case_id") or ""))
     draft = layer.latest_draft(str(parsed.get("case_id") or "")) if case else None
-    blocks = validate_control_binding(parsed, case=case, draft=draft, layer=layer)
-    if case and (case.get("hold") or (case.get("owner") or "").lower() in OFFICE_STAFF) and parsed["intent"] == INTENT_APPROVE_SEND:
-        if case.get("hold"):
-            blocks.append("hold")
-        if (case.get("owner") or "").lower() in OFFICE_STAFF:
-            blocks.append("office_owned")
+    blocks = _binding_blocks(case, draft)
     if blocks:
         result = _fail(
             "blocked_by_backend",
@@ -706,23 +719,62 @@ def process_control_mail(
         return _finish_control_result(layer, result, gmail_message_id=gmail_message_id, nonce=parsed.get("nonce"))
 
     assert case is not None and draft is not None
-    applied = apply_authorized_action(layer, parsed, case=case, draft=draft)
+    try:
+        layer.conn.execute("BEGIN IMMEDIATE")
+        case = layer.get_case(str(parsed.get("case_id") or ""))
+        draft = layer.latest_draft(str(parsed.get("case_id") or "")) if case else None
+        blocks = _binding_blocks(case, draft)
+        if blocks or case is None or draft is None:
+            layer.conn.execute("ROLLBACK")
+            result = _fail(
+                "blocked_by_backend",
+                blocks=blocks or ["unknown_case"],
+                intent=parsed.get("intent"),
+                case_id=parsed.get("case_id"),
+                human="That action is stale or blocked. I did not change the case.",
+            )
+            return _finish_control_result(layer, result, gmail_message_id=gmail_message_id, nonce=parsed.get("nonce"))
+        try:
+            consume_binding(layer, parsed, gmail_message_id=gmail_message_id)
+        except sqlite3.IntegrityError:
+            layer.conn.execute("ROLLBACK")
+            result = _fail(
+                "blocked_by_backend",
+                blocks=["nonce_consumed"],
+                intent=parsed.get("intent"),
+                case_id=parsed.get("case_id"),
+                human="That action is stale or blocked. I did not change the case.",
+            )
+            return _finish_control_result(layer, result, gmail_message_id=gmail_message_id, nonce=parsed.get("nonce"))
+        applied = apply_authorized_action(layer, parsed, case=case, draft=draft)
+        if not applied.get("ok"):
+            layer.conn.execute("ROLLBACK")
+            applied.setdefault("intent", parsed["intent"])
+            applied.setdefault("case_id", parsed.get("case_id"))
+            return _finish_control_result(layer, applied, gmail_message_id=gmail_message_id, nonce=parsed.get("nonce"))
+        if layer.conn.in_transaction:
+            layer.conn.execute("COMMIT")
+    except sqlite3.OperationalError:
+        try:
+            if layer.conn.in_transaction:
+                layer.conn.execute("ROLLBACK")
+        except sqlite3.OperationalError:
+            pass
+        raise
     applied.setdefault("intent", parsed["intent"])
     applied.setdefault("case_id", case["case_id"])
     applied.setdefault("source", SOURCE_CHATGPT)
     applied.setdefault("execute_send", False)
     applied.setdefault("send_queued", False)
     applied["draft_version"] = applied.get("draft_version") or draft.get("version")
-    if applied.get("ok"):
-        consume_binding(layer, parsed, gmail_message_id=gmail_message_id)
-        applied.setdefault(
-            "human",
-            _human_success(
-                parsed["intent"],
-                owner=applied.get("owner") or parsed.get("owner"),
-                version=applied.get("draft_version"),
-            ),
-        )
+    applied.setdefault(
+        "human",
+        _human_success(
+            parsed["intent"],
+            owner=applied.get("owner") or parsed.get("owner"),
+            version=applied.get("draft_version"),
+        ),
+    )
     return _finish_control_result(layer, applied, gmail_message_id=gmail_message_id, nonce=parsed.get("nonce"))
 
 
@@ -886,6 +938,40 @@ def deliver_pending_desk_mail(layer: CaseLayer, transport: Any) -> list[dict[str
                 "provider_message_id": result.get("provider_message_id"),
             }
         )
+    return out
+
+
+def reconcile_sending_outbox(layer: CaseLayer, sent_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Unstick result delivery after crash between provider accept and local persist."""
+    ensure_bridge_tables(layer)
+    rows = layer.conn.execute("SELECT * FROM desk_result_outbox WHERE status = 'sending' ORDER BY id").fetchall()
+    out = []
+    for row in rows:
+        matches = [
+            item
+            for item in sent_records
+            if str(item.get("subject") or "") == row["subject"]
+            and str(row["body"] or "")[:80] in str(item.get("body") or "")
+        ]
+        if len(matches) == 1:
+            mid = matches[0].get("provider_message_id") or matches[0].get("id")
+            layer.conn.execute(
+                "UPDATE desk_result_outbox SET status = 'sent', provider_id = ?, sent_at = ? WHERE id = ?",
+                (mid, utc_now(), row["id"]),
+            )
+            out.append({"ok": True, "recovered": True, "id": row["id"], "provider_message_id": mid})
+        elif len(matches) > 1:
+            layer.conn.execute(
+                "UPDATE desk_result_outbox SET status = 'unknown' WHERE id = ?",
+                (row["id"],),
+            )
+            out.append({"ok": False, "unknown": True, "retried": False, "id": row["id"]})
+        else:
+            layer.conn.execute(
+                "UPDATE desk_result_outbox SET status = 'pending' WHERE id = ? AND status = 'sending'",
+                (row["id"],),
+            )
+            out.append({"ok": True, "unlocked": True, "id": row["id"], "reason": "sending_reset_to_pending"})
     return out
 
 

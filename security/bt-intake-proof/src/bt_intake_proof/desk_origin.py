@@ -10,36 +10,51 @@ Identity is not proven by:
 - a copied or quoted DESK-CTRL block in a reply
 - Authentication-Results written by the sender or by any hop we did not
   observe via the receiving mailbox's Gmail API
+- a domain-level DKIM pass for @btpestcontrol.com (proves the Workspace
+  domain signed, not that the mailbox was daniel@)
+- an arbitrary string `mx.google.com` in a header we did not fetch
 
-This proof mailbox is contactus@, fetched with the existing read-only
-Gmail API token. Gmail prepends its own Authentication-Results on ingest
-(`authserv-id=mx.google.com`). We therefore:
+Mailbox-bound provider result (what this module can claim)
+----------------------------------------------------------
 
-1. Require the message to have been fetched via `contactus_gmail_api`
-   with a non-empty Gmail message id. CLI files and reconstructed bodies
-   fail closed unless that provider evidence is attached.
-2. Read only the first/topmost Authentication-Results header. If that
-   header is absent or its authserv-id is not mx.google.com, reject.
-   We do not walk later AR headers; an attacker can append or inject
-   those in the raw RFC822.
-3. Require that first Google AR to show `dkim=pass` for @btpestcontrol.com
-   or `spf=pass` for smtp.mailfrom=daniel@btpestcontrol.com.
-4. Require the normalized From: to equal daniel@btpestcontrol.com as a
-   consistency check *after* the provider result. From alone never
-   authorizes.
-5. Parse control fields only from unquoted text. Lines that look like
-   `>` quotes cannot authorize.
+A Gmail-fetched first `Authentication-Results` header may authorize only
+when a *method-specific* result is bound to daniel@ itself:
 
-Out of scope / residual risk:
+- `spf=pass` on the same spec as `smtp.mailfrom=daniel@btpestcontrol.com`
+- `dkim=pass` on the same spec as `header.i=daniel@btpestcontrol.com`
 
-- Compromise of daniel@ itself (authorized mailbox).
-- Compromise of the contactus Gmail API token (can mint false fetches).
-- Gmail-side AR bugs. We do not have a second provider (daniel@ Sent
-  cross-check) on the live VM with current access; that would be a
-  narrow additional control, not a reason to weaken this gate.
-- We do not trust attacker-supplied Authentication-Results in isolation.
+`dkim=pass header.i=@btpestcontrol.com` is recorded as domain evidence
+only. It does not authorize. contactus@, brenda@, ally@, and daniel@
+share that organizational DKIM identity.
 
-Replay is blocked by nonce consume, not by origin auth.
+This is not full human-identity proof. It does not survive compromise of
+daniel@ or of the contactus Gmail API token.
+
+Trusted Gmail-inserted header boundary
+--------------------------------------
+
+We do not walk later Authentication-Results headers. We take only the
+first header whose name is Authentication-Results (not
+ARC-Authentication-Results). Gmail's ingest inserts its own AR with
+authserv-id `mx.google.com` ahead of the original RFC822. Runtime
+evidence of that order on a Gmail-ingested inbound is in
+`results/DESK_ORIGIN_EVIDENCE.md` (daniel@ inbox copy of the Phase E
+send, provider id `1a094071c6be5dab`). That is Gmail's inbound path,
+not a contactus-fetched control mail. The live contactus fetch that
+would confirm the same prepend on the control mailbox is the existing
+readonly Gmail API used by `hydrate_receipt`; this agent cannot read
+that mailbox.
+
+authserv-id must be exactly `mx.google.com` (no lookalike suffix).
+
+Missing capability for a stronger origin claim
+----------------------------------------------
+
+A Message-ID match against daniel@ Sent would prove the control was
+submitted from that mailbox independently of AR parsing. That path is
+not available on this agent (no daniel read token on the VM; Cursor
+Gmail MCP is not the host). Until that exists, authorization stays at
+mailbox-bound SPF/DKIM method results, not "full identity PASS".
 """
 
 from __future__ import annotations
@@ -52,12 +67,14 @@ from .eligibility import normalize_email
 
 FETCHED_VIA_GMAIL = "contactus_gmail_api"
 AUTHSERV_GMAIL = "mx.google.com"
+IDENTITY_LEVEL_MAILBOX = "mailbox_bound_provider_result"
+IDENTITY_LEVEL_DOMAIN = "domain_only_not_mailbox"
+IDENTITY_LEVEL_NONE = "none"
 
-_DKIM_PASS = re.compile(r"\bdkim=pass\b", re.I)
-_SPF_PASS = re.compile(r"\bspf=pass\b", re.I)
-_DKIM_I = re.compile(r"header\.i=([^\s;]+)", re.I)
-_MAILFROM = re.compile(r"smtp\.mailfrom=([^\s;]+)", re.I)
 _QUOTED = re.compile(r"^\s*>")
+_COMMENT = re.compile(r"\([^)]*\)")
+_SPEC = re.compile(r"(?i)^\s*([a-z0-9-]+)\s*=\s*([a-z0-9-]+)\s*(.*)$")
+_PROP = re.compile(r"(?i)([a-z0-9.]+)=([^\s;]+)")
 
 
 def unquoted_control_text(body: str | None) -> str:
@@ -97,23 +114,79 @@ def first_authentication_results(headers: Any) -> str | None:
 
 
 def _authserv_id(value: str) -> str:
-    return value.split(";", 1)[0].strip().split()[0].lower() if value.strip() else ""
+    if not value.strip():
+        return ""
+    token = value.split(";", 1)[0].strip().split()[0].lower()
+    return token.rstrip(".")
 
 
-def _dkim_identity_ok(value: str) -> bool:
-    if not _DKIM_PASS.search(value):
-        return False
-    identity = (_DKIM_I.search(value) or [None, ""])[1].strip().lower()
-    if identity == ALLOWED_SENDER or identity == f"<{ALLOWED_SENDER}>":
-        return True
-    return identity.endswith("@btpestcontrol.com") or identity == "@btpestcontrol.com"
+def parse_ar_method_results(value: str) -> list[dict[str, Any]]:
+    """Parse each method=result and bind following properties to that result only."""
+    rest = value.split(";", 1)[1] if ";" in value else ""
+    found: list[dict[str, Any]] = []
+    for raw in rest.split(";"):
+        spec = _COMMENT.sub(" ", raw).strip()
+        if not spec:
+            continue
+        match = _SPEC.match(spec)
+        if not match:
+            continue
+        method, result, prop_blob = match.group(1).lower(), match.group(2).lower(), match.group(3)
+        props: dict[str, str] = {}
+        for item in _PROP.finditer(prop_blob):
+            props[item.group(1).lower()] = item.group(2).strip().strip("<>")
+        found.append({"method": method, "result": result, "props": props, "raw": spec})
+    return found
 
 
-def _spf_mailfrom_ok(value: str) -> bool:
-    if not _SPF_PASS.search(value):
-        return False
-    mailfrom = (_MAILFROM.search(value) or [None, ""])[1].strip().lower()
-    return normalize_email(mailfrom) == ALLOWED_SENDER
+def _mailbox_match(raw: str | None) -> bool:
+    return normalize_email(raw) == ALLOWED_SENDER
+
+
+def _domain_only_identity(raw: str | None) -> bool:
+    ident = str(raw or "").strip().lower().strip("<>")
+    return ident in {"@btpestcontrol.com", "btpestcontrol.com"}
+
+
+def evaluate_method_results(methods: list[dict[str, Any]]) -> dict[str, Any]:
+    dkim_mailbox = False
+    dkim_domain = False
+    spf_mailbox = False
+    dkim_pass_identities: list[str] = []
+    spf_pass_mailfrom: list[str] = []
+    for item in methods:
+        if item["method"] == "dkim":
+            ident = item["props"].get("header.i") or item["props"].get("header.i")
+            if item["result"] == "pass":
+                dkim_pass_identities.append(str(ident or ""))
+                if _mailbox_match(ident):
+                    dkim_mailbox = True
+                elif _domain_only_identity(ident):
+                    dkim_domain = True
+        elif item["method"] == "spf":
+            mailfrom = item["props"].get("smtp.mailfrom")
+            if item["result"] == "pass":
+                spf_pass_mailfrom.append(str(mailfrom or ""))
+                if _mailbox_match(mailfrom):
+                    spf_mailbox = True
+    mailbox_ok = dkim_mailbox or spf_mailbox
+    if mailbox_ok:
+        level = IDENTITY_LEVEL_MAILBOX
+    elif dkim_domain:
+        level = IDENTITY_LEVEL_DOMAIN
+    else:
+        level = IDENTITY_LEVEL_NONE
+    return {
+        "dkim_mailbox_ok": dkim_mailbox,
+        "dkim_domain_ok": dkim_domain,
+        "spf_mailbox_ok": spf_mailbox,
+        "dkim_ok": dkim_mailbox,
+        "spf_ok": spf_mailbox,
+        "dkim_pass_identities": dkim_pass_identities,
+        "spf_pass_mailfrom": spf_pass_mailfrom,
+        "identity_level": level,
+        "mailbox_ok": mailbox_ok,
+    }
 
 
 def authenticate_control_origin(
@@ -121,7 +194,7 @@ def authenticate_control_origin(
     from_addr: str | None,
     provider_evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Fail closed unless Gmail-fetched evidence authenticates Daniel."""
+    """Fail closed unless Gmail-fetched method results bind to daniel@."""
     evidence = dict(provider_evidence or {})
     fetched_via = str(evidence.get("fetched_via") or "")
     gmail_message_id = str(evidence.get("gmail_message_id") or "").strip()
@@ -135,8 +208,14 @@ def authenticate_control_origin(
         "authserv": None,
         "dkim_ok": False,
         "spf_ok": False,
+        "dkim_mailbox_ok": False,
+        "dkim_domain_ok": False,
+        "spf_mailbox_ok": False,
+        "identity_level": IDENTITY_LEVEL_NONE,
         "trusted_from_header_only": False,
         "trusted_packet_hash_as_identity": False,
+        "trusted_domain_dkim_as_mailbox": False,
+        "full_identity_pass": False,
     }
     if fetched_via != FETCHED_VIA_GMAIL or not gmail_message_id:
         return {**base, "reason": "origin_evidence_missing"}
@@ -147,15 +226,31 @@ def authenticate_control_origin(
     base["authserv"] = authserv
     if authserv != AUTHSERV_GMAIL:
         return {**base, "reason": "authentication_results_not_gmail"}
-    dkim_ok = _dkim_identity_ok(ar)
-    spf_ok = _spf_mailfrom_ok(ar)
-    base["dkim_ok"] = dkim_ok
-    base["spf_ok"] = spf_ok
-    if not dkim_ok and not spf_ok:
+    judged = evaluate_method_results(parse_ar_method_results(ar))
+    base.update(
+        {
+            "dkim_ok": judged["dkim_ok"],
+            "spf_ok": judged["spf_ok"],
+            "dkim_mailbox_ok": judged["dkim_mailbox_ok"],
+            "dkim_domain_ok": judged["dkim_domain_ok"],
+            "spf_mailbox_ok": judged["spf_mailbox_ok"],
+            "identity_level": judged["identity_level"],
+            "dkim_pass_identities": judged["dkim_pass_identities"],
+            "spf_pass_mailfrom": judged["spf_pass_mailfrom"],
+        }
+    )
+    if judged["identity_level"] == IDENTITY_LEVEL_DOMAIN and not judged["mailbox_ok"]:
+        return {**base, "reason": "domain_dkim_not_mailbox_identity"}
+    if not judged["mailbox_ok"]:
         return {**base, "reason": "provider_auth_failed"}
     if from_n != ALLOWED_SENDER:
         return {**base, "reason": "from_not_daniel"}
-    return {**base, "accepted": True, "reason": "gmail_ar_pass"}
+    return {
+        **base,
+        "accepted": True,
+        "reason": "mailbox_bound_provider_result",
+        "full_identity_pass": False,
+    }
 
 
 def daniel_origin_evidence(
@@ -172,7 +267,7 @@ def daniel_origin_evidence(
             (
                 "Authentication-Results",
                 "mx.google.com; "
-                "dkim=pass header.i=@btpestcontrol.com header.s=google; "
+                "dkim=pass header.i=daniel@btpestcontrol.com header.s=google; "
                 "spf=pass smtp.mailfrom=daniel@btpestcontrol.com; "
                 "dmarc=pass header.from=btpestcontrol.com",
             ),

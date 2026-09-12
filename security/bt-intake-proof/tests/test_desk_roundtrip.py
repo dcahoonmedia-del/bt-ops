@@ -1,9 +1,16 @@
-import json
+import threading
 import tempfile
 import unittest
 from pathlib import Path
 
-from bt_intake_proof.bounded_send import MemorySendTransport, execute_desk_queued_sends, execute_due_sends
+from bt_intake_proof.bounded_send import (
+    CrashAfterAccept,
+    CrashAfterAcceptTransport,
+    MemorySendTransport,
+    execute_desk_queued_sends,
+    execute_due_sends,
+    reconcile_incomplete_desk_sends,
+)
 from bt_intake_proof.cases import CaseLayer
 from bt_intake_proof.constants import (
     ALLOWED_SENDER,
@@ -23,6 +30,7 @@ from bt_intake_proof.desk_bridge import (
     inspect_inbound,
     install_desk_send_draft,
     process_control_mail,
+    reconcile_sending_outbox,
 )
 from bt_intake_proof.desk_control import INTENT_APPROVE_SEND, INTENT_HOLD, INTENT_REVISE
 from bt_intake_proof.desk_origin import authenticate_control_origin, daniel_origin_evidence, unquoted_control_text
@@ -242,7 +250,7 @@ class DeskRoundtripTests(unittest.TestCase):
         self.assertFalse(executed2[0]["ok"])
         self.assertTrue({"superseded_draft", "stale_draft_version", "body_changed"} & set(executed2[0]["reasons"]))
 
-    def test_replay_concurrency_and_restart(self) -> None:
+    def test_sequential_replay_and_reopen(self) -> None:
         case_id, binding = self._open_desk("desk-replay")
         first = self._apply(INTENT_APPROVE_SEND, binding, gmail_message_id="ctrl-replay-1")
         self.assertTrue(first["ok"], first)
@@ -347,6 +355,177 @@ class DeskRoundtripTests(unittest.TestCase):
             {"from_addr": MAILBOX, "to": ALLOWED_SENDER, "subject": MARKER_DESK_CTRL, "body": MARKER_DESK_CTRL},
         )
         self.assertEqual(blocked["reason"], "desk_ctrl_loop_forbidden")
+
+    def test_simultaneous_nonce_consume_two_connections(self) -> None:
+        _case_id, binding = self._open_desk("desk-conc-nonce")
+        path = self.path
+        barrier = threading.Barrier(2)
+        results: list[dict | BaseException | None] = [None, None]
+
+        def worker(index: int, mid: str) -> None:
+            store = ReceiptStore(path)
+            layer = CaseLayer(store)
+            ensure_send_tables(layer)
+            mail = format_control_mail(INTENT_HOLD, binding)
+            barrier.wait()
+            try:
+                results[index] = process_control_mail(
+                    layer,
+                    sender=ALLOWED_SENDER,
+                    subject=mail["subject"],
+                    body=mail["body"],
+                    gmail_message_id=mid,
+                    provider_evidence=daniel_origin_evidence(mid),
+                )
+            except Exception as exc:  # noqa: BLE001
+                results[index] = exc
+            finally:
+                store.close()
+
+        threads = [
+            threading.Thread(target=worker, args=(0, "ctrl-conc-a")),
+            threading.Thread(target=worker, args=(1, "ctrl-conc-b")),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        ended = results
+        self.assertTrue(all(not isinstance(item, Exception) for item in ended), ended)
+        oks = [item for item in ended if isinstance(item, dict) and item.get("ok")]
+        blocks = [item for item in ended if isinstance(item, dict) and not item.get("ok")]
+        self.assertEqual(len(oks), 1, ended)
+        self.assertEqual(len(blocks), 1, ended)
+        self.assertIn("nonce_consumed", (blocks[0].get("blocks") or []))
+        self.store = ReceiptStore(path)
+        self.layer = CaseLayer(self.store)
+        self.assertEqual(self.layer.conn.execute("SELECT COUNT(*) FROM desk_control_consumed").fetchone()[0], 1)
+
+    def test_simultaneous_execute_and_result_delivery(self) -> None:
+        case_id, binding = self._open_desk("desk-conc-exec")
+        queued = self._apply(INTENT_APPROVE_SEND, binding, gmail_message_id="ctrl-conc-exec")
+        self.assertTrue(queued["ok"], queued)
+        path = self.path
+        barrier = threading.Barrier(2)
+        exec_results: list = [None, None]
+        send = MemorySendTransport()
+        send_lock = threading.Lock()
+
+        class LockedSend(MemorySendTransport):
+            def send_exact(self, binding):  # noqa: ANN001
+                with send_lock:
+                    return send.send_exact(binding)
+
+            def send_internal_desk(self, mail):  # noqa: ANN001
+                with send_lock:
+                    return send.send_internal_desk(mail)
+
+        def exec_worker(index: int) -> None:
+            store = ReceiptStore(path)
+            layer = CaseLayer(store)
+            ensure_send_tables(layer)
+            barrier.wait()
+            try:
+                exec_results[index] = execute_desk_queued_sends(layer, LockedSend())
+            finally:
+                store.close()
+
+        threads = [threading.Thread(target=exec_worker, args=(i,)) for i in (0, 1)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        accepted = [item for batch in exec_results if batch for item in batch if item.get("ok")]
+        self.assertEqual(len(accepted), 1, exec_results)
+        self.assertEqual(send.send_count, 1)
+        self.store = ReceiptStore(path)
+        self.layer = CaseLayer(self.store)
+        self.assertEqual(int(latest_action(self.layer, case_id)["consumed"] or 0), 1)
+
+        barrier2 = threading.Barrier(2)
+        deliver_hits: list = [None, None]
+
+        def deliver_worker(index: int) -> None:
+            store = ReceiptStore(path)
+            layer = CaseLayer(store)
+            barrier2.wait()
+            try:
+                deliver_hits[index] = deliver_pending_desk_mail(layer, LockedSend())
+            finally:
+                store.close()
+
+        threads = [threading.Thread(target=deliver_worker, args=(i,)) for i in (0, 1)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        sent_ok = [item for batch in deliver_hits if batch for item in batch if item.get("ok")]
+        self.assertGreaterEqual(len(sent_ok), 1)
+        pending = self.layer.conn.execute(
+            "SELECT COUNT(*) FROM desk_result_outbox WHERE status = 'pending'"
+        ).fetchone()[0]
+        sending = self.layer.conn.execute(
+            "SELECT COUNT(*) FROM desk_result_outbox WHERE status = 'sending'"
+        ).fetchone()[0]
+        self.assertEqual(pending, 0)
+        self.assertEqual(sending, 0)
+
+    def test_crash_after_accept_before_persist_reconciles(self) -> None:
+        case_id, binding = self._open_desk("desk-crash")
+        self.assertTrue(self._apply(INTENT_APPROVE_SEND, binding, gmail_message_id="ctrl-crash")["ok"])
+        crashing = CrashAfterAcceptTransport()
+        with self.assertRaises(CrashAfterAccept):
+            execute_desk_queued_sends(self.layer, crashing)
+        stuck = latest_action(self.layer, case_id)
+        self.assertEqual(int(stuck["consumed"] or 0), 0)
+        self.assertIsNotNone(stuck["locked_at"])
+        self.assertEqual(len(crashing.sent), 1)
+        verify = MemoryVerifyTransport(sent=list(crashing.sent))
+        recovered = reconcile_incomplete_desk_sends(self.layer, verify)
+        self.assertEqual(len(recovered), 1)
+        self.assertTrue(recovered[0]["recovered"])
+        stored = latest_action(self.layer, case_id)
+        self.assertEqual(int(stored["consumed"] or 0), 1)
+        self.assertEqual(stored["status"], STATUS_ATTEMPTED)
+        self.assertIsNone(stored["locked_at"])
+        self.assertEqual(execute_desk_queued_sends(self.layer, MemorySendTransport()), [])
+
+        empty = CrashAfterAcceptTransport()
+        case_id2, binding2 = self._open_desk("desk-crash-empty")
+        self.assertTrue(self._apply(INTENT_APPROVE_SEND, binding2, gmail_message_id="ctrl-crash-empty")["ok"])
+        with self.assertRaises(CrashAfterAccept):
+            execute_desk_queued_sends(self.layer, empty)
+        unlocked = reconcile_incomplete_desk_sends(self.layer, MemoryVerifyTransport())
+        self.assertTrue(unlocked[0].get("unlocked"))
+        retry = execute_desk_queued_sends(self.layer, MemorySendTransport())
+        self.assertTrue(retry[0]["ok"], retry)
+
+    def test_result_delivery_crash_does_not_stick(self) -> None:
+        _case_id, binding = self._open_desk("desk-outbox-crash")
+        self.assertTrue(self._apply(INTENT_HOLD, binding, gmail_message_id="ctrl-outbox-crash")["ok"])
+
+        class CrashDeliver(MemorySendTransport):
+            def send_internal_desk(self, mail):
+                result = super().send_internal_desk(mail)
+                raise CrashAfterAccept(result)
+
+        crashing = CrashDeliver()
+        with self.assertRaises(CrashAfterAccept):
+            deliver_pending_desk_mail(self.layer, crashing)
+        sending = self.layer.conn.execute(
+            "SELECT COUNT(*) FROM desk_result_outbox WHERE status = 'sending'"
+        ).fetchone()[0]
+        self.assertGreaterEqual(sending, 1)
+        recovered = reconcile_sending_outbox(self.layer, list(crashing.sent))
+        self.assertTrue(any(item.get("recovered") for item in recovered), recovered)
+        leftover_sending = self.layer.conn.execute(
+            "SELECT COUNT(*) FROM desk_result_outbox WHERE status = 'sending'"
+        ).fetchone()[0]
+        self.assertEqual(leftover_sending, 0)
+        again = deliver_pending_desk_mail(self.layer, MemorySendTransport())
+        recovered_ids = {item["id"] for item in recovered if item.get("recovered")}
+        resent = [item for item in again if item.get("ok") and item.get("id") in recovered_ids]
+        self.assertEqual(resent, [])
 
 
 if __name__ == "__main__":

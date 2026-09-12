@@ -7,10 +7,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from .bounded_send import execute_desk_queued_sends
+from .bounded_send import execute_desk_queued_sends, reconcile_incomplete_desk_sends
 from .cases import CaseLayer
 from .contactus_send import configured_send_transport
-from .desk_bridge import deliver_pending_desk_mail, enqueue_send_followup, ensure_bridge_tables
+from .desk_bridge import deliver_pending_desk_mail, enqueue_send_followup, ensure_bridge_tables, reconcile_sending_outbox
 from .phasee_constants import STATUS_ATTEMPTED, STATUS_UNKNOWN
 from .send_bind import QUEUED_BY_DESK, ensure_send_tables
 from .send_verify import verify_sent
@@ -49,6 +49,10 @@ def finish_desk_roundtrip(
     ensure_bridge_tables(layer)
     ensure_send_tables(layer)
     send = send_transport or configured_send_transport()
+    recovered = []
+    if verify_transport is not None:
+        recovered = reconcile_incomplete_desk_sends(layer, verify_transport)
+    recovered_outbox = reconcile_sending_outbox(layer, list(getattr(send, "sent", []) or []))
     delivered = deliver_pending_desk_mail(layer, send)
     executed = execute_desk_queued_sends(layer, send)
     for item in executed:
@@ -61,4 +65,6 @@ def finish_desk_roundtrip(
         "delivered": delivered + delivered_after,
         "executed": executed,
         "verified": verified,
+        "recovered": recovered,
+        "recovered_outbox": recovered_outbox,
     }
