@@ -130,6 +130,16 @@ def run_once(store: ReceiptStore) -> dict[str, Any]:
                 {k: item.get(k) for k in ("case_id", "status", "version", "reason")}
                 for item in cases.get("drafted") or []
             ],
+            "phasee_queued": [
+                {
+                    "ok": item.get("ok"),
+                    "reason": item.get("reason"),
+                    "skipped": item.get("skipped"),
+                    "action_id": (item.get("action") or {}).get("id"),
+                    "status": (item.get("action") or {}).get("status"),
+                }
+                for item in cases.get("phasee_queued") or []
+            ],
         },
     }
 
@@ -148,14 +158,18 @@ def serve(interval: float = 2.0) -> int:
             )
         gmail = contactus_gmail()
         token = receiver_access_token()
-        recover = recover_from_cursor(store, gmail)
-        safe_log(
-            "startup_recover",
-            ok=recover.get("ok"),
-            receipt_count=recover.get("receipt_count"),
-            start_history_id=recover.get("start_history_id"),
-            end_history_id=recover.get("end_history_id"),
-        )
+        try:
+            recover = recover_from_cursor(store, gmail)
+            safe_log(
+                "startup_recover",
+                ok=recover.get("ok"),
+                receipt_count=recover.get("receipt_count"),
+                skipped_missing=recover.get("skipped_missing"),
+                start_history_id=recover.get("start_history_id"),
+                end_history_id=recover.get("end_history_id"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            safe_log("startup_recover", ok=False, error=type(exc).__name__, detail=str(exc)[:200])
         last_refresh = time.time()
         while True:
             if time.time() - last_refresh > 45 * 60:
@@ -174,8 +188,13 @@ def serve(interval: float = 2.0) -> int:
                     processed=received.get("processed"),
                 )
             dispatch_pending(store)
-            cases = process_cases(store)
-            if cases.get("synced") or cases.get("drafted"):
+            try:
+                cases = process_cases(store)
+            except Exception as exc:  # noqa: BLE001
+                safe_log("case_manager", error=type(exc).__name__, detail=str(exc)[:200])
+                time.sleep(interval)
+                continue
+            if cases.get("synced") or cases.get("drafted") or cases.get("phasee_queued"):
                 safe_log(
                     "case_manager",
                     synced=[
@@ -185,6 +204,15 @@ def serve(interval: float = 2.0) -> int:
                     drafted=[
                         {k: item.get(k) for k in ("case_id", "status", "version", "reason")}
                         for item in cases.get("drafted") or []
+                    ],
+                    phasee_queued=[
+                        {
+                            "ok": item.get("ok"),
+                            "reason": item.get("reason"),
+                            "action_id": (item.get("action") or {}).get("id"),
+                            "status": (item.get("action") or {}).get("status"),
+                        }
+                        for item in cases.get("phasee_queued") or []
                     ],
                 )
             time.sleep(interval)

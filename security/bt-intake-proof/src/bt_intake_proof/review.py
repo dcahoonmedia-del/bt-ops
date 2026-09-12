@@ -1,10 +1,13 @@
-"""Daniel iPhone review packet. Approval is recorded state only. No customer send."""
+"""Daniel iPhone review packet. Phase C approval does not send. Phase E shows the exact send packet."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from .cases import MARKER_APPROVE, MARKER_CHANGES, MARKER_NONE, MARKER_REVIEW, _loads
+from .phasee import review_footer
+from .phasee_constants import PHASEE_FROM, PHASEE_SUBJECT, PHASEE_TO
+from .send_bind import is_phasee_body
 
 
 def format_review_email(packet: dict[str, Any]) -> dict[str, str]:
@@ -22,6 +25,33 @@ def format_review_email(packet: dict[str, Any]) -> dict[str, str]:
     fact_lines = "\n".join(f"- {item}" for item in facts) or "- (none listed)"
     missing_lines = "\n".join(f"- {item}" for item in missing) or "- (none listed)"
     proposed = draft.get("proposed_response") or "(no draft yet)"
+    phasee = is_phasee_body(proposed)
+    intro = (
+        "This email is for Daniel's iPhone review. Approval of this exact version authorizes one bounded internal send from contactus@ to daniel@ only. It does not send customer mail."
+        if phasee
+        else "This email is for Daniel's iPhone review. Approval does not send anything to a customer."
+    )
+    phasee_block = (
+        f"""
+--- Exact Phase E send packet ---
+From: {PHASEE_FROM}
+To: {PHASEE_TO}
+CC: (none)
+BCC: (none)
+Subject: {PHASEE_SUBJECT}
+Attachments: none
+Links: none
+Timing: immediate supervised test
+Gmail thread: {case.get("thread_id") or "(none)"}
+Latest inbound: {case.get("latest_inbound_message_id") or "(none)"}
+Draft version: {version}
+
+Exact body:
+{proposed}
+"""
+        if phasee
+        else ""
+    )
     fw = packet.get("fieldwork") or {}
     fw_evidence = _loads(fw.get("evidence_json") or {})
     if not isinstance(fw_evidence, dict):
@@ -50,7 +80,7 @@ A proposed Fieldwork write is not a verified booking. Distinguish {fw_label} fro
 
 CASE={case_id} DRAFT={version}
 
-This email is for Daniel's iPhone review. Approval does not send anything to a customer.
+{intro}
 
 --- Case ---
 Case ID: {case_id}
@@ -86,6 +116,7 @@ Still missing:
 
 --- Exact proposed reply ---
 {proposed}
+{phasee_block}
 
 --- Decisions (reply to contactus@ and keep the marker) ---
 Approve:
@@ -100,7 +131,7 @@ No response needed:
   {MARKER_NONE}
   CASE={case_id} DRAFT={version}
 
-Approval is recorded only. It will not send a customer message.
+{review_footer(phasee)}
 """
     return {
         "to": "daniel@btpestcontrol.com",

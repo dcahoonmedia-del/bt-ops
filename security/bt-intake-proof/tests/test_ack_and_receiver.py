@@ -232,6 +232,49 @@ class ReceiverTests(unittest.TestCase):
         self.assertEqual(result["end_history_id"], "8000")
         self.assertEqual(self.store.get_watch(MAILBOX)["history_id"], "8000")
 
+    def test_missing_history_message_is_skipped(self) -> None:
+        from bt_intake_proof.oauth_consent import OAuthClientError
+
+        class PartialGmail(FakeGmail):
+            def get_message(self, message_id: str, fmt: str = "raw") -> dict:
+                if message_id == "gone":
+                    raise OAuthClientError(
+                        'HTTP 404 from https://gmail.googleapis.com/gmail/v1/users/me/messages/gone?format=raw: '
+                        '{"error":{"code":404,"message":"Requested entity was not found."}}'
+                    )
+                return super().get_message(message_id, fmt)
+
+        kept = {
+            "id": "kept",
+            "threadId": "thr-kept",
+            "labelIds": ["INBOX", "UNREAD"],
+            "raw": _raw_email(
+                sender="daniel@btpestcontrol.com",
+                to=MAILBOX,
+                subject="BT-INTAKE-PROOF-NEW-E9A8-7F3C",
+                body="Internal new-message proof.",
+                rfc_id="<kept@bt>",
+            ),
+        }
+        gmail = PartialGmail({"kept": kept})
+        gmail.history = lambda start: {  # type: ignore[method-assign]
+            "history": [
+                {"messagesAdded": [{"message": {"id": "gone", "threadId": "thr-gone"}}]},
+                {"messagesAdded": [{"message": {"id": "kept", "threadId": "thr-kept"}}]},
+            ],
+            "historyId": "9200",
+        }
+        result = process_notification(
+            self.store,
+            {"emailAddress": MAILBOX, "historyId": "8100"},
+            gmail=gmail,
+            pubsub_message_id="ps-missing",
+            ack=lambda: None,
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["skipped_missing"], ["gone"])
+        self.assertIsNotNone(self.store.get_receipt(MAILBOX, "kept"))
+
     def test_history_parser(self) -> None:
         ids = added_message_ids(
             {

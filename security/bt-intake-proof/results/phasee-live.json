@@ -1,0 +1,39 @@
+{
+  "phase": "E",
+  "overall": "PASS",
+  "inbound": {
+    "marker": "BT-INTAKE-PROOF-CASEMGR-PHASEE-E9A8",
+    "gmail_message_id": "1a093f8e919b8787",
+    "thread_id": "1a093f8e919b8787"
+  },
+  "case_id": "BTC-contactus-1a093f8e919b8787",
+  "draft_version": 1,
+  "action_id": 1,
+  "send": {
+    "from": "contactus@btpestcontrol.com",
+    "to": "daniel@btpestcontrol.com",
+    "cc": [],
+    "bcc": [],
+    "subject": "BT-PHASE-E-SEND-E9A8-C4F1 internal send test",
+    "marker": "BT-PHASE-E-SEND-E9A8-C4F1",
+    "provider_message_id": "1a094071738bb70f",
+    "contactus_thread_id": "1a093f8e919b8787",
+    "status_after_attempt": "attempted_verification_pending",
+    "status_after_sent_verify": "sent_verified",
+    "status_after_receipt_verify": "recipient_receipt_verified",
+    "consumed": 1,
+    "second_execute": "already_consumed"
+  },
+  "daniel_receipt": {
+    "id": "1a094071c6be5dab",
+    "unread_preserved": true,
+    "labels_after_inspect": ["UNREAD", "IMPORTANT", "INBOX"]
+  },
+  "vm_restart": {
+    "consumed_still": 1,
+    "due_sends": [],
+    "sent_count_still": 1
+  },
+  "intake_readonly_untouched": true,
+  "send_token_scopes": ["https://www.googleapis.com/auth/gmail.send"]
+}

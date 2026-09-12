@@ -25,12 +25,14 @@ if [[ -d "$ROOT/secrets" ]]; then
   mkdir -p "$PREFIX/secrets"
   install -m 600 -o btintake -g btintake "$ROOT/secrets/contactus_gmail_readonly_token.json" "$PREFIX/secrets/" 2>/dev/null || true
   install -m 600 -o btintake -g btintake "$ROOT/secrets/gmail_oauth_client.json" "$PREFIX/secrets/" 2>/dev/null || true
+  install -m 600 -o btintake -g btintake "$ROOT/secrets/contactus_gmail_send_token.json" "$PREFIX/secrets/" 2>/dev/null || true
 fi
 cat > "$ETC/env" <<EOF
 PYTHONPATH=${PREFIX}/src
 BT_INTAKE_STORE=${STATE}/receipts.sqlite
 BT_GMAIL_TOKEN=${PREFIX}/secrets/contactus_gmail_readonly_token.json
 BT_GMAIL_OAUTH_CLIENT=${PREFIX}/secrets/gmail_oauth_client.json
+BT_GMAIL_SEND_TOKEN=${PREFIX}/secrets/contactus_gmail_send_token.json
 BT_INTAKE_INTERVAL=2
 CODEX_CONTAINER_MEMORY=1g
 OPENAI_API_KEY=

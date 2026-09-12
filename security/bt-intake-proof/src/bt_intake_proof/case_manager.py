@@ -1,4 +1,4 @@
-"""Case Manager orchestration on top of proven intake. No customer send. Read-only Fieldwork only."""
+"""Case Manager orchestration on top of proven intake. Phase C does not send. Phase E queues only."""
 
 from __future__ import annotations
 
@@ -13,7 +13,9 @@ from .constants import MAILBOX
 from .fieldwork_match import match_and_context
 from .fieldwork_readonly import grok_bot_client
 from .knowledge import trusted_rules_text
+from .phasee import install_phasee_draft, is_phasee_receipt
 from .review import format_review_email
+from .send_bind import queue_approved_phasee_sends
 from .store import ReceiptStore, utc_now
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -176,22 +178,38 @@ def draft_pending_cases(store: ReceiptStore) -> list[dict[str, Any]]:
                 }
             )
             continue
-        fieldwork = match_and_context(grok_bot_client(), receipt)
-        layer.save_fieldwork(case["case_id"], fieldwork, receipt.get("gmail_message_id"))
-        payload_path = store.path.parent / f"case-draft-{case['case_id']}.json"
-        payload_path.write_text(json.dumps(build_case_payload(case, receipt, nonce, fieldwork), indent=2) + "\n", encoding="utf-8")
-        payload_path.chmod(0o644)
-        ran = run_codex_draft(payload_path)
-        if not ran.get("ok"):
-            layer.add_event(
+        if is_phasee_receipt(receipt):
+            layer.save_fieldwork(
                 case["case_id"],
-                "draft_failed",
-                reason=ran.get("reason"),
-                returncode=ran.get("returncode"),
+                {
+                    "status": "not_run",
+                    "source_label": "FIELDWORK_NOT_ACCESSED",
+                    "live": False,
+                    "read_only": True,
+                    "writes_allowed": False,
+                    "reason": "phase_e_internal_send_test",
+                },
+                receipt.get("gmail_message_id"),
             )
-            out.append({"case_id": case["case_id"], "status": "FAIL", **{k: ran.get(k) for k in ("reason", "returncode")}})
-            continue
-        saved = layer.save_draft(case["case_id"], ran["draft"], nonce)
+            saved = install_phasee_draft(layer, case["case_id"], nonce)
+            ran = {"ok": True, "empty_user_input": True, "content_in_user_input": False}
+        else:
+            fieldwork = match_and_context(grok_bot_client(), receipt)
+            layer.save_fieldwork(case["case_id"], fieldwork, receipt.get("gmail_message_id"))
+            payload_path = store.path.parent / f"case-draft-{case['case_id']}.json"
+            payload_path.write_text(json.dumps(build_case_payload(case, receipt, nonce, fieldwork), indent=2) + "\n", encoding="utf-8")
+            payload_path.chmod(0o644)
+            ran = run_codex_draft(payload_path)
+            if not ran.get("ok"):
+                layer.add_event(
+                    case["case_id"],
+                    "draft_failed",
+                    reason=ran.get("reason"),
+                    returncode=ran.get("returncode"),
+                )
+                out.append({"case_id": case["case_id"], "status": "FAIL", **{k: ran.get(k) for k in ("reason", "returncode")}})
+                continue
+            saved = layer.save_draft(case["case_id"], ran["draft"], nonce)
         packet = layer.review_packet(case["case_id"])
         email = format_review_email(packet)
         review_path = store.path.parent / f"review-{case['case_id']}-v{saved['version']}.json"
@@ -219,4 +237,5 @@ def draft_pending_cases(store: ReceiptStore) -> list[dict[str, Any]]:
 def process_cases(store: ReceiptStore) -> dict[str, Any]:
     synced = sync_cases(store)
     drafted = draft_pending_cases(store)
-    return {"synced": synced, "drafted": drafted}
+    queued = queue_approved_phasee_sends(CaseLayer(store))
+    return {"synced": synced, "drafted": drafted, "phasee_queued": queued}

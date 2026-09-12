@@ -1,0 +1,13 @@
+{
+  "inbound_marker": "BT-INTAKE-PROOF-CASEMGR-PHASEE-E9A8",
+  "approve_marker": "BT-INTAKE-PROOF-CASE-APPROVE-E9A8",
+  "send_marker": "BT-PHASE-E-SEND-E9A8-C4F1",
+  "from": "contactus@btpestcontrol.com",
+  "to": "daniel@btpestcontrol.com",
+  "cc": [],
+  "bcc": [],
+  "attachments": [],
+  "links": [],
+  "send_timing": "immediate_supervised",
+  "subject": "BT-PHASE-E-SEND-E9A8-C4F1 internal send test"
+}
