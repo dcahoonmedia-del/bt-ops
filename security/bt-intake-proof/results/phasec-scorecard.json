@@ -1,0 +1,33 @@
+{
+  "phase": "C",
+  "overall": "PASS",
+  "at": "2026-09-12T04:03:30+00:00",
+  "case_id": "BTC-contactus-1a093c210338340c",
+  "thread_id": "1a093c210338340c",
+  "gates": {
+    "receipt_becomes_case": "PASS",
+    "customer_content_untrusted": "PASS",
+    "rules_trusted_separate": "PASS",
+    "bounded_draft": "PASS",
+    "iphone_review": "PASS",
+    "decisions_persist": "PASS",
+    "approval_does_not_send": "PASS",
+    "new_inbound_invalidates_approval": "PASS",
+    "vm_restart_preserves": "PASS"
+  },
+  "review_inbox": {
+    "v1_message_id": "1a093c37ed674d0c",
+    "v5_message_id": "1a093c8f303585a9",
+    "to": "daniel@btpestcontrol.com",
+    "labels_v1": ["UNREAD", "INBOX"]
+  },
+  "isolation": {
+    "tool_name": "lead_email_ingest",
+    "namespace": "external_untrusted",
+    "empty_user_input": true,
+    "content_in_user_input": false,
+    "rules_in_user_input": false
+  },
+  "send_triggered_max": 0,
+  "vm_reboot": "2026-09-12T04:01:45Z"
+}
