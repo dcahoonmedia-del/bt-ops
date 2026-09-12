@@ -739,8 +739,12 @@ def _finish_control_result(
     result["control_gmail_id"] = gmail_message_id
     result["nonce"] = nonce or result.get("nonce")
     result["result_email"] = format_result_email(result)
+    result["human_mail_deferred"] = False
     if enqueue and gmail_message_id:
-        enqueue_control_deliveries(layer, result)
+        if _defer_human_mail(result):
+            result["human_mail_deferred"] = True
+        else:
+            enqueue_control_deliveries(layer, result)
     _mark_inbox(layer, gmail_message_id, {k: v for k, v in result.items() if k != "result_email"})
     return result
 
@@ -1037,8 +1041,78 @@ def _fresh_case_email(layer: CaseLayer, case_id: str | None) -> dict[str, str] |
     return format_case_email(detail, generated_at=utc_now(), fingerprint=before["sha256"])
 
 
-def enqueue_control_deliveries(layer: CaseLayer, result: dict[str, Any], *, kind_suffix: str = "") -> None:
-    """Durable, duplicate-safe result + fresh case packet for success and reject."""
+def _defer_human_mail(result: dict[str, Any]) -> bool:
+    """Queued send is not the final outcome; the host execute followup is."""
+    return bool(result.get("ok") and result.get("send_queued"))
+
+
+def _supersede_pending_control_mail(layer: CaseLayer, control_id: str, kinds: tuple[str, ...]) -> int:
+    if not kinds:
+        return 0
+    placeholders = ",".join("?" * len(kinds))
+    cur = layer.conn.execute(
+        f"""
+        UPDATE desk_result_outbox
+        SET status = 'superseded'
+        WHERE control_gmail_id = ? AND kind IN ({placeholders}) AND status = 'pending'
+        """,
+        (control_id, *kinds),
+    )
+    return int(cur.rowcount or 0)
+
+
+def _followup_kind_suffix(layer: CaseLayer, control_id: str) -> str:
+    """Reuse result/case kinds unless a human result already left the outbox."""
+    row = layer.conn.execute(
+        """
+        SELECT status FROM desk_result_outbox
+        WHERE control_gmail_id = ? AND kind = 'result'
+        ORDER BY id DESC LIMIT 1
+        """,
+        (control_id,),
+    ).fetchone()
+    if row and str(row["status"] or "") in {"sent", "unknown", "sending"}:
+        return "_send"
+    return ""
+
+
+def enqueue_on_demand_case(layer: CaseLayer, case_id: str) -> dict[str, Any]:
+    """Explicit CASE packet. Not sent automatically with a deferred send outcome."""
+    ensure_bridge_tables(layer)
+    mail = _fresh_case_email(layer, case_id)
+    if not mail:
+        return {"ok": False, "reason": "case_packet_unavailable", "case_id": case_id}
+    now = utc_now()
+    control_id = f"ondemand-{case_id}"
+    layer.conn.execute(
+        """
+        INSERT OR IGNORE INTO desk_result_outbox
+            (control_gmail_id, nonce, kind, subject, body, status, created_at)
+        VALUES (?, ?, 'case_ondemand', ?, ?, 'pending', ?)
+        """,
+        (control_id, None, mail["subject"], mail["body"], now),
+    )
+    row = layer.conn.execute(
+        "SELECT id, status FROM desk_result_outbox WHERE control_gmail_id = ? AND kind = 'case_ondemand'",
+        (control_id,),
+    ).fetchone()
+    return {
+        "ok": True,
+        "case_id": case_id,
+        "kind": "case_ondemand",
+        "outbox_id": None if row is None else row["id"],
+        "status": None if row is None else row["status"],
+    }
+
+
+def enqueue_control_deliveries(
+    layer: CaseLayer,
+    result: dict[str, Any],
+    *,
+    kind_suffix: str = "",
+    include_case: bool = True,
+) -> None:
+    """Durable, duplicate-safe result, and CASE when this is the standing packet."""
     ensure_bridge_tables(layer)
     control_id = str(result.get("control_gmail_id") or "")
     if not control_id:
@@ -1047,7 +1121,6 @@ def enqueue_control_deliveries(layer: CaseLayer, result: dict[str, Any], *, kind
     now = utc_now()
     result_mail = result.get("result_email") or format_result_email(result)
     kind_result = f"result{kind_suffix}"
-    kind_case = f"case{kind_suffix}"
     layer.conn.execute(
         """
         INSERT OR IGNORE INTO desk_result_outbox
@@ -1056,6 +1129,9 @@ def enqueue_control_deliveries(layer: CaseLayer, result: dict[str, Any], *, kind
         """,
         (control_id, nonce, kind_result, result_mail["subject"], result_mail["body"], now),
     )
+    if not include_case:
+        return
+    kind_case = f"case{kind_suffix}"
     case_mail = _fresh_case_email(layer, result.get("case_id"))
     if case_mail:
         layer.conn.execute(
@@ -1163,6 +1239,7 @@ def reconcile_sending_outbox(layer: CaseLayer, sent_records: list[dict[str, Any]
 
 
 def enqueue_send_followup(layer: CaseLayer, executed: dict[str, Any]) -> None:
+    ensure_bridge_tables(layer)
     action_id = executed.get("action_id")
     if not action_id:
         return
@@ -1172,6 +1249,12 @@ def enqueue_send_followup(layer: CaseLayer, executed: dict[str, Any]) -> None:
     control_id = action["control_gmail_id"]
     if not control_id:
         return
+    if executed.get("ok"):
+        human = "The isolated internal message was submitted once. Independent verify is still required."
+    elif executed.get("unknown"):
+        human = "The isolated internal send outcome is unknown. It will not be retried automatically."
+    else:
+        human = "The isolated internal send did not complete. Nothing further was retried."
     payload = {
         "ok": bool(executed.get("ok")),
         "intent": INTENT_APPROVE_SEND,
@@ -1183,11 +1266,24 @@ def enqueue_send_followup(layer: CaseLayer, executed: dict[str, Any]) -> None:
         "send_status": executed.get("status") or executed.get("reason"),
         "provider_message_id": executed.get("provider_message_id"),
         "reason": executed.get("reason"),
-        "human": (
-            "The bounded sender attempted that internal message. Independent verify is still required."
-            if executed.get("ok")
-            else "The bounded sender did not complete that send."
-        ),
+        "human": human,
     }
     payload["result_email"] = format_result_email(payload)
-    enqueue_control_deliveries(layer, payload, kind_suffix="_send")
+    control_key = str(control_id)
+    _supersede_pending_control_mail(layer, control_key, ("case",))
+    pending_result = layer.conn.execute(
+        """
+        SELECT id FROM desk_result_outbox
+        WHERE control_gmail_id = ? AND kind = 'result' AND status = 'pending'
+        """,
+        (control_key,),
+    ).fetchone()
+    if pending_result:
+        mail = payload["result_email"]
+        layer.conn.execute(
+            "UPDATE desk_result_outbox SET subject = ?, body = ? WHERE id = ? AND status = 'pending'",
+            (mail["subject"], mail["body"], pending_result["id"]),
+        )
+        return
+    suffix = _followup_kind_suffix(layer, control_key)
+    enqueue_control_deliveries(layer, payload, kind_suffix=suffix, include_case=False)

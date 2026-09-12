@@ -259,6 +259,9 @@ def recover_failed_desk_send(
         requeued=False,
     )
     executed = execute_action(layer, action_id, send_transport, owner="desk-recover-once")
+    from .desk_bridge import enqueue_send_followup
+
+    enqueue_send_followup(layer, executed)
     after = action_row(layer, action_id)
     inspection["mode"] = "execute"
     inspection["executed"] = True
