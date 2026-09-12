@@ -13,4 +13,6 @@ Conflicts: see `CONFLICTS.md`. Newest explicit Daniel-approved rule wins.
 
 Historical named customer cases in those files are evidence, not a live work queue. They are not loaded into Codex for this test.
 
-Phase C scope (2026-09-12 assignment) further limits this test: no customer send, no Gmail drafts, no Fieldwork/LSA/CTM access, no Auditor, no scheduling writes.
+Phase D scope (2026-09-12 assignment): no customer send, no Gmail drafts, no Fieldwork writes, no LSA/CTM native, no Auditor, no scheduling writes.
+
+Phase D matching tonight uses fixture PHASE-D-MATT-001 from `BT-Grok-Migration-Audit-2026-09-10.md` only. Live Fieldwork MCP/OAuth is blocked and is not treated as passed.

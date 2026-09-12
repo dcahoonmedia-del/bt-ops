@@ -174,6 +174,23 @@ class CaseLayer:
                 gmail_message_id TEXT,
                 send_triggered INTEGER NOT NULL DEFAULT 0
             );
+
+            CREATE TABLE IF NOT EXISTS case_fieldwork (
+                id INTEGER PRIMARY KEY,
+                case_id TEXT NOT NULL,
+                inbound_message_id TEXT,
+                retrieved_at TEXT NOT NULL,
+                match_status TEXT NOT NULL,
+                confidence TEXT,
+                customer_id TEXT,
+                location_id TEXT,
+                identifiers_json TEXT,
+                active_agreement_json TEXT,
+                upcoming_work_orders_json TEXT,
+                last_service_json TEXT,
+                evidence_json TEXT NOT NULL,
+                write_attempted INTEGER NOT NULL DEFAULT 0
+            );
             """
         )
 
@@ -508,6 +525,48 @@ class CaseLayer:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def save_fieldwork(self, case_id: str, evidence: dict[str, Any], inbound_message_id: str | None) -> dict[str, Any]:
+        now = utc_now()
+        self.conn.execute(
+            """
+            INSERT INTO case_fieldwork (
+                case_id, inbound_message_id, retrieved_at, match_status, confidence,
+                customer_id, location_id, identifiers_json, active_agreement_json,
+                upcoming_work_orders_json, last_service_json, evidence_json, write_attempted
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+            """,
+            (
+                case_id,
+                inbound_message_id,
+                evidence.get("retrieved_at") or now,
+                evidence.get("status"),
+                evidence.get("confidence"),
+                evidence.get("customer_id"),
+                evidence.get("location_id"),
+                _json(evidence.get("identifiers") or {}),
+                _json(evidence.get("active_agreement")),
+                _json(evidence.get("upcoming_work_orders") or []),
+                _json(evidence.get("last_service")),
+                _json(evidence),
+            ),
+        )
+        self.add_event(
+            case_id,
+            "fieldwork_matched",
+            status=evidence.get("status"),
+            customer_id=evidence.get("customer_id"),
+            location_id=evidence.get("location_id"),
+            write_attempted=False,
+        )
+        return {"ok": True, "write_attempted": False}
+
+    def latest_fieldwork(self, case_id: str) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            "SELECT * FROM case_fieldwork WHERE case_id = ? ORDER BY id DESC LIMIT 1",
+            (case_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
     def review_packet(self, case_id: str) -> dict[str, Any]:
         case = self.get_case(case_id)
         if not case:
@@ -530,5 +589,6 @@ class CaseLayer:
             },
             "events": self.list_events(case_id),
             "decisions": self.decisions(case_id),
+            "fieldwork": self.latest_fieldwork(case_id),
             "send_triggered": False,
         }

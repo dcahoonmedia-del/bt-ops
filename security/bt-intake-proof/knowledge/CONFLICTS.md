@@ -11,7 +11,11 @@ Newest explicit Daniel-approved rule wins. Phase C assignment limits are dated 2
 | “Bi-monthly” | Website/internal shorthand | Say **every other month** in customer copy | Owner clarification. Monthly billing is not monthly service |
 | Diagnostic vs WDIR | Easy to conflate $75 and $225 | Diagnostic inspection $75 (credited to treatment) is **not** a WDIR. WDIR is $225 | Sept 10 documents; keep them separate |
 | Flea re-entry | A Sept 10 draft said people/pets could stay inside | Do not invent chemical/re-entry instructions | Daniel corrected that draft. Architecture: never invent flea preparation. Not SENT, but the error must not repeat |
-| Fieldwork matching on every case | Handoff/Brief and Architecture Case Manager: match Fieldwork before drafting | **No Fieldwork in Phase C** | 2026-09-12 Phase C prompt. Flag missing Fieldwork match as judgment; do not access Fieldwork |
+| Fieldwork matching on every case | Phase C (earlier 2026-09-12): no Fieldwork | **Read-only Fieldwork match/context in Phase D** | Later 2026-09-12 Phase D prompt. Still no Fieldwork writes. Phase C no-write/no-send rules remain |
+| Live Fieldwork MCP OAuth | Phase D wanted live HQ reads | **Historical fixture PHASE-D-MATT-001 only tonight** | Daniel 2026-09-12: stop OAuth; use the Sept 10 audit Matt evidence. Live connectivity stays BLOCKED |
+| FIELDWORK VERIFIED vs fixture | Earlier Phase D draft used FIELDWORK VERIFIED | **FIELDWORK_FIXTURE_VERIFIED** | Daniel 2026-09-12. Do not use LIVE_FIELDWORK_VERIFIED |
+| One identifier match | Easy to treat email-or-phone-only as the customer | **ambiguous_match_needs_daniel** | Daniel 2026-09-12. Do not guess |
+| Email sent vs booking | Sept 10 CoS sent mail at 1:07:33 before WO 172708 at 1:20:24 | **Pending/proposed write is not a verified booking** | Same audit sequence. Do not infer customer confirmation |
 | After approval, send and verify | Architecture §7/§10: pilot approvals authorize the immediate reviewed send, then destination verify | **Approval is recorded state only. No send.** | 2026-09-12 Phase C prompt. Architecture is design; later phase may send |
 | Independent Auditor | Architecture: hourly/daily independent audit task | **No Auditor in Phase C** | 2026-09-12 Phase C prompt. Do not add a second worker |
 | Scheduling / Astra / LSA / CTM native | Architecture flows for scheduling, Astra exceptions, and later native channels | Out of this test | Phase C is contactus Gmail Case Manager draft + iPhone review only |
