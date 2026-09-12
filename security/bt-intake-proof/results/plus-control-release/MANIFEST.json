@@ -1,0 +1,13 @@
+{
+  "package": "bt-intake-plus-control",
+  "sha256": "100823dcdcd8fe68f87e9f8eb40ac57ac78b50b466964a970943176fae252510",
+  "source_commit": "3e67a45ecd9abccc4c8d6bf7865166c5089e1fa5",
+  "tree_sha256": "7fdab6783b4505e4b75a9901649f92dfef0634f6d83d7a520aa31885d246ddd0",
+  "isolation": "isolated_test",
+  "customer_sends": "off",
+  "broad_capture": "off",
+  "plus_poller": "installed_disabled",
+  "plus_result_send": "activation_blocker_until_separate_token",
+  "secrets_included": false,
+  "tests": "PYTHONPATH=src python3 -m unittest discover -s tests"
+}

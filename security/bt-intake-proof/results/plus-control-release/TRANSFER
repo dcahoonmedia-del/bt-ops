@@ -1,0 +1,35 @@
+# Non-secret browser-SSH transfer card. No tokens or client JSON.
+
+FILE=bt-intake-plus-control.tar.gz
+SHA256=100823dcdcd8fe68f87e9f8eb40ac57ac78b50b466964a970943176fae252510
+SOURCE_COMMIT=3e67a45ecd9abccc4c8d6bf7865166c5089e1fa5
+TREE_SHA256=7fdab6783b4505e4b75a9901649f92dfef0634f6d83d7a520aa31885d246ddd0
+RAW=https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/3e67a45ecd9abccc4c8d6bf7865166c5089e1fa5/security/bt-intake-proof/results/plus-control-release/bt-intake-plus-control.tar.gz
+DEST=/tmp/bt-intake-plus-control.tar.gz
+
+# On the VM (Google Cloud SSH-in-browser). Keep secrets on the host.
+# This Cursor VM does not have /var/lib/bt-intake-proof/receipts.sqlite.
+# Deploy copies code/env/units only. Plus timer/service stay disabled
+# until the project lead enables them after preflight.
+# Do not send live mail. Do not reset SQLite. Do not mint credentials.
+
+curl -fsSLo /tmp/bt-intake-plus-control.tar.gz https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/3e67a45ecd9abccc4c8d6bf7865166c5089e1fa5/security/bt-intake-proof/results/plus-control-release/bt-intake-plus-control.tar.gz
+echo "100823dcdcd8fe68f87e9f8eb40ac57ac78b50b466964a970943176fae252510  /tmp/bt-intake-plus-control.tar.gz" | sha256sum -c
+rm -rf /tmp/bt-intake-plus-control-src
+mkdir -p /tmp/bt-intake-plus-control-src
+tar -xzf /tmp/bt-intake-plus-control.tar.gz -C /tmp/bt-intake-plus-control-src
+test ! -e /tmp/bt-intake-plus-control-src/bt-intake-proof/secrets
+python3 /tmp/bt-intake-plus-control-src/bt-intake-proof/scripts/verify_release.py /tmp/bt-intake-plus-control-src/bt-intake-proof
+sudo bash /tmp/bt-intake-plus-control-src/bt-intake-proof/scripts/guarded_desk_roundtrip_deploy.sh
+
+# Confirm plus units are present and disabled:
+# systemctl is-enabled bt-plus-control-poll.timer || true
+# systemctl is-enabled bt-plus-control-poll.service || true
+
+# Manual rollback restores code/env/unit only, never receipts or approvals:
+# sudo bash /opt/bt-intake-proof/scripts/rollback_to_predeploy.sh
+
+# Do not process 1a0979e37a0b0a94.
+# Do not touch BTC-contactus-1a096d60643b3b1a.
+# Do not resend BT-INTAKE-PROOF-CASEMGR-PHONE-7C92 / 1a096ffa404426f1.
+# Keep customer sends and broad capture OFF.
