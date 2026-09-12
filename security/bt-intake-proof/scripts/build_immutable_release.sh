@@ -73,17 +73,27 @@ sudo bash /tmp/bt-intake-desk-roundtrip-src/bt-intake-proof/scripts/guarded_desk
 # Manual rollback restores code/env/unit only, never receipts or approvals:
 # sudo bash /opt/bt-intake-proof/scripts/rollback_to_predeploy.sh
 
-# After deploy + health PASS, inspect failed action 2 only (no send, no re-queue):
-# sudo -u btintake bash /opt/bt-intake-proof/scripts/recover_failed_desk_send.sh \\
-#   --action-id 2 --case-id BTC-contactus-desk-roundtrip-e9a8-20260912
+# Action 2 already sent_verified/consumed. Do not recover --execute. Do not resend.
+# Do not enqueue an intermediate sent-stage result. After deploy + health PASS, one command:
+# sudo -u btintake bash /opt/bt-intake-proof/scripts/report_desk_send_outcome.sh \\
+#   --action-id 2 --case-id BTC-contactus-desk-roundtrip-e9a8-20260912 --verify-recipient --enqueue-result
 #
-# If dry-run reports recovery_authorized=true, omit_gmail_thread_id=true,
-# sent_check exact_matches=0, and host_loop_would_select=false, one attempt:
-# sudo -u btintake bash /opt/bt-intake-proof/scripts/recover_failed_desk_send.sh \\
-#   --action-id 2 --case-id BTC-contactus-desk-roundtrip-e9a8-20260912 --execute
-#
-# Do not reset SQLite, reissue approval, mutate thread_id/payload_sha256, or
-# set status back to queued. Do not send from Cursor/Gmail MCP.
+# That uses existing daniel@ readonly. It does not send the proof, change labels, or forge receipt.
+# Keep customer sends and broad capture OFF. Do not reset SQLite or reissue approval.
+EOF
+cat > "${DEST}/MANIFEST.json" <<EOF
+{
+  "package": "bt-intake-desk-roundtrip",
+  "sha256": "${TAR_SHA}",
+  "source_commit": "${COMMIT}",
+  "tree_sha256": "${TREE_SHA}",
+  "isolation": "isolated_test",
+  "customer_sends": "off",
+  "broad_capture": "off",
+  "proof_reply": "already_sent_verified_not_resent",
+  "secrets_included": false,
+  "tests": "PYTHONPATH=src python3 -m unittest discover -s tests"
+}
 EOF
 
 echo "tarball=${DEST}/bt-intake-desk-roundtrip.tar.gz"

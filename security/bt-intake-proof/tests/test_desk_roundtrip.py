@@ -1,3 +1,4 @@
+import json
 import threading
 import tempfile
 import unittest
@@ -26,6 +27,8 @@ from bt_intake_proof.constants import (
 from bt_intake_proof.desk_bridge import (
     compute_packet_binding,
     deliver_pending_desk_mail,
+    enqueue_on_demand_case,
+    enqueue_send_followup,
     format_control_mail,
     inspect_inbound,
     install_desk_send_draft,
@@ -485,6 +488,7 @@ class DeskRoundtripTests(unittest.TestCase):
         self.store = ReceiptStore(path)
         self.layer = CaseLayer(self.store)
         self.assertEqual(int(latest_action(self.layer, case_id)["consumed"] or 0), 1)
+        enqueue_send_followup(self.layer, accepted[0])
 
         barrier2 = threading.Barrier(2)
         deliver_hits: list = [None, None]
@@ -570,6 +574,96 @@ class DeskRoundtripTests(unittest.TestCase):
         recovered_ids = {item["id"] for item in recovered if item.get("recovered")}
         resent = [item for item in again if item.get("ok") and item.get("id") in recovered_ids]
         self.assertEqual(resent, [])
+
+    def test_approve_send_defers_queued_mail_until_final_outcome(self) -> None:
+        case_id, binding = self._open_desk("desk-defer")
+        accepted = self._apply(INTENT_APPROVE_SEND, binding, gmail_message_id="ctrl-defer")
+        self.assertTrue(accepted["ok"], accepted)
+        self.assertTrue(accepted.get("send_queued"))
+        self.assertTrue(accepted.get("human_mail_deferred"))
+        inbox = self.layer.conn.execute(
+            "SELECT result_json FROM desk_control_inbox WHERE gmail_message_id = ?",
+            ("ctrl-defer",),
+        ).fetchone()
+        stored = json.loads(inbox["result_json"])
+        self.assertTrue(stored.get("ok"))
+        self.assertTrue(stored.get("send_queued"))
+        self.assertEqual(stored.get("case_id"), case_id)
+        pending = self.layer.conn.execute(
+            "SELECT kind FROM desk_result_outbox WHERE status = 'pending'"
+        ).fetchall()
+        self.assertEqual([row["kind"] for row in pending], [])
+
+        send = MemorySendTransport(fail=True)
+        executed = execute_desk_queued_sends(self.layer, send)
+        enqueue_send_followup(self.layer, executed[0])
+        rows = [dict(row) for row in self.layer.conn.execute("SELECT kind, status FROM desk_result_outbox").fetchall()]
+        kinds = [row["kind"] for row in rows]
+        self.assertEqual(sum(1 for kind in kinds if kind.startswith("result")), 1)
+        self.assertIn("result_failed", kinds)
+        self.assertNotIn("case", kinds)
+        self.assertNotIn("case_send", kinds)
+        self.assertEqual(rows[0]["status"], "pending")
+        body = self.layer.conn.execute("SELECT body FROM desk_result_outbox WHERE kind LIKE 'result%'").fetchone()["body"]
+        self.assertIn("did not complete", body)
+        self.assertIn("STATUS=failed", body)
+
+        ondemand = enqueue_on_demand_case(self.layer, case_id)
+        self.assertTrue(ondemand["ok"], ondemand)
+        case_kinds = [
+            row["kind"]
+            for row in self.layer.conn.execute("SELECT kind FROM desk_result_outbox").fetchall()
+        ]
+        self.assertIn("case_ondemand", case_kinds)
+
+    def test_hold_still_sends_result_and_case(self) -> None:
+        _case_id, binding = self._open_desk("desk-hold-mail")
+        result = self._apply(INTENT_HOLD, binding, gmail_message_id="ctrl-hold-mail")
+        self.assertTrue(result["ok"], result)
+        self.assertFalse(result.get("human_mail_deferred"))
+        kinds = {row["kind"] for row in self.layer.conn.execute("SELECT kind FROM desk_result_outbox").fetchall()}
+        self.assertEqual(kinds, {"result", "case"})
+
+    def test_unknown_followup_is_not_suppressed(self) -> None:
+        _case_id, binding = self._open_desk("desk-unknown-mail")
+        self.assertTrue(self._apply(INTENT_APPROVE_SEND, binding, gmail_message_id="ctrl-unknown-mail")["ok"])
+        timed_out = execute_desk_queued_sends(self.layer, MemorySendTransport(timeout=True))
+        enqueue_send_followup(self.layer, timed_out[0])
+        body = self.layer.conn.execute("SELECT body FROM desk_result_outbox WHERE kind LIKE 'result%'").fetchone()["body"]
+        self.assertIn("unknown", body.lower())
+        self.assertIn("STATUS=failed", body)
+
+    def test_already_sent_queued_result_does_not_hide_failure(self) -> None:
+        case_id, binding = self._open_desk("desk-legacy-mail")
+        accepted = self._apply(INTENT_APPROVE_SEND, binding, gmail_message_id="ctrl-legacy-mail")
+        self.assertTrue(accepted["ok"], accepted)
+        from bt_intake_proof.desk_bridge import enqueue_control_deliveries, format_result_email
+
+        queued_mail = format_result_email(accepted)
+        self.layer.conn.execute(
+            """
+            INSERT INTO desk_result_outbox
+                (control_gmail_id, nonce, kind, subject, body, status, created_at, sent_at)
+            VALUES (?, ?, 'result', ?, ?, 'sent', '2026-09-12T17:20:00+00:00', '2026-09-12T17:20:01+00:00')
+            """,
+            ("ctrl-legacy-mail", accepted.get("nonce"), queued_mail["subject"], queued_mail["body"]),
+        )
+        self.layer.conn.execute(
+            """
+            INSERT INTO desk_result_outbox
+                (control_gmail_id, nonce, kind, subject, body, status, created_at, sent_at)
+            VALUES (?, ?, 'case', ?, ?, 'sent', '2026-09-12T17:20:00+00:00', '2026-09-12T17:20:01+00:00')
+            """,
+            ("ctrl-legacy-mail", accepted.get("nonce"), "CASE already sent", "old case"),
+        )
+        failed = execute_desk_queued_sends(self.layer, MemorySendTransport(fail=True))
+        enqueue_send_followup(self.layer, failed[0])
+        rows = [dict(row) for row in self.layer.conn.execute("SELECT kind, status FROM desk_result_outbox").fetchall()]
+        kinds = {(row["kind"], row["status"]) for row in rows}
+        self.assertIn(("result", "sent"), kinds)
+        self.assertIn(("result_failed", "pending"), kinds)
+        self.assertNotIn(("case_send", "pending"), kinds)
+        self.assertEqual(latest_action(self.layer, case_id)["status"], "failed")
 
 
 if __name__ == "__main__":
