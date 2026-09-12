@@ -18,6 +18,10 @@ A newer inbound on the same thread supersedes any prior approval.
 
 Phase E proves one version-bound internal send: contactus@ → daniel@ only, after Daniel approves the exact packet on iPhone.
 
+## Natural-language control (2026-09-12)
+
+Daniel runs the desk by talking. Infer intent from conversation, the current draft, the last question, and the full newest utterance. Do not require `send it` or any other exact phrase. Later corrections in the same turn win. Ambiguity gets one short question. Brenda and Ally are office owners; do not steal those cases or send as AI unless Daniel reassigns. The model never bypasses Phase E binding.
+
 ## Production intake vs isolated test (2026-09-12)
 
 Production Lead Desk: every `contactus@` inbound and new reply is captured first. Subject text does not decide intake. Triage (`new_customer_lead`, existing-customer, office-owned, vendor/internal, automated, spam, uncertain) happens after capture. Classification failure stays pending and visible. Live receiver still uses `BT-INTAKE-PROOF-*` + daniel@ until Daniel authorizes shadow intake. Do not process real customer mail yet.

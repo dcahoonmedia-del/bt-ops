@@ -22,3 +22,5 @@ Phase E (2026-09-12): exact approval → one bounded Gmail send → independent 
 Phase F1 (2026-09-12): read-only Lead Desk for iPhone ChatGPT via backend-generated Gmail packets to daniel@. Custom MCP is web-only and is not the iPhone path. No public ingress. No approvals or new sends.
 
 Production intake (2026-09-12): capture every contactus@ inbound and reply, then classify. Subject markers are not a production capture filter. Live processing of real customer mail is not authorized yet. See `PRODUCTION_INTAKE.md`.
+
+Lead Desk control (2026-09-12): Daniel speaks naturally. The model infers intent; the backend authorizes. No exact-phrase allowlist. Phase E binding still required for send. See `DESK_CONTROL.md`.

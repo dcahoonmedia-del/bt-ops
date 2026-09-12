@@ -22,6 +22,7 @@ DESK_MARKERS = (MARKER_QUEUE, MARKER_CASE, MARKER_HEALTH)
 HEADER = (
     "B&T Lead Desk packet (internal, read-only). "
     "Answer Daniel from this email, not from earlier chat memory. "
+    "Daniel may speak naturally. Do not ask him for case IDs, draft numbers, or a magic phrase. "
     "This packet does not approve, revise, send, or change a case."
 )
 
