@@ -37,7 +37,9 @@ If you are not sure, ask one short question. Do not send a control message until
 
 Do not ask Daniel to confirm machine fields. You already have them from the packet.
 
-Build one private control email. Daniel must never see it.
+Build one control email. Keep machine fields out of spoken summaries.
+That is not a promise the transport is invisible, or that Mail/Gmail
+will hide a sent confirmation.
 
 ## 4. Send the control transport
 
@@ -58,7 +60,8 @@ PACKET_HASH=...
 
 Use the binding values from the newest case packet. Leave `OWNER` blank unless the intent is `office_owned`.
 
-Do not show this mail, these fields, or the marker to Daniel.
+Do not read this mail, these fields, or the marker to Daniel.
+The sent-mail UI may still show it.
 
 ## 5. Retrieve and explain the result
 

@@ -12,7 +12,8 @@ from bt_intake_proof.cases import (
     marker_kind,
     parse_decision,
 )
-from bt_intake_proof.constants import CLASS_NEW, DETECTION_EVENT_DRIVEN, MAILBOX
+from bt_intake_proof.constants import ALLOWED_SENDER, CLASS_NEW, DETECTION_EVENT_DRIVEN, MAILBOX
+from bt_intake_proof.desk_bridge import ensure_bridge_tables
 from bt_intake_proof.desk_packets import (
     MARKER_CASE,
     MARKER_HEALTH,
@@ -57,6 +58,7 @@ class LeadDeskTests(unittest.TestCase):
         self.store = ReceiptStore(self.path)
         self.layer = CaseLayer(self.store)
         ensure_send_tables(self.layer)
+        ensure_bridge_tables(self.layer)
 
     def tearDown(self) -> None:
         self.store.close()
@@ -167,3 +169,73 @@ class LeadDeskTests(unittest.TestCase):
         self.assertIsNone(self.layer.get_case("BTC-contactus-thr-phasee"))
         self.assertEqual(self.layer.conn.execute("SELECT COUNT(*) FROM cases").fetchone()[0], 0)
         self.assertEqual(self.layer.conn.execute("SELECT COUNT(*) FROM case_decisions").fetchone()[0], 0)
+
+    def test_hold_and_office_attention_is_not_waiting_on_daniel(self) -> None:
+        marker = "BT-INTAKE-PROOF-CASEMGR-ATTN-E9A8"
+        self.store.commit_notification(
+            mailbox=MAILBOX,
+            history_id="attn",
+            detection_path=DETECTION_EVENT_DRIVEN,
+            pubsub_message_id="n-attn",
+            receipts=[
+                _receipt(
+                    "attn1",
+                    thread_id="thr-attn",
+                    subject=marker,
+                    test_marker=marker,
+                    body_text=f"Internal inquiry. {marker}",
+                    sender=ALLOWED_SENDER,
+                )
+            ],
+        )
+        row = self.store.get_receipt(MAILBOX, "attn1")
+        opened = self.layer.upsert_from_receipt(row)
+        self.layer.save_draft(
+            opened["case_id"],
+            {
+                "classification": "new_customer_lead",
+                "known_facts": ["test"],
+                "missing_info": [],
+                "recommended_next_step": "review",
+                "proposed_response": "DRAFT - NOT SENT\n\nThanks.",
+                "channel": "email",
+            },
+            "nonce-attn",
+        )
+        desk = LeadDesk(self.path, service_probe=lambda: {"observed": False, "active": None, "summary": "fixture"})
+        waiting = desk.get_case(opened["case_id"])
+        self.assertTrue(waiting["waiting_on_daniel"])
+        self.assertEqual(waiting["attention_reason"], "Draft is waiting on Daniel.")
+        desk.close()
+
+        self.layer.conn.execute("UPDATE cases SET hold = 1, next_action = 'hold' WHERE case_id = ?", (opened["case_id"],))
+        desk = LeadDesk(self.path, service_probe=lambda: {"observed": False, "active": None, "summary": "fixture"})
+        held = desk.get_case(opened["case_id"])
+        health_held = desk.get_health()
+        self.assertFalse(held["waiting_on_daniel"])
+        self.assertEqual(held["attention_reason"], "Held. Nothing will send.")
+        self.assertEqual(held["owner"], "office")
+        self.assertEqual(health_held["backlog"]["waiting_on_daniel"], 0)
+        desk.close()
+
+        self.layer.conn.execute(
+            "UPDATE cases SET hold = 0, owner = 'brenda', next_action = 'office_owned' WHERE case_id = ?",
+            (opened["case_id"],),
+        )
+        desk = LeadDesk(self.path, service_probe=lambda: {"observed": False, "active": None, "summary": "fixture"})
+        brenda = desk.get_case(opened["case_id"])
+        queued = desk.list_cases()["cases"][0]
+        self.assertFalse(brenda["waiting_on_daniel"])
+        self.assertEqual(brenda["attention_reason"], "Brenda owns this. Do not send a competing reply.")
+        self.assertEqual(brenda["owner"], "brenda")
+        self.assertEqual(queued["attention_reason"], brenda["attention_reason"])
+        self.assertFalse(queued["waiting_on_daniel"])
+        self.assertEqual(desk.get_health()["backlog"]["waiting_on_daniel"], 0)
+        desk.close()
+
+        self.layer.conn.execute("UPDATE cases SET owner = 'ally' WHERE case_id = ?", (opened["case_id"],))
+        desk = LeadDesk(self.path, service_probe=lambda: {"observed": False, "active": None, "summary": "fixture"})
+        ally = desk.get_case(opened["case_id"])
+        self.assertEqual(ally["attention_reason"], "Ally owns this. Do not send a competing reply.")
+        self.assertFalse(ally["waiting_on_daniel"])
+        desk.close()

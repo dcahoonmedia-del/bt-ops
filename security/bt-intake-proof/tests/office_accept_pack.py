@@ -532,8 +532,26 @@ def run_office_accept_pack(store_path: Path) -> dict[str, Any]:
         desk = LeadDesk(store_path, service_probe=lambda: {"observed": False, "active": None, "summary": "isolated pack"})
         listed = desk.list_cases(limit=50)
         views = {item["case_id"]: desk.get_case(item["case_id"]) for item in listed["cases"]}
+        office_attention = {
+            item["case_id"]: item["attention_reason"]
+            for item in listed["cases"]
+            if item.get("office_hold")
+        }
+        own_display_ok = bool(office_attention) and all(
+            "waiting on Daniel" not in reason for reason in office_attention.values()
+        )
         desk.close()
         store2.close()
+        for item in scenarios:
+            if item["name"] == "office_ownership_and_hold_block_send":
+                if not own_display_ok:
+                    item["status"] = "FAIL"
+                    item["notes"] = "Held/office cases still presented as waiting on Daniel."
+                else:
+                    item["notes"] = (
+                        "Hold, Brenda, and Ally each blocked approve-and-send and left no queued action. "
+                        "Console names the owner or hold instead of waiting on Daniel."
+                    )
         scenarios.append(
             _scenario(
                 "repeat_decision_and_restart_no_duplicate_action",

@@ -73,13 +73,10 @@ sudo bash /tmp/bt-intake-desk-roundtrip-src/bt-intake-proof/scripts/guarded_desk
 # Manual rollback restores code/env/unit only, never receipts or approvals:
 # sudo bash /opt/bt-intake-proof/scripts/rollback_to_predeploy.sh
 
-# Action 2 already sent_verified/consumed. Do not recover --execute. Do not resend.
-# Do not enqueue an intermediate sent-stage result. After deploy + health PASS, one command:
-# sudo -u btintake bash /opt/bt-intake-proof/scripts/report_desk_send_outcome.sh \\
-#   --action-id 2 --case-id BTC-contactus-desk-roundtrip-e9a8-20260912 --verify-recipient --enqueue-result
-#
-# That uses existing daniel@ readonly. It does not send the proof, change labels, or forge receipt.
-# Keep customer sends and broad capture OFF. Do not reset SQLite or reissue approval.
+# Do not recover --execute. Do not resend BT-DESK-ROUNDTRIP-SEND-E9A8.
+# Do not repeat action 2 --verify-recipient. Do not send the CASEMGR draft inquiry
+# from this deploy. Do not reset SQLite or reissue approval.
+# Keep customer sends and broad capture OFF.
 EOF
 cat > "${DEST}/MANIFEST.json" <<EOF
 {

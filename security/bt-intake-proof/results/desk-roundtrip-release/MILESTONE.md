@@ -27,10 +27,11 @@ Evidence labels: **unit** / **fixture** / **runtime (Codex-observed)** / **this 
 
 ## Next acceptance (not this release)
 
-1. Codex deploys this artifact, health PASS, then `report_desk_send_outcome.sh` for action 2. No resend. No new approval.
-2. Enqueue one accurate `sent_verified` result if the last mailed result is stale or missing.
-3. Optional `--verify-recipient` only if a backend receipt row is wanted; uses existing daniel@ readonly and the existing verifier.
-4. Later milestone: one realistic internal case plus office hold (Brenda/Ally). Still no customer send.
-5. Later still: phone / Mac-off proof after that path is demonstrated, not inferred from Gmail existing.
+Action 2 is already `recipient_receipt_verified`. Do not recover `--execute`.
+Do not repeat `--verify-recipient`. Do not resend the proof.
 
-Do not implement those later items here.
+The next live walkthrough is one CASEMGR inquiry → model draft → revise/hold.
+Packet and host checks: `results/casemgr-draft/INTERNAL_PACKET.md`.
+Do not send that packet from a deploy.
+
+Do not claim phone / Mac-off from Gmail existing.

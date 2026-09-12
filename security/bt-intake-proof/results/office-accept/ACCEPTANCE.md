@@ -1,7 +1,9 @@
 # Office-ownership acceptance (isolated)
 
 Isolation: throwaway SQLite. Customer sends OFF. Broad capture OFF.
-Runtime `src/` was not changed. No immutable host release.
+Held/office attention text was later corrected in `lead_desk` so those cases
+do not say "waiting on Daniel". That is presentation only. Isolated scenarios
+remain fixture evidence. They do not prove live drafting.
 
 ## Codex-observed (separate)
 

@@ -168,13 +168,29 @@ def _office_hold(fieldwork: dict[str, Any] | None) -> dict[str, Any] | None:
     return None
 
 
-def _waiting_on_daniel(case: dict[str, Any]) -> bool:
+def _waiting_on_daniel(case: dict[str, Any], fieldwork: dict[str, Any] | None = None) -> bool:
+    if _desk_hold(case, fieldwork):
+        return False
     return case.get("stage") in {STAGE_AWAITING_REVIEW, STAGE_CHANGES_REQUESTED} or case.get(
         "approval_state"
     ) in {APPROVAL_PENDING, APPROVAL_CHANGES} or case.get("next_action") == "daniel_review"
 
 
-def _attention_reason(case: dict[str, Any], send: dict[str, Any] | None) -> str:
+def _office_attention(case: dict[str, Any], fieldwork: dict[str, Any] | None = None) -> str | None:
+    hold = _desk_hold(case, fieldwork)
+    if not hold:
+        return None
+    if hold.get("kind") == "hold" or case.get("hold"):
+        return "Held. Nothing will send."
+    owner = str(hold.get("owner") or case.get("owner") or "office").strip().lower()
+    if owner == "brenda":
+        return "Brenda owns this. Do not send a competing reply."
+    if owner == "ally":
+        return "Ally owns this. Do not send a competing reply."
+    return "The office owns this. Do not send a competing reply."
+
+
+def _attention_reason(case: dict[str, Any], send: dict[str, Any] | None, fieldwork: dict[str, Any] | None = None) -> str:
     status = (send or {}).get("status")
     if status == "recipient_receipt_verified":
         return "Send independently verified. No further desk action."
@@ -184,7 +200,10 @@ def _attention_reason(case: dict[str, Any], send: dict[str, Any] | None) -> str:
         return "Send attempted. Independent verification is still pending."
     if status == "unknown":
         return "Send result unknown. Do not assume delivery and do not auto-resend."
-    if _waiting_on_daniel(case):
+    office = _office_attention(case, fieldwork)
+    if office:
+        return office
+    if _waiting_on_daniel(case, fieldwork):
         if case.get("stage") == STAGE_CHANGES_REQUESTED:
             return "Daniel requested changes. New draft needed."
         return "Draft is waiting on Daniel."
@@ -344,7 +363,7 @@ class LeadDesk:
         for case in self._rows(sql, tuple(params)):
             fieldwork = self._fieldwork(case["case_id"])
             send = self._latest_send(case["case_id"])
-            waiting = _waiting_on_daniel(case)
+            waiting = _waiting_on_daniel(case, fieldwork)
             if waiting_on_daniel is True and not waiting:
                 continue
             if waiting_on_daniel is False and waiting:
@@ -357,7 +376,7 @@ class LeadDesk:
                     "source": "email",
                     "channel": "email",
                     "mailbox": case.get("mailbox"),
-                    "attention_reason": _attention_reason(case, send),
+                    "attention_reason": _attention_reason(case, send, fieldwork),
                     "latest_inbound_at": case.get("latest_inbound_at"),
                     "stage": case.get("stage"),
                     "owner": _desk_owner(case, fieldwork),
@@ -494,8 +513,8 @@ class LeadDesk:
             "draft_version": case.get("draft_version"),
             "approved_draft_version": case.get("approved_draft_version"),
             "next_action": case.get("next_action"),
-            "waiting_on_daniel": _waiting_on_daniel(case),
-            "attention_reason": _attention_reason(case, send),
+            "waiting_on_daniel": _waiting_on_daniel(case, fieldwork),
+            "attention_reason": _attention_reason(case, send, fieldwork),
             "original_inbound": _msg(original),
             "latest_inbound": _msg(latest),
             "conversation": [_msg(item) for item in receipts],
@@ -554,7 +573,7 @@ class LeadDesk:
             send_failed = self._one("SELECT COUNT(*) AS n FROM case_send_actions WHERE status = 'failed'") or {"n": 0}
         backlog = {"needs_draft": 0, "awaiting_review": 0, "changes_requested": 0, "waiting_on_daniel": 0}
         if table_exists(self.conn, "cases"):
-            for row in self._rows("SELECT stage, approval_state, next_action FROM cases"):
+            for row in self._rows("SELECT * FROM cases"):
                 if row.get("stage") in {STAGE_NEEDS_DRAFT, STAGE_REOPENED}:
                     backlog["needs_draft"] += 1
                 if row.get("stage") == STAGE_AWAITING_REVIEW:
