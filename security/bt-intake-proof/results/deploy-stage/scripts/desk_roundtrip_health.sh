@@ -11,20 +11,21 @@ if [[ ! -f "${ETC}/env" ]]; then
   echo "missing ${ETC}/env" >&2
   exit 1
 fi
-set -a
-# shellcheck disable=SC1090
-. "${ETC}/env"
-set +a
 
 systemctl is-active --quiet bt-intake-receiver.service
 echo "receiver=active"
 
 python3 - <<'PY'
-import json, os, pathlib, sys
+import json, os
+from pathlib import Path
+from bt_intake_proof.desk_deploy_env import load_env_file
 from bt_intake_proof.intake_mode import describe_mode, require_isolated_live_receiver
 from bt_intake_proof.cloud_host import run_once, serve
 import inspect
 
+etc = Path(os.environ.get("BT_INTAKE_ETC", "/etc/bt-intake-proof"))
+for key, value in load_env_file(etc / "env").items():
+    os.environ.setdefault(key, value)
 mode = require_isolated_live_receiver()
 desc = describe_mode()
 src = inspect.getsource(run_once) + inspect.getsource(serve)

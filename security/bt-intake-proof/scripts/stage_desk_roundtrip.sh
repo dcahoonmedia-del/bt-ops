@@ -23,8 +23,9 @@ On the VM, as root, after verifying the immutable tarball SHA256:
 
   sudo bash scripts/guarded_desk_roundtrip_deploy.sh
 
-That records the actual live tree first, excludes secrets, merges env, and
-health-checks. Rollback uses the recorded pre-deploy revision, not an assumed SHA:
+That preflights, quiesces the worker, writes a unique code/env/unit backup,
+then copies. On failure it restores code/env/unit automatically and does not
+touch SQLite. Manual rollback uses that unique backup, not an assumed SHA:
 
   sudo bash scripts/rollback_to_predeploy.sh
 

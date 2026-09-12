@@ -58,7 +58,8 @@ RAW=${RAW}
 DEST=/tmp/bt-intake-desk-roundtrip.tar.gz
 
 # On the VM (Google Cloud SSH-in-browser). Keep secrets on the host.
-# Do not send BT-DESK-ROUNDTRIP-SEND-E9A8. Do not reset SQLite.
+# Deploy transaction only. Do not send BT-DESK-ROUNDTRIP-SEND-E9A8.
+# Do not reset SQLite. Do not prepare/deliver mail in this command.
 
 curl -fsSLo /tmp/bt-intake-desk-roundtrip.tar.gz ${RAW}
 echo "${TAR_SHA}  /tmp/bt-intake-desk-roundtrip.tar.gz" | sha256sum -c
@@ -68,13 +69,8 @@ tar -xzf /tmp/bt-intake-desk-roundtrip.tar.gz -C /tmp/bt-intake-desk-roundtrip-s
 test ! -e /tmp/bt-intake-desk-roundtrip-src/bt-intake-proof/secrets
 python3 /tmp/bt-intake-desk-roundtrip-src/bt-intake-proof/scripts/verify_release.py /tmp/bt-intake-desk-roundtrip-src/bt-intake-proof
 sudo bash /tmp/bt-intake-desk-roundtrip-src/bt-intake-proof/scripts/guarded_desk_roundtrip_deploy.sh
-sudo -u btintake env PYTHONPATH=/opt/bt-intake-proof/src BT_INTAKE_ENV=/etc/bt-intake-proof/env \\
-  python3 /opt/bt-intake-proof/scripts/prepare_fresh_desk_case.py --live --out /tmp/desk-rt-decision
-# Internal CASE packet only. Not the proof reply.
-sudo -u btintake env PYTHONPATH=/opt/bt-intake-proof/src BT_INTAKE_ENV=/etc/bt-intake-proof/env \\
-  python3 /opt/bt-intake-proof/scripts/deliver_desk_case_packet.py
 
-# Rollback uses the revision recorded on this host, not an assumed SHA:
+# Manual rollback restores code/env/unit only, never receipts or approvals:
 # sudo bash /opt/bt-intake-proof/scripts/rollback_to_predeploy.sh
 EOF
 
