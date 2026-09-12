@@ -11,21 +11,13 @@ trap 'rm -rf "$STAGE"' EXIT
 COMMIT="$(git -C "$REPO" rev-parse HEAD)"
 mkdir -p "$DEST" "${STAGE}/bt-intake-proof"
 
-rsync -a \
-  --exclude secrets \
-  --exclude results \
-  --exclude .git \
-  --exclude '__pycache__' \
-  --exclude '*.pyc' \
-  "${ROOT}/src" \
-  "${ROOT}/scripts" \
-  "${ROOT}/systemd" \
-  "${ROOT}/tests" \
-  "${STAGE}/bt-intake-proof/"
-
+cp -a "${ROOT}/src" "${ROOT}/scripts" "${ROOT}/systemd" "${ROOT}/tests" "${STAGE}/bt-intake-proof/"
 if [[ -d "${ROOT}/config" ]]; then
-  rsync -a "${ROOT}/config" "${STAGE}/bt-intake-proof/"
+  cp -a "${ROOT}/config" "${STAGE}/bt-intake-proof/"
 fi
+find "${STAGE}/bt-intake-proof" -type d -name __pycache__ -prune -exec rm -rf {} +
+find "${STAGE}/bt-intake-proof" -type f -name '*.pyc' -delete
+rm -rf "${STAGE}/bt-intake-proof/secrets" "${STAGE}/bt-intake-proof/results"
 for item in src scripts systemd tests; do
   [[ -d "${STAGE}/bt-intake-proof/${item}" ]] || { echo "missing $item" >&2; exit 1; }
 done
