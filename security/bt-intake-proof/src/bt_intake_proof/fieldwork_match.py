@@ -289,6 +289,8 @@ def scope_work_orders(rows: list[dict[str, Any]], customer_id: str) -> tuple[lis
         scoped.append(wo)
     if unscoped == len(rows):
         return [], {"ok": False, "foreign": foreign, "unscoped": unscoped, "reason": "work_orders_unscoped"}
+    if foreign == len(rows) or (foreign and not scoped):
+        return [], {"ok": False, "foreign": foreign, "unscoped": unscoped, "reason": "work_orders_unscoped"}
     return scoped, {"ok": True, "foreign": foreign, "unscoped": unscoped, "reason": None}
 
 

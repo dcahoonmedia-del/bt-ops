@@ -80,6 +80,7 @@ REDACT_KEYS = {
 DEFAULT_PER_PAGE = 10
 DEFAULT_MAX_PAGES = 3
 DEFAULT_MAX_REQUESTS = 40
+RUNNER_MAX_REQUESTS = 200
 
 
 class FieldworkWriteForbidden(RuntimeError):
@@ -431,6 +432,7 @@ def live_read_client() -> ReadOnlyFieldworkClient:
     if os.environ.get("BT_FIELDWORK_LIVE_READ") != "1":
         raise FieldworkReadError("live_read_not_enabled")
     client = ReadOnlyFieldworkClient.from_env()
+    client.max_requests = RUNNER_MAX_REQUESTS
     if not client.token:
         raise FieldworkReadError("fieldwork_api_key_not_issued")
     return client

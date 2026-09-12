@@ -1,6 +1,6 @@
 # LIVE-FW-READ-1 — bounded Fieldwork identity/context read
 
-Offline matcher/adapter/runner: **PASS** (unit).  
+Offline matcher/adapter/runner: **PASS** (`PYTHONPATH=src python3 -m unittest discover -s tests` → 265 passed, 1 skipped).  
 Live Fieldwork on this Cursor VM: **BLOCKED**.  
 Always-on receiver: **unchanged** (still `grok_bot_client()` fixture only).  
 Draft / enqueue / send: **not invoked**.
@@ -94,6 +94,6 @@ PYTHONPATH=src python3 -m bt_intake_proof.cli live-fw-read --mode fixture \
 
 | Layer | Result |
 | --- | --- |
-| Offline implementation + unit tests | PASS (recorded after the test run on this branch) |
+| Offline implementation + unit tests | **PASS** (265 passed, 1 skipped) |
 | Live bounded read from this VM | **BLOCKED** |
 | Milestone LIVE-FW-READ-1 live proof | **BLOCKED** until Codex runs the host commands and compares private evidence |

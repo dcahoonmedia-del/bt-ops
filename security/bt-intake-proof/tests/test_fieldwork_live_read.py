@@ -19,7 +19,6 @@ from bt_intake_proof.fieldwork_live_read import (
     preflight,
     resolve_authorized,
     run_bounded_read,
-    scenario_receipt,
 )
 from bt_intake_proof.fieldwork_match import (
     MATCH_AMBIGUOUS,
@@ -109,10 +108,12 @@ class MatcherFailurePathTests(unittest.TestCase):
 
     def test_truncated_search_is_incomplete_not_no_match(self) -> None:
         def full_pages(path: str, params: dict) -> list:
-            if path == "/v3.1/customers/search":
+            if path in {"/v3.1/customers/search", "/v3.1/customers/search_by_phone"}:
                 return [{"id": i, "name": f"Pad {i}"} for i in range(int(params.get("per_page") or 1))]
             if path.startswith("/v3.1/customers/") and path.count("/") == 3:
-                return {"id": int(path.rsplit("/", 1)[-1]), "name": "Pad"}
+                tail = path.rsplit("/", 1)[-1]
+                if tail.isdigit():
+                    return {"id": int(tail), "name": "Pad"}
             return []
 
         client = ReadOnlyFieldworkClient(token="x", getter=full_pages, live=False, per_page=1, max_pages=2)

@@ -22,6 +22,7 @@ from .fieldwork_match import (
     match_and_context,
 )
 from .fieldwork_readonly import (
+    RUNNER_MAX_REQUESTS,
     FieldworkReadError,
     ReadOnlyFieldworkClient,
     as_fetch,
@@ -48,7 +49,9 @@ MAX_SYNTHETIC_NO_MATCH = 1
 DEFAULT_DATE_WINDOW_DAYS = 365
 
 def fixture_client(catalog_path: Path | None = None) -> GrokBotFieldwork:
-    return GrokBotFieldwork(catalog_path=catalog_path or SYNTHETIC_CATALOG)
+    client = GrokBotFieldwork(catalog_path=catalog_path or SYNTHETIC_CATALOG)
+    client.max_requests = RUNNER_MAX_REQUESTS
+    return client
 
 
 def _write_private(path: Path, payload: dict[str, Any], mode: int) -> None:
