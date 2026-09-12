@@ -1,23 +1,14 @@
 {
   "overall": "BLOCKED",
-  "stopped_at": "compute_instances_create_denied",
-  "reason": "Compute Engine API is enabled. This Cloud login lacks compute.instances.create/list. No VM or JSON key created.",
-  "gates": {
-    "mac_independent_operation": {"result": "BLOCKED", "detail": "Waiting for console-created e2-small bt-intake-cloud in us-east1."},
-    "automatic_service_startup": {"result": "BLOCKED", "detail": "systemd unit packaged, not installed."},
-    "pubsub_delivery": {"result": "BLOCKED", "detail": "Cloud host not running yet."},
-    "gmail_history_recovery": {"result": "BLOCKED", "detail": "Cloud host not running yet."},
-    "watch_renewal": {"result": "BLOCKED", "detail": "Packaged, not live on GCE."},
-    "durable_persistence_across_vm_restart": {"result": "BLOCKED", "detail": "Waiting for VM."},
-    "deduplication": {"result": "BLOCKED", "detail": "Local contract PASS."},
-    "codex_authentication_persistence": {"result": "BLOCKED", "detail": "Isolated ChatGPT volume not on a VM yet."},
-    "external_message_authority_boundary": {"result": "BLOCKED", "detail": "Phase A isolated dispatch remains PASS."}
-  },
-  "json_key_created": false,
-  "vm_created": false,
-  "region": "us-east1",
-  "machine": "e2-small",
-  "compute_engine_api": "enabled_or_reachable",
-  "billing_read": "PERMISSION_DENIED",
-  "create_permission": "DENIED"
+  "stopped_at": "vm_off_spec",
+  "reason": "SSH works to 35.243.167.73. VM is e2-medium with default compute SA and 10GB disk. Not installing until e2-small + receiver SA + 20GB + Pub/Sub-only scopes.",
+  "vm": {
+    "name": "instance-20260912-024540",
+    "external_ip": "35.243.167.73",
+    "zone": "us-east1-c",
+    "machine": "e2-medium",
+    "service_account": "1028131400538-compute@developer.gserviceaccount.com",
+    "disk_gb": 10,
+    "json_key_created": false
+  }
 }
