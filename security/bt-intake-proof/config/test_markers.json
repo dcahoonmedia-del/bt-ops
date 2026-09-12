@@ -6,5 +6,5 @@
   "designated_reply_subject": "BT-PILOT-0911-TEST02",
   "from": "daniel@btpestcontrol.com",
   "to": "contactus@btpestcontrol.com",
-  "do_not_send_until": "send now"
+  "do_not_send_until": "receiver stopped; send recovery marker now"
 }

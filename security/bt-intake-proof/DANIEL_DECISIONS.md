@@ -2,7 +2,7 @@
 
 Old-thread reply on **BT-PILOT-0911-TEST02** captured in 14.69s.
 
-Wait until I say the receiver is stopped, then send **one new email**:
+The receiver is **stopped**. Send **one new email** now:
 
 - From: `daniel@btpestcontrol.com`
 - To: `contactus@btpestcontrol.com`
