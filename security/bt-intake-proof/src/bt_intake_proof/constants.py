@@ -4,6 +4,17 @@ from __future__ import annotations
 
 MAILBOX = "contactus@btpestcontrol.com"
 ALLOWED_SENDER = "daniel@btpestcontrol.com"
+LEAD_DESK_PLUS_MAILBOX = "daniel+lead-desk@btpestcontrol.com"
+LEAD_DESK_PLUS_RESULTS_MAILBOX = "daniel+lead-desk-results@btpestcontrol.com"
+LEAD_DESK_CONTROL_LABEL = "B&T Lead Desk/Control"
+LEAD_DESK_CONTROL_LABEL_ID = "Label_4875434634263201547"
+LEAD_DESK_RESULTS_LABEL = "B&T Lead Desk/Results"
+LEAD_DESK_RESULTS_LABEL_ID = "Label_2630796313118786321"
+PLUS_DISCOVERY_CURSOR_KEY = "daniel@btpestcontrol.com/plus-control"
+STALE_PLUS_CONTROL_ID = "1a0979e37a0b0a94"
+MARKER_PLUS_RESULT = "BT-INTAKE-PROOF-PLUS-RESULT-E9A8"
+TRANSPORT_CONTACTUS = "contactus"
+TRANSPORT_PLUS = "plus_address"
 MARKER_PREFIX = "BT-INTAKE-PROOF-"
 MARKER_RE = r"BT-INTAKE-PROOF-[A-Z0-9-]+"
 

@@ -1,0 +1,20 @@
+[Unit]
+Description=B&T plus-address private-control poller (Daniel readonly history; initially disabled)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=btintake
+Group=btintake
+WorkingDirectory=/opt/bt-intake-proof
+EnvironmentFile=/etc/bt-intake-proof/env
+ExecStart=/usr/bin/python3 -m bt_intake_proof desk-plus-poll --once
+Nice=10
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bt-plus-control-poll
+
+[Install]
+WantedBy=multi-user.target

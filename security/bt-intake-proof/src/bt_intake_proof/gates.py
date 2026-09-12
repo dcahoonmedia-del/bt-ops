@@ -93,6 +93,12 @@ def daniel_sent_token_path() -> Path:
     return Path(override) if override else SECRETS / "daniel_gmail_readonly_token.json"
 
 
+def plus_result_send_token_path() -> Path:
+    """Separate daniel@ send-only token for plus-address results. Never the readonly file."""
+    override = os.environ.get("BT_DANIEL_PLUS_RESULT_SEND_TOKEN", "").strip()
+    return Path(override) if override else SECRETS / "daniel_plus_result_send_token.json"
+
+
 def cloud_token_path() -> Path:
     override = os.environ.get("BT_GCP_TOKEN", "").strip()
     return Path(override) if override else SECRETS / "project_owner_cloud_token.json"

@@ -8,7 +8,7 @@ import json
 import sys
 from pathlib import Path
 
-from .constants import MAILBOX
+from .constants import MAILBOX, TRANSPORT_CONTACTUS, TRANSPORT_PLUS
 from .dispatch import build_constructor
 from .cloud_auth import cloud_authorization_url
 from .gates import diagnose_google, store_path
@@ -310,6 +310,7 @@ def cmd_lead_desk_packets(args: argparse.Namespace) -> int:
         control_intent=args.control_intent or None,
         control_owner=args.control_owner or None,
         control_note=note,
+        control_transport=getattr(args, "control_transport", None) or TRANSPORT_CONTACTUS,
     )
     write_desk_packets(payload, dest)
     control = payload.get("control") or {}
@@ -405,6 +406,79 @@ def cmd_desk_control(args: argparse.Namespace) -> int:
     return 0 if result.get("ok") else 2
 
 
+def cmd_desk_plus_preflight(_args: argparse.Namespace) -> int:
+    from .desk_plus_preflight import plus_control_preflight
+
+    payload = plus_control_preflight()
+    RESULTS.mkdir(parents=True, exist_ok=True)
+    dest = RESULTS / "live" / "desk-plus-preflight.json"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps(payload, indent=2, default=str) + "\n", encoding="utf-8")
+    _print(payload)
+    return 0 if payload.get("status") == "READY" else 2
+
+
+def cmd_desk_plus_poll(args: argparse.Namespace) -> int:
+    from .cases import CaseLayer
+    from .desk_plus_loop import poll_plus_controls_once
+
+    store = ReceiptStore(Path(args.store) if args.store else store_path())
+    try:
+        layer = CaseLayer(store)
+        payload = poll_plus_controls_once(layer)
+    finally:
+        store.close()
+    RESULTS.mkdir(parents=True, exist_ok=True)
+    dest = RESULTS / "live" / "desk-plus-poll.json"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps(payload, indent=2, default=str) + "\n", encoding="utf-8")
+    _print(payload)
+    if payload.get("reason") == "plus_result_channel_not_ready":
+        return 2
+    return 0 if payload.get("ok") else 2
+
+
+def cmd_desk_plus_deliver_results(args: argparse.Namespace) -> int:
+    from .cases import CaseLayer
+    from .desk_plus_loop import recover_plus_result_sends
+
+    store = ReceiptStore(Path(args.store) if args.store else store_path())
+    try:
+        layer = CaseLayer(store)
+        payload = recover_plus_result_sends(layer)
+    finally:
+        store.close()
+    _print(payload)
+    return 0
+
+
+def cmd_desk_plus_control(args: argparse.Namespace) -> int:
+    from .cases import CaseLayer
+    from .desk_bridge import format_result_email, process_plus_control_mail
+
+    store = ReceiptStore(Path(args.store) if args.store else store_path())
+    try:
+        layer = CaseLayer(store)
+        result = process_plus_control_mail(layer, gmail_message_id=args.message_id)
+    finally:
+        store.close()
+    RESULTS.mkdir(parents=True, exist_ok=True)
+    dest = RESULTS / "live" / "desk-plus-control-result.json"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    safe = {key: value for key, value in result.items() if key != "result_email"}
+    dest.write_text(json.dumps(safe, indent=2, default=str) + "\n", encoding="utf-8")
+    email = result.get("result_email") or format_result_email(result)
+    (RESULTS / "live" / "desk-plus-control-result.txt").write_text(
+        f"Subject: {email['subject']}\n\n{email['body']}",
+        encoding="utf-8",
+    )
+    safe["execute_send"] = False
+    safe["customer_send"] = False
+    safe["contactus_traffic"] = False
+    _print(safe)
+    return 0 if result.get("ok") else 2
+
+
 def cmd_desk_action(args: argparse.Namespace) -> int:
     from .desk_control import submit_desk_action
 
@@ -493,6 +567,12 @@ def main(argv: list[str] | None = None) -> int:
     desk.add_argument("--control-owner", default="", help="owner for office_owned generate-only control")
     desk.add_argument("--control-note", default="", help="exact NOTE text for generate-only revise_draft")
     desk.add_argument("--control-note-file", default="", help="read exact NOTE from a UTF-8 file")
+    desk.add_argument(
+        "--control-transport",
+        default=TRANSPORT_CONTACTUS,
+        choices=(TRANSPORT_CONTACTUS, TRANSPORT_PLUS),
+        help="Generate-only destination. plus_address is internal Lead Desk control only.",
+    )
     desk.set_defaults(func=cmd_lead_desk_packets)
     sub.add_parser("intake-mode").set_defaults(func=cmd_intake_mode)
     dc = sub.add_parser("desk-control", help="Process one ChatGPT Gmail control message. Origin is fail-closed without Gmail-fetched evidence. Does not execute a send.")
@@ -503,6 +583,31 @@ def main(argv: list[str] | None = None) -> int:
     dc.add_argument("--message-id", default="")
     dc.add_argument("--store", default="")
     dc.set_defaults(func=cmd_desk_control)
+    dpc = sub.add_parser(
+        "desk-plus-control",
+        help="Process one internal plus-address control fetched from Daniel SENT. Does not send or use contactus@.",
+    )
+    dpc.add_argument("--message-id", required=True, help="Gmail id in the authenticated daniel@ mailbox")
+    dpc.add_argument("--store", default="")
+    dpc.set_defaults(func=cmd_desk_plus_control)
+    dpp = sub.add_parser(
+        "desk-plus-preflight",
+        help="Read-only plus-control discovery/sender readiness. Does not change filters or send mail.",
+    )
+    dpp.set_defaults(func=cmd_desk_plus_preflight)
+    dpo = sub.add_parser(
+        "desk-plus-poll",
+        help="One isolated Daniel history poll. Processes only plus-address revise_draft. Does not use contactus@.",
+    )
+    dpo.add_argument("--store", default="")
+    dpo.add_argument("--once", action="store_true", help="Accepted for systemd oneshot compatibility")
+    dpo.set_defaults(func=cmd_desk_plus_poll)
+    dpr = sub.add_parser(
+        "desk-plus-deliver-results",
+        help="Reconcile then send pending plus results. Never contactus@. Not a live-send from this VM.",
+    )
+    dpr.add_argument("--store", default="")
+    dpr.set_defaults(func=cmd_desk_plus_deliver_results)
     da = sub.add_parser("desk-action", help="Primary path: authorize a ChatGPT structured intent. Does not send.")
     da.add_argument("--intent", default="", help="One of the desk intents, e.g. approve_and_send_current")
     da.add_argument("--json", default="", help="Small JSON action from ChatGPT: {intent, owner, note}")

@@ -23,6 +23,10 @@ from typing import Any, Callable
 from .desk_deploy_env import load_env_file, merge_desk_roundtrip_env, render_env
 
 UNIT_NAME = "bt-intake-receiver.service"
+PLUS_UNITS = (
+    "bt-plus-control-poll.service",
+    "bt-plus-control-poll.timer",
+)
 BACKUP_SUBDIR = "predeploy-backups"
 POINTER_NAME = "current-predeploy.json"
 SKIP_DIR_NAMES = {".git", "__pycache__"}
@@ -116,6 +120,7 @@ def token_meta(prefix: Path) -> dict[str, Any]:
         "contactus_send": file_meta(secrets_dir / "contactus_gmail_send_token.json"),
         "oauth_client": file_meta(secrets_dir / "gmail_oauth_client.json"),
         "daniel": file_meta(secrets_dir / "daniel_gmail_readonly_token.json"),
+        "daniel_plus_result_send": file_meta(secrets_dir / "daniel_plus_result_send_token.json"),
     }
 
 
@@ -241,6 +246,14 @@ def backup_host(paths: DeployPaths, *, service_before: str) -> dict[str, Any]:
     unit_meta = file_meta(unit_path) if unit_present else {"present": False}
     if unit_present:
         shutil.copy2(unit_path, dest / "unit")
+    plus_units: dict[str, Any] = {}
+    for name in PLUS_UNITS:
+        src = paths.systemd_dir / name
+        present = src.exists()
+        meta = file_meta(src) if present else {"present": False}
+        if present:
+            shutil.copy2(src, dest / name)
+        plus_units[name] = {"present": present, "meta": meta}
     sqlite = paths.state / "receipts.sqlite"
     manifest = {
         "backup_id": dest.name,
@@ -254,12 +267,13 @@ def backup_host(paths: DeployPaths, *, service_before: str) -> dict[str, Any]:
         "env_meta": env_meta,
         "unit_present": unit_present,
         "unit_meta": unit_meta,
+        "plus_units": plus_units,
         "service_state": service_before,
         "sqlite": sqlite_identity(sqlite),
         "tokens": token_meta(paths.prefix),
         "sqlite_restored": False,
         "tokens_restored": False,
-        "note": "Code/env/unit only. Do not revert receipts or approvals.",
+        "note": "Code/env/unit only. Do not revert receipts or approvals. Plus timer stays disabled unless the host already enabled it.",
     }
     (dest / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     os.chmod(dest / "manifest.json", 0o600)
@@ -306,6 +320,13 @@ def restore_backup(paths: DeployPaths, manifest: dict[str, Any], dest: Path) -> 
         present=bool(manifest.get("unit_present")),
         meta=manifest.get("unit_meta") if manifest.get("unit_present") else None,
     )
+    for name, info in (manifest.get("plus_units") or {}).items():
+        restore_file(
+            dest / name if info.get("present") else None,
+            paths.systemd_dir / name,
+            present=bool(info.get("present")),
+            meta=info.get("meta") if info.get("present") else None,
+        )
     prior = str(manifest.get("service_state") or "inactive")
     try:
         current = restore_service_state(paths, prior)
@@ -410,8 +431,31 @@ def apply_release(paths: DeployPaths) -> None:
         paths.systemd_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(unit_src, paths.systemd_dir / paths.unit_name)
         os.chmod(paths.systemd_dir / paths.unit_name, 0o644)
+    _install_plus_units_disabled(paths)
     if paths.after_unit_hook:
         paths.after_unit_hook()
+
+
+def _install_plus_units_disabled(paths: DeployPaths) -> list[str]:
+    """Copy plus units when present and leave them disabled. Never enable."""
+    installed: list[str] = []
+    for name in PLUS_UNITS:
+        plus_src = paths.source / "systemd" / name
+        if plus_src.is_file():
+            paths.systemd_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(plus_src, paths.systemd_dir / name)
+            os.chmod(paths.systemd_dir / name, 0o644)
+            installed.append(name)
+    if not installed:
+        return installed
+    reloaded = run_systemctl(paths, "daemon-reload")
+    if reloaded.returncode != 0:
+        raise DeployError("failed to daemon-reload after plus unit install", mutated=True)
+    for name in installed:
+        disabled = run_systemctl(paths, "disable", name)
+        if disabled.returncode != 0:
+            raise DeployError(f"failed to disable {name}", mutated=True)
+    return installed
 
 
 def verify_quiesced_evidence(manifest: dict[str, Any], paths: DeployPaths) -> None:

@@ -10,7 +10,14 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .constants import ALLOWED_SENDER, MAILBOX, MARKER_DESK_CTRL
+from .constants import (
+    ALLOWED_SENDER,
+    LEAD_DESK_PLUS_MAILBOX,
+    MAILBOX,
+    MARKER_DESK_CTRL,
+    TRANSPORT_CONTACTUS,
+    TRANSPORT_PLUS,
+)
 from .desk_bridge import compute_packet_binding, format_binding_block, format_control_mail
 from .desk_control import (
     INTENT_HOLD,
@@ -32,7 +39,8 @@ HEADER = (
     "B&T Lead Desk packet (internal, read-only). "
     "Answer Daniel from this email, not from earlier chat memory. "
     "Daniel may speak naturally. Interpret his intent and send one structured "
-    "control message from daniel@ to contactus@. "
+    "control message from daniel@ to contactus@, or on the internal path "
+    "daniel@ to daniel+lead-desk@. "
     "Copy the hidden machine binding from this packet. "
     "Do not ask him for case IDs, draft numbers, hashes, or a magic phrase. "
     "Do not read machine fields to Daniel. "
@@ -354,24 +362,29 @@ def build_control_packet(
     intent: str | None = None,
     owner: str | None = None,
     note: str | None = None,
+    transport: str = TRANSPORT_CONTACTUS,
 ) -> dict[str, Any] | None:
     """Generate-only machine-readable control. Does not send."""
     if not binding:
         return None
+    if transport not in {TRANSPORT_CONTACTUS, TRANSPORT_PLUS}:
+        raise ValueError(f"unknown control transport {transport}")
+    dest = LEAD_DESK_PLUS_MAILBOX if transport == TRANSPORT_PLUS else MAILBOX
     ready = {
-        "hold": format_control_mail(INTENT_HOLD, binding),
-        "office_owned_brenda": format_control_mail(INTENT_OFFICE, binding, owner="brenda"),
-        "office_owned_ally": format_control_mail(INTENT_OFFICE, binding, owner="ally"),
-        "no_response_needed": format_control_mail(INTENT_NO_RESPONSE, binding),
+        "hold": format_control_mail(INTENT_HOLD, binding, transport=transport),
+        "office_owned_brenda": format_control_mail(INTENT_OFFICE, binding, owner="brenda", transport=transport),
+        "office_owned_ally": format_control_mail(INTENT_OFFICE, binding, owner="ally", transport=transport),
+        "no_response_needed": format_control_mail(INTENT_NO_RESPONSE, binding, transport=transport),
     }
     selected = None
     if intent:
-        selected = format_control_mail(intent, binding, owner=owner, note=note)
+        selected = format_control_mail(intent, binding, owner=owner, note=note, transport=transport)
     return {
         "kind": "control",
         "generate_only": True,
         "from": ALLOWED_SENDER,
-        "to": MAILBOX,
+        "to": dest,
+        "transport": transport,
         "subject": MARKER_DESK_CTRL,
         "encoding": CTRL_ENC_VERSION,
         "binding": {
@@ -408,6 +421,7 @@ def build_desk_packets(
     control_intent: str | None = None,
     control_owner: str | None = None,
     control_note: str | None = None,
+    control_transport: str = TRANSPORT_CONTACTUS,
 ) -> dict[str, Any]:
     path = Path(store_path)
     before = db_fingerprint(path)
@@ -438,6 +452,7 @@ def build_desk_packets(
         intent=control_intent,
         owner=control_owner,
         note=control_note,
+        transport=control_transport,
     )
     return {
         "generated_at": generated_at,

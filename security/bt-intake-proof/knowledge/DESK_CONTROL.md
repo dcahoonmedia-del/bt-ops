@@ -1,6 +1,6 @@
 # Lead Desk control
 
-Version: 2026-09-12-roundtrip
+Version: 2026-09-12-plus-control
 Production path: Daniel speaks naturally to ChatGPT → ChatGPT interprets intent → ChatGPT sends a private Gmail control message from daniel@ → backend authenticates origin with Gmail-fetched Authentication-Results → validates exact case/version/nonce/hash/freshness → `submit_desk_action` → durable result/case packets to daniel@ → desk-queued bounded execute + independent verify.
 
 Daniel does not need case IDs, draft numbers, hashes, nonces, approval codes, or a magic phrase. ChatGPT holds the conversation. The Python backend does not model his speech.
@@ -35,7 +35,13 @@ Any send still binds to the exact current case, draft version, recipient, channe
 
 Revision NOTE text uses a versioned mail encoding (`CTRL-ENC=v1`) so Unicode, paragraphs, and MIME wrapping round-trip. Simple short controls stay `KEY=value`. Malformed, duplicate, truncated, or conflicting encodings fail closed. PACKET_HASH remains an exact 64-character check.
 
-Control origin is fail-closed. From: and PACKET_HASH are not identity. Domain DKIM for `@btpestcontrol.com` is not Daniel's mailbox. Mailbox-bound SPF/DKIM on the first Gmail-fetched `Authentication-Results` (`mx.google.com`) is a prerequisite, not authorization. Authorization requires an exact authenticated daniel@ Sent match (recipient, canonical control payload, timing, and Message-ID). Quoted `>` copies do not authorize. Pending replay cannot skip that proof. This is not a full-identity PASS. See `desk_origin.py`, `desk_sent_proof.py`, and `results/DESK_ORIGIN_EVIDENCE.md`.
+Control origin is fail-closed. From: and PACKET_HASH are not identity. Domain DKIM for `@btpestcontrol.com` is not Daniel's mailbox.
+
+The contactus@ path still requires mailbox-bound SPF/DKIM on the first Gmail-fetched `Authentication-Results` (`mx.google.com`) as a prerequisite, not authorization, plus an exact authenticated daniel@ Sent match (recipient `contactus@btpestcontrol.com`, canonical control payload, timing, and Message-ID).
+
+A second internal transport is authorized for `revise_draft` only: `daniel@btpestcontrol.com` → `daniel+lead-desk@btpestcontrol.com`. That path does not require inbound Authentication-Results (self-addressed Gmail omits them). Production fetch must call `users.getProfile` on the live token (not token-file email), require the returned Gmail id to match, prove SENT, and check every raw From/To/Cc/Bcc occurrence. Freshness is Gmail `internalDate` versus processing time, 15 minutes, same length as the contactus Sent/received window; an unchanged draft is not indefinite approval. Header spoofing, Bcc extras, or copied syntax on customer/external mail cannot satisfy it. Automatic discovery is a disabled Daniel-only history poller (messageAdded and labelAdded, SENT + Control label). One combined result is intended for `daniel+lead-desk-results@` through a separate send-only credential. Missing sender config is an activation blocker and does not consume a decision. See `results/plus-control/CONTRACT.md`.
+
+Quoted `>` copies do not authorize. Pending replay cannot skip that proof. This is not a full-identity PASS. See `desk_origin.py`, `desk_sent_proof.py`, `desk_plus_proof.py`, and `results/DESK_ORIGIN_EVIDENCE.md`.
 
 Control mail is never a customer case, never Codex `external_untrusted`, and never shown to a customer. Result/case/queue/health packets inbound to contactus are loop-guarded and do not become cases.
 
