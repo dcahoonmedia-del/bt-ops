@@ -199,6 +199,7 @@ class ReceiptStore:
             for receipt in receipts:
                 eligible = bool(receipt.get("eligible"))
                 if not eligible:
+                    # Isolated-test harness: omit unmarked/customer bodies. Not production capture.
                     skipped += 1
                     sender = receipt.get("sender") or ""
                     if sender.lower() != ALLOWED_SENDER:

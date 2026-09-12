@@ -15,3 +15,5 @@ Phase E (internal B&T test only): approving the exact `BT-PHASE-E-SEND-E9A8-C4F1
 I am **not** opening a public URL, adding a domain, or adding a paid auth product. Say if you want IAP on the VM later.
 
 Phase F1 iPhone Lead Desk uses Gmail packets in `daniel@`, not a ChatGPT custom MCP. OpenAI's custom MCP apps are web-only. Ask ChatGPT to read the latest `BT-INTAKE-PROOF-DESK-*` emails. Those packets do not approve or send.
+
+Production intake will capture every contactus@ inbound, then classify. The `BT-INTAKE-PROOF-*` filters stay on for isolated testing until you separately authorize shadow intake of all real contactus@ mail. Real-customer processing is off.

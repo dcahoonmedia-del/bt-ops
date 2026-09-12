@@ -1,0 +1,18 @@
+{
+  "scope": "production_capture_then_classify_architecture",
+  "architecture_tests": "PASS",
+  "live_receiver_mode": "isolated_test",
+  "real_customer_processing": false,
+  "shadow_intake_authorized": false,
+  "subject_marker_filters": "enabled_for_isolated_testing_only",
+  "dispositions": [
+    "new_customer_lead",
+    "existing_customer_service_issue",
+    "existing_customer_other",
+    "office_owned",
+    "vendor_or_internal",
+    "automated_system_notice",
+    "spam_or_noncustomer",
+    "uncertain_needs_daniel"
+  ]
+}

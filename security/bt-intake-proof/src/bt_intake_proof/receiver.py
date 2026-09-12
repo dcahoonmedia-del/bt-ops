@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 from . import eligibility
 from .constants import DETECTION_EVENT_DRIVEN, MAILBOX
+from .intake_mode import require_isolated_live_receiver
 from .gmail_readonly import added_message_ids, decode_raw_message, gmail_internal_date
 from .oauth_consent import OAuthClientError
 from .store import ReceiptStore, should_ack, utc_now
@@ -37,6 +38,7 @@ def hydrate_receipt(
     thread_ids: list[str],
     detection_path: str,
 ) -> dict[str, Any]:
+    require_isolated_live_receiver()
     decoded = {}
     if message.get("raw"):
         decoded = decode_raw_message(message["raw"])

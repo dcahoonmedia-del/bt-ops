@@ -21,6 +21,7 @@ Newest explicit Daniel-approved rule wins. Phase C assignment limits are dated 2
 | Independent Auditor | Architecture: hourly/daily independent audit task | **No Auditor in Phase C** | 2026-09-12 Phase C prompt. Do not add a second worker |
 | Scheduling / Astra / LSA / CTM native | Architecture flows for scheduling, Astra exceptions, and later native channels | Out of this test | Phase C is contactus Gmail Case Manager draft + iPhone review only |
 | iPhone Lead Desk via MCP | Phase F1 first draft: ChatGPT custom MCP | **Gmail packets to daniel@. Custom MCP is web-only** | OpenAI docs plus Daniel 2026-09-12. Do not open public ingress |
+| What may enter intake | Live proof: daniel@ + `BT-INTAKE-PROOF-*` subject/body marker | **Production: capture every contactus@ inbound first; classify after. Markers are test-harness only** | Daniel 2026-09-12 production correction. Live receiver stays on the harness until he authorizes shadow intake |
 | Fourth baseline file | Two identical handoff uploads looked like four sources | Fourth file is **Proposed Architecture** (Sept 11) | Daniel: one handoff was sent twice by mistake |
 | Historical named holds | Brief lists specific past customers and office holds | Not a live dispatch list | Owner note plus 2026-09-12 instruction: examples/evidence only |
 | Grok worker/send delegation | Audit describes CoS → Written Leads send handoff | Do not recreate delegated send | Audit says REMOVE that handoff; Architecture agrees; Phase C does not send |

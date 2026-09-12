@@ -321,6 +321,16 @@ def cmd_lead_desk_packets(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_intake_mode(_args: argparse.Namespace) -> int:
+    from .intake_mode import describe_mode
+
+    payload = describe_mode()
+    RESULTS.mkdir(parents=True, exist_ok=True)
+    (RESULTS / "intake-mode.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    _print(payload)
+    return 0
+
+
 def cmd_record_local_tests(args: argparse.Namespace) -> int:
     scorecard = empty_scorecard(
         "contactus@ Gmail read-only consent passed. Pub/Sub create is blocked on Cloud admin credentials or console-created topic."
@@ -370,6 +380,7 @@ def main(argv: list[str] | None = None) -> int:
     desk.add_argument("--out", default="", help="directory for desk-queue/case/health files")
     desk.add_argument("--case-id", default="", help="optional case to detail; default is newest inbound")
     desk.set_defaults(func=cmd_lead_desk_packets)
+    sub.add_parser("intake-mode").set_defaults(func=cmd_intake_mode)
     args = parser.parse_args(argv)
     return args.func(args)
 
