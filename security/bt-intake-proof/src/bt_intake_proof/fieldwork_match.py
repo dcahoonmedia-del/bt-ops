@@ -5,8 +5,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from .fieldwork_booking import LABEL_FIXTURE, booking_state_from_records, draft_booking_guidance
-from .fieldwork_readonly import ReadOnlyFieldworkClient, redact
+from .fieldwork_booking import LABEL_FIXTURE, LABEL_LIVE, booking_state_from_records, draft_booking_guidance
+from .fieldwork_readonly import FieldworkReadError, ListFetch, ReadOnlyFieldworkClient, as_fetch, redact
 from .store import utc_now
 
 STRONG_HITS = {"email", "phone", "name", "street"}
@@ -15,9 +15,13 @@ MATCH_EXISTING = "matched_existing_customer"
 MATCH_FORMER = "matched_former_customer"
 MATCH_NONE = "no_match_after_multi_identifier_search"
 MATCH_AMBIGUOUS = "ambiguous_match_needs_daniel"
+MATCH_BLOCKED = "blocked"
+MATCH_INCOMPLETE = "incomplete"
+MATCH_INSUFFICIENT = "insufficient_identifiers"
 
 FORMER_STATUSES = {"inactive", "sent_to_collections", "former", "cancelled"}
 EXISTING_STATUSES = {"active", "financial_hold", "lead"}
+STREET_SKIP = {"n", "s", "e", "w", "ne", "nw", "se", "sw", "north", "south", "east", "west"}
 
 EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.I)
 PHONE_RE = re.compile(r"(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}")
@@ -74,7 +78,12 @@ def extract_identifiers(receipt: dict[str, Any]) -> dict[str, Any]:
 
 
 def _status(customer: dict[str, Any]) -> str:
-    return str(customer.get("customer_status") or customer.get("status") or "active").lower()
+    raw = customer.get("customer_status")
+    if raw is None:
+        raw = customer.get("status")
+    if raw is None or str(raw).strip() == "":
+        return "unknown"
+    return str(raw).lower()
 
 
 def _customer_id(customer: dict[str, Any]) -> str:
@@ -91,8 +100,47 @@ def _addr_blob(location: dict[str, Any]) -> str:
     ).lower()
 
 
+def street_parts(street: str) -> tuple[str, str]:
+    parts = [part for part in re.sub(r"\s+", " ", street or "").strip().lower().split(" ") if part]
+    if not parts:
+        return "", ""
+    number = parts[0]
+    name = ""
+    for part in parts[1:]:
+        token = part.strip(".,")
+        if token and token not in STREET_SKIP:
+            name = token
+            break
+    return number, name
+
+
+def street_number_in_blob(number: str, blob: str) -> bool:
+    if not number or not blob:
+        return False
+    return re.search(rf"(?<!\d){re.escape(number)}(?!\d)", blob) is not None
+
+
+def street_matches(street: str, blob: str) -> bool:
+    number, name = street_parts(street)
+    if not number or not name:
+        return False
+    return street_number_in_blob(number, blob) and name in blob
+
+
+def _has_identifiers(identifiers: dict[str, Any]) -> bool:
+    return any(identifiers.get(key) for key in ("emails", "phones", "names", "addresses"))
+
+
+def _client_provenance(client: ReadOnlyFieldworkClient) -> tuple[str, bool]:
+    identity = getattr(client, "identity", None)
+    if isinstance(identity, dict) and identity.get("label"):
+        return str(identity.get("label") or LABEL_FIXTURE), bool(identity.get("live"))
+    live = bool(getattr(client, "live", False))
+    return (LABEL_LIVE if live else LABEL_FIXTURE), live
+
+
 def score_candidate(customer: dict[str, Any], locations: list[dict[str, Any]], identifiers: dict[str, Any]) -> dict[str, Any]:
-    hits = []
+    hits: list[str] = []
     score = 0
     emails = {item.lower() for item in identifiers.get("emails") or []}
     cust_email = str(customer.get("email") or customer.get("billing_email") or "").lower()
@@ -100,35 +148,57 @@ def score_candidate(customer: dict[str, Any], locations: list[dict[str, Any]], i
         score += 40
         hits.append("email")
     phones = set(identifiers.get("phones") or [])
-    for raw in [customer.get("phone"), customer.get("billing_phone"), *((customer.get("phones") or []) if isinstance(customer.get("phones"), list) else [])]:
+    phone_values = [customer.get("phone"), customer.get("billing_phone")]
+    if isinstance(customer.get("phones"), list):
+        phone_values.extend(customer.get("phones") or [])
+    for contact in customer.get("contacts") or []:
+        if isinstance(contact, dict):
+            phone_values.append(contact.get("phone"))
+            contact_email = str(contact.get("email") or "").lower()
+            if contact_email and contact_email in emails and "email" not in hits:
+                score += 40
+                hits.append("email")
+    for raw in phone_values:
         num = digits(str(raw or ""))
         if num and num in phones:
             score += 35
             hits.append("phone")
             break
+    best_loc_score = 0
+    best_loc_hits: list[str] = []
     for loc in locations:
+        loc_score = 0
+        loc_hits: list[str] = []
         loc_email = str(loc.get("email") or "").lower()
-        if loc_email and loc_email in emails and "email" not in hits:
-            score += 40
-            hits.append("email")
-        loc_phone = digits(str((loc.get("address") or {}).get("phone") if isinstance(loc.get("address"), dict) else loc.get("phone") or ""))
-        if loc_phone and loc_phone in phones and "phone" not in hits:
-            score += 35
-            hits.append("phone")
+        if loc_email and loc_email in emails:
+            loc_score += 40
+            loc_hits.append("email")
+        addr = loc.get("address") if isinstance(loc.get("address"), dict) else {}
+        loc_phone = digits(str((addr or {}).get("phone") if addr else loc.get("phone") or ""))
+        if loc_phone and loc_phone in phones:
+            loc_score += 35
+            loc_hits.append("phone")
         blob = _addr_blob(loc)
-        for addr in identifiers.get("addresses") or []:
-            street = str(addr.get("street") or "").lower()
-            city = str(addr.get("city") or "").lower()
-            zipc = str(addr.get("zip") or "")
-            if street and street.split()[0] in blob and any(part in blob for part in street.split()[1:2]):
-                score += 20
-                hits.append("street")
+        for addr_id in identifiers.get("addresses") or []:
+            street = str(addr_id.get("street") or "").lower()
+            city = str(addr_id.get("city") or "").lower()
+            zipc = str(addr_id.get("zip") or "")
+            if street and street_matches(street, blob):
+                loc_score += 20
+                loc_hits.append("street")
                 if city and city in blob:
-                    score += 10
-                    hits.append("city")
+                    loc_score += 10
+                    loc_hits.append("city")
                 if zipc and zipc in blob:
-                    score += 10
-                    hits.append("zip")
+                    loc_score += 10
+                    loc_hits.append("zip")
+        if loc_score > best_loc_score:
+            best_loc_score = loc_score
+            best_loc_hits = loc_hits
+    score += best_loc_score
+    for hit in best_loc_hits:
+        if hit not in hits:
+            hits.append(hit)
     name = str(customer.get("name") or "").strip().lower()
     for reported in identifiers.get("names") or []:
         if reported.lower() and reported.lower() == name:
@@ -171,11 +241,15 @@ def location_for(best: dict[str, Any], identifiers: dict[str, Any]) -> dict[str,
     addresses = identifiers.get("addresses") or []
     if not addresses:
         return None
+    street = str(addresses[0].get("street") or "").lower()
+    if not street:
+        return None
+    full_hits = []
     for loc in locations:
-        blob = _addr_blob(loc)
-        street = str(addresses[0].get("street") or "").lower()
-        if street and street.split()[0] in blob:
-            return loc
+        if street_matches(street, _addr_blob(loc)):
+            full_hits.append(loc)
+    if len(full_hits) == 1:
+        return full_hits[0]
     return None
 
 
@@ -189,23 +263,126 @@ def office_hold(notes: list[dict[str, Any]], customer: dict[str, Any]) -> dict[s
     return None
 
 
+def _wo_customer_id(work_order: dict[str, Any]) -> str | None:
+    raw = work_order.get("customer_id") or work_order.get("customer")
+    if isinstance(raw, dict):
+        raw = raw.get("id")
+    if raw is None or str(raw).strip() == "":
+        return None
+    return str(raw)
+
+
+def scope_work_orders(rows: list[dict[str, Any]], customer_id: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if not rows:
+        return [], {"ok": True, "foreign": 0, "unscoped": 0, "reason": None}
+    scoped = []
+    foreign = 0
+    unscoped = 0
+    for wo in rows:
+        wo_cid = _wo_customer_id(wo)
+        if wo_cid is None:
+            unscoped += 1
+            continue
+        if wo_cid != str(customer_id):
+            foreign += 1
+            continue
+        scoped.append(wo)
+    if unscoped == len(rows):
+        return [], {"ok": False, "foreign": foreign, "unscoped": unscoped, "reason": "work_orders_unscoped"}
+    return scoped, {"ok": True, "foreign": foreign, "unscoped": unscoped, "reason": None}
+
+
+def _compact_work_order(wo: dict[str, Any]) -> dict[str, Any]:
+    status = str(wo.get("status") or wo.get("state") or "").lower()
+    return {
+        "id": wo.get("id"),
+        "status": wo.get("status") or wo.get("state"),
+        "starts_at": wo.get("starts_at") or wo.get("start_time"),
+        "ends_at": wo.get("ends_at"),
+        "technician": wo.get("technician"),
+        "amount": wo.get("amount"),
+        "service": wo.get("service") or wo.get("name"),
+        "location_id": wo.get("service_location_id") or wo.get("location_id"),
+        "sold": bool(wo.get("sold")),
+        "scheduled": bool(wo.get("scheduled") or status in {"scheduled", "confirmed", "dispatched"}),
+        "completed": bool(wo.get("completed") or status in {"completed", "done", "finished"}),
+    }
+
+
 def match_and_context(client: ReadOnlyFieldworkClient, receipt: dict[str, Any]) -> dict[str, Any]:
     identifiers = extract_identifiers(receipt)
     found: dict[str, dict[str, Any]] = {}
-    searches = []
+    searches: list[dict[str, Any]] = []
+    search_state = "ok"
+    search_reason: str | None = None
+    source_label, live = _client_provenance(client)
+    snapshot = getattr(client, "snapshot_meta", lambda: {})()
+    omitted: dict[str, Any] = {}
 
-    def remember(rows: list[dict[str, Any]], via: str) -> None:
-        searches.append({"via": via, "count": len(rows)})
-        for row in rows:
+    def mark_search(fetched: ListFetch, via: str) -> None:
+        nonlocal search_state, search_reason
+        searches.append(
+            {
+                "via": via,
+                "count": len(fetched) if fetched.ok else 0,
+                "ok": fetched.ok,
+                "incomplete": fetched.incomplete,
+                "truncated": fetched.truncated,
+                "reason": fetched.reason,
+            }
+        )
+        if not fetched.ok:
+            search_state = "blocked"
+            search_reason = fetched.reason or "read_failed"
+            return
+        if fetched.incomplete or fetched.truncated:
+            if search_state == "ok":
+                search_state = "incomplete"
+                search_reason = fetched.reason or "pagination_truncated"
+
+    def remember(result: Any, via: str) -> None:
+        fetched = as_fetch(result)
+        mark_search(fetched, via)
+        if not fetched.ok:
+            return
+        for row in fetched:
             cid = _customer_id(row)
             if cid:
                 found[cid] = row
+
+    def base_evidence(status: str, confidence: str, reason: str | None) -> dict[str, Any]:
+        return {
+            "status": status,
+            "confidence": confidence,
+            "reason": reason,
+            "identifiers": identifiers,
+            "searches": searches,
+            "retrieved_at": utc_now(),
+            "write_attempted": False,
+            "client_write_attempts": client.write_attempts,
+            "customer_id": None,
+            "location_id": None,
+            "active_agreement": None,
+            "upcoming_work_orders": [],
+            "last_service": None,
+            "office_context": None,
+            "source_label": source_label,
+            "live": live,
+            "omitted": omitted,
+            "proposed_write": snapshot.get("proposed_write"),
+            "customer_email_reported_sent": bool(snapshot.get("customer_email_reported_sent")),
+            "snapshot_booking_state": snapshot.get("booking_state"),
+        }
+
+    if not _has_identifiers(identifiers):
+        return redact(base_evidence(MATCH_INSUFFICIENT, "none", "insufficient_identifiers"))
 
     for email in identifiers.get("emails") or []:
         remember(client.search_customers(email), f"email:{email}")
     for phone in identifiers.get("phones") or []:
         remember(client.search_customers_by_phone(phone), f"phone:{phone}")
-        if phone not in {item.split(":")[-1] for item in [s["via"] for s in searches if s["via"].startswith("phone")]}:
+        remembered_phones = {item.split(":")[-1] for item in [s["via"] for s in searches if s["via"].startswith("phone")]}
+        if phone not in remembered_phones:
             remember(client.search_customers(phone), f"phone_query:{phone}")
     for addr in identifiers.get("addresses") or []:
         query = " ".join(part for part in (addr.get("street"), addr.get("city"), addr.get("zip")) if part)
@@ -214,88 +391,98 @@ def match_and_context(client: ReadOnlyFieldworkClient, receipt: dict[str, Any]) 
     for name in identifiers.get("names") or []:
         remember(client.search_customers(name), f"name:{name}")
 
+    if search_state == "blocked":
+        return redact(base_evidence(MATCH_BLOCKED, "none", search_reason))
+    if search_state == "incomplete" and not found:
+        return redact(base_evidence(MATCH_INCOMPLETE, "none", search_reason))
+
     scored = []
     for customer in found.values():
         cid = _customer_id(customer)
-        detail = client.get_customer(cid) or customer
-        locations = client.list_locations(cid)
-        contacts = client.list_contacts(cid)
-        detail = {**detail, "contacts": contacts}
-        scored.append(score_candidate(detail, locations, identifiers))
+        try:
+            detail = client.get_customer(cid)
+        except FieldworkReadError as exc:
+            return redact(base_evidence(MATCH_BLOCKED, "none", exc.reason))
+        except Exception as exc:  # noqa: BLE001
+            return redact(base_evidence(MATCH_BLOCKED, "none", type(exc).__name__))
+        locations = as_fetch(client.list_locations(cid))
+        contacts = as_fetch(client.list_contacts(cid))
+        if not locations.ok or not contacts.ok:
+            return redact(base_evidence(MATCH_BLOCKED, "none", locations.reason or contacts.reason))
+        if locations.incomplete:
+            omitted["locations"] = locations.reason or "pagination_truncated"
+        detail = {**detail, "contacts": list(contacts)}
+        scored.append(score_candidate(detail, list(locations), identifiers))
 
     decision = classify(scored)
-    retrieved = utc_now()
-    snapshot = getattr(client, "snapshot_meta", lambda: {})()
-    evidence: dict[str, Any] = {
-        "status": decision["status"],
-        "confidence": decision["confidence"],
-        "reason": decision.get("reason"),
-        "identifiers": identifiers,
-        "searches": searches,
-        "retrieved_at": retrieved,
-        "write_attempted": False,
-        "client_write_attempts": client.write_attempts,
-        "customer_id": None,
-        "location_id": None,
-        "active_agreement": None,
-        "upcoming_work_orders": [],
-        "last_service": None,
-        "office_context": None,
-        "source_label": LABEL_FIXTURE,
-        "live": False,
-        "proposed_write": snapshot.get("proposed_write"),
-        "customer_email_reported_sent": bool(snapshot.get("customer_email_reported_sent")),
-        "snapshot_booking_state": snapshot.get("booking_state"),
-    }
+    if search_state == "incomplete" and decision["status"] == MATCH_NONE:
+        return redact(base_evidence(MATCH_INCOMPLETE, "none", search_reason))
+    if omitted.get("locations") and decision["status"] == MATCH_NONE:
+        return redact(base_evidence(MATCH_INCOMPLETE, "none", omitted["locations"]))
+
+    evidence = base_evidence(decision["status"], decision.get("confidence") or "none", decision.get("reason"))
     if decision["status"] in {MATCH_EXISTING, MATCH_FORMER}:
         best = decision["best"]
         customer = best["customer"]
         loc = location_for(best, identifiers)
         cid = _customer_id(customer)
-        notes = client.list_notes(cid)
-        wos = []
-        try:
-            wos = client.search_work_orders(**{"filter[customer_id]": cid})
-        except Exception:
-            wos = []
-        agreements = []
-        try:
-            agreements = client.list_agreements(**{"filter[customer_id]": cid})
-        except Exception:
-            agreements = []
+        notes = as_fetch(client.list_notes(cid))
+        if not notes.ok:
+            omitted["notes"] = notes.reason or "read_failed"
+            note_rows: list[dict[str, Any]] = []
+        else:
+            if notes.incomplete:
+                omitted["notes"] = notes.reason or "pagination_truncated"
+            note_rows = list(notes)
+        wos_fetch = as_fetch(client.search_work_orders(**{"filter[customer_id]": cid}))
+        if not wos_fetch.ok:
+            omitted["work_orders"] = wos_fetch.reason or "read_failed"
+            wos: list[dict[str, Any]] = []
+        else:
+            wos, wo_meta = scope_work_orders(list(wos_fetch), cid)
+            if not wo_meta["ok"]:
+                omitted["work_orders"] = wo_meta["reason"]
+                wos = []
+            elif wos_fetch.incomplete or wos_fetch.truncated:
+                omitted["work_orders"] = wos_fetch.reason or "pagination_truncated"
+        agreements = as_fetch(client.list_agreements(**{"filter[customer_id]": cid}))
+        if not agreements.ok:
+            omitted["agreements"] = agreements.reason or "read_failed"
+            agr_rows: list[dict[str, Any]] = []
+        else:
+            if agreements.incomplete:
+                omitted["agreements"] = agreements.reason or "pagination_truncated"
+            agr_rows = list(agreements)
+        estimates = as_fetch(client.list_estimates(**{"filter[customer_id]": cid}))
+        if not estimates.ok:
+            omitted["estimates"] = estimates.reason or "read_failed"
+        elif estimates.incomplete:
+            omitted["estimates"] = estimates.reason or "pagination_truncated"
         upcoming = []
         last = None
         for wo in wos:
-            status = str(wo.get("status") or wo.get("state") or "").lower()
-            compact = {
-                "id": wo.get("id"),
-                "status": wo.get("status") or wo.get("state"),
-                "starts_at": wo.get("starts_at") or wo.get("start_time"),
-                "ends_at": wo.get("ends_at"),
-                "technician": wo.get("technician"),
-                "amount": wo.get("amount"),
-                "service": wo.get("service") or wo.get("name"),
-                "location_id": wo.get("service_location_id") or wo.get("location_id"),
-                "sold": bool(wo.get("sold")),
-                "scheduled": bool(wo.get("scheduled") or status in {"scheduled", "confirmed", "dispatched"}),
-                "completed": bool(wo.get("completed") or status in {"completed", "done", "finished"}),
-            }
+            compact = _compact_work_order(wo)
+            status = str(compact.get("status") or "").lower()
             if compact["completed"]:
                 last = compact
             elif status not in {"cancelled", "canceled"}:
                 upcoming.append(compact)
         active = None
-        for agr in agreements:
-            name = str(agr.get("name") or agr.get("service") or agr.get("agreement") or "")
-            status = str(agr.get("status") or agr.get("state") or "").lower()
-            if "pestguard" in name.lower() or status in {"active", "current"}:
-                active = {"name": name or "service_agreement", "status": agr.get("status") or agr.get("state")}
-                break
-        booking = booking_state_from_records(
-            upcoming + ([last] if last else []),
-            proposed_write=evidence.get("proposed_write"),
-            snapshot_state=evidence.get("snapshot_booking_state"),
-        )
+        if "agreements" not in omitted:
+            for agr in agr_rows:
+                name = str(agr.get("name") or agr.get("service") or agr.get("agreement") or "")
+                status = str(agr.get("status") or agr.get("state") or "").lower()
+                if "pestguard" in name.lower() or status in {"active", "current"}:
+                    active = {"name": name or "service_agreement", "status": agr.get("status") or agr.get("state")}
+                    break
+        if "work_orders" in omitted:
+            booking = None
+        else:
+            booking = booking_state_from_records(
+                upcoming + ([last] if last else []),
+                proposed_write=evidence.get("proposed_write"),
+                snapshot_state=evidence.get("snapshot_booking_state"),
+            )
         evidence.update(
             {
                 "customer_id": cid,
@@ -313,11 +500,17 @@ def match_and_context(client: ReadOnlyFieldworkClient, receipt: dict[str, Any]) 
                 "active_agreement": active,
                 "upcoming_work_orders": upcoming[:5],
                 "last_service": last,
-                "office_context": office_hold(notes, customer),
+                "estimates_count": len(estimates) if estimates.ok else None,
+                "office_context": office_hold(note_rows, customer) if "notes" not in omitted or note_rows else None,
                 "contacts": [
-                    {"name": " ".join(str(c.get(k) or "") for k in ("first_name", "last_name")).strip() or c.get("name"), "email": c.get("email"), "relationship": c.get("description") or c.get("title")}
+                    {
+                        "name": " ".join(str(c.get(k) or "") for k in ("first_name", "last_name")).strip() or c.get("name"),
+                        "email": c.get("email"),
+                        "relationship": c.get("description") or c.get("title"),
+                    }
                     for c in (customer.get("contacts") or [])[:6]
                 ],
+                "omitted": omitted,
             }
         )
         evidence["draft_guidance"] = draft_booking_guidance(evidence)
@@ -325,6 +518,10 @@ def match_and_context(client: ReadOnlyFieldworkClient, receipt: dict[str, Any]) 
             evidence["status"] = MATCH_AMBIGUOUS
             evidence["confidence"] = "low"
             evidence["reason"] = "multiple_locations_unresolved"
+        if omitted.get("locations") and evidence["location_count"] <= 1 and not evidence["location_id"]:
+            evidence["status"] = MATCH_INCOMPLETE
+            evidence["confidence"] = "none"
+            evidence["reason"] = omitted["locations"]
     elif decision["status"] == MATCH_AMBIGUOUS:
         evidence["candidates"] = [
             {

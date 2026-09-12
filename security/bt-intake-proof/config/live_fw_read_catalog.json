@@ -1,0 +1,109 @@
+{
+  "mode": "live_fw_read_synthetic",
+  "label": "FIELDWORK_FIXTURE_VERIFIED",
+  "not_live": true,
+  "note": "Synthetic catalog for bounded live-read tests. Not live HQ. Not the authorized real-customer set.",
+  "default_snapshot": "pre_booking",
+  "snapshots": {
+    "pre_booking": {
+      "booking_state": "no_work_order",
+      "customer_email_reported_sent": false,
+      "proposed_write": null
+    }
+  },
+  "customers": [
+    {
+      "id": 77001,
+      "fixture_id": "LIVE-FW-SYN-MULTI-PROP",
+      "name": "Shelley Fixture",
+      "email": "shelley.fixture.syn@example.com",
+      "phone": "9105557701",
+      "customer_status": "active",
+      "locations": [
+        {
+          "id": 66001,
+          "name": "Oak A",
+          "address": {"street": "14 Oak Street", "city": "Holly Ridge", "state": "NC", "zip": "28445", "phone": "9105557701"}
+        },
+        {
+          "id": 66002,
+          "name": "Oak B",
+          "address": {"street": "214 Oak Street", "city": "Holly Ridge", "state": "NC", "zip": "28445", "phone": "9105557702"}
+        }
+      ],
+      "contacts": [
+        {"first_name": "Shelley", "last_name": "Fixture", "email": "shelley.fixture.syn@example.com", "description": "primary"},
+        {"first_name": "Pat", "last_name": "Payer", "email": "pat.payer.syn@example.com", "description": "billing"}
+      ],
+      "agreements": [
+        {
+          "id": 55001,
+          "name": "PestGuard",
+          "status": "Active",
+          "service_location_id": 66001,
+          "appointments": [
+            {"id": 22001, "status": "scheduled", "starts_at": "2026-10-01T10:00:00-04:00"}
+          ]
+        }
+      ],
+      "estimates": [{"id": 44001, "status": "sent", "customer_id": 77001}],
+      "notes": "Synthetic multi-property fixture. Alternate billing contact present.",
+      "work_orders": [
+        {
+          "id": 33001,
+          "status": "completed",
+          "completed": true,
+          "scheduled": false,
+          "sold": false,
+          "service": "quarterly",
+          "service_location_id": 66001,
+          "starts_at": "2026-03-01T10:00:00-04:00",
+          "customer_id": 77001
+        }
+      ]
+    },
+    {
+      "id": 77002,
+      "fixture_id": "LIVE-FW-SYN-ALT-PAYER",
+      "name": "Jordan Fixture",
+      "email": "jordan.fixture.syn@example.com",
+      "phone": "9105557703",
+      "customer_status": "active",
+      "locations": [
+        {
+          "id": 66003,
+          "name": "Pine",
+          "address": {"street": "88 Pine Drive", "city": "Hampstead", "state": "NC", "zip": "28443", "phone": "9105557703"}
+        }
+      ],
+      "contacts": [
+        {"first_name": "Jordan", "last_name": "Fixture", "description": "primary"},
+        {"first_name": "Riley", "last_name": "Billpay", "email": "riley.billpay.syn@example.com", "description": "payer"}
+      ],
+      "agreements": [{"id": 55002, "name": "PestGuard", "status": "Active"}],
+      "estimates": [],
+      "notes": "",
+      "work_orders": []
+    },
+    {
+      "id": 77003,
+      "fixture_id": "LIVE-FW-SYN-UNKNOWN-STATUS",
+      "name": "Mariah Fixture",
+      "email": "mariah.fixture.syn@example.com",
+      "phone": "9105557704",
+      "customer_status": null,
+      "locations": [
+        {
+          "id": 66004,
+          "name": "Elm",
+          "address": {"street": "5 Elm Court", "city": "Jacksonville", "state": "NC", "zip": "28540", "phone": "9105557704"}
+        }
+      ],
+      "contacts": [],
+      "agreements": [],
+      "estimates": [],
+      "notes": "",
+      "work_orders": []
+    }
+  ]
+}

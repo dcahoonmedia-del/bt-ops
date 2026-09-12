@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "mode": "example_not_live",
+  "live": false,
+  "source_label": "FIELDWORK_FIXTURE_VERIFIED",
+  "max_real_cases": 3,
+  "max_ambiguity_probes": 2,
+  "max_synthetic_no_match": 1,
+  "date_window_days": 365,
+  "note": "Example only. Host resolve writes the private manifest with native IDs. Do not commit live IDs or customer content.",
+  "scenarios": [
+    {
+      "key": "authorized_case_1",
+      "kind": "authorized_identity",
+      "customer_id": 77001,
+      "location_id": 66001
+    },
+    {
+      "key": "authorized_case_2",
+      "kind": "authorized_identity",
+      "customer_id": 77002,
+      "location_id": 66003
+    },
+    {
+      "key": "authorized_case_3",
+      "kind": "authorized_identity",
+      "customer_id": 77003,
+      "location_id": 66004
+    },
+    {
+      "key": "ambiguity_probe_1",
+      "kind": "ambiguity_multi_property",
+      "customer_id": 77001,
+      "omit_street": true,
+      "expect": "ambiguous_match_needs_daniel"
+    },
+    {
+      "key": "ambiguity_probe_2",
+      "kind": "ambiguity_street_number",
+      "customer_id": 77001,
+      "street_number_only": true,
+      "expect": "ambiguous_match_needs_daniel"
+    },
+    {
+      "key": "synthetic_no_match",
+      "kind": "synthetic_no_match",
+      "query": "ZZZ-NO-CUSTOMER-PROOF-9F3A",
+      "expect": "no_match_after_multi_identifier_search"
+    }
+  ]
+}

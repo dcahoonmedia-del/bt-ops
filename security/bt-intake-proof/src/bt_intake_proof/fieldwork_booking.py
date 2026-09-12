@@ -75,7 +75,7 @@ def operational_context(evidence: dict[str, Any]) -> dict[str, Any]:
     pipeline = evidence.get("pipeline") or {}
     return {
         "source_label": evidence.get("source_label") or LABEL_FIXTURE,
-        "live": False,
+        "live": bool(evidence.get("live")),
         "identity_kind": evidence.get("identity_kind") or ("pipeline_lead" if pipeline else "customer"),
         "customer_id": evidence.get("customer_id"),
         "pipeline_lead_id": pipeline.get("lead_id"),
