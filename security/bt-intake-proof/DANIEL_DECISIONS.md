@@ -1,8 +1,8 @@
 # Next for Daniel — send the new-message proof email
 
-Token Creator, impersonation, and subscriber pull are PASS. No JSON key was created.
+Token Creator, impersonation, and subscriber pull are PASS. The receiver is running. No JSON key was created.
 
-Wait until I say the receiver is running, then send **one** new email:
+Send **one** new email now:
 
 - From: `daniel@btpestcontrol.com`
 - To: `contactus@btpestcontrol.com`
