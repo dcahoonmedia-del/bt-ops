@@ -1,20 +1,25 @@
-# Plus-address control transport
+# Plus-address private-control loop
 
 Internal Lead Desk **draft revision** may use:
 
 `daniel@btpestcontrol.com` → `daniel+lead-desk@btpestcontrol.com`
 
+After a later host activation, Cloud Work reads one combined result at:
+
+`daniel+lead-desk-results@btpestcontrol.com`
+
 The contactus@ path remains authorized and unchanged, including hold,
-office ownership, and `approve_and_send_current`.
+office ownership, and `approve_and_send_current`. Plus-path traffic
+never uses contactus@ for control or result mail.
 
 This plus-address milestone authorizes `revise_draft` only. Other
 intents fail `plus_intent_not_in_milestone`.
 
 ## Live identity
 
-Production `desk-plus-control` always:
+Production fetch always:
 
-1. Calls Gmail `users.getProfile` through the current token
+1. Calls Gmail `users.getProfile` through the current Daniel readonly token
 2. Requires the profile email to be exactly `daniel@btpestcontrol.com`
 3. Fetches the requested message
 4. Requires the returned Gmail id to equal the requested id
@@ -30,40 +35,71 @@ Cc and Bcc must add no other recipients.
 
 ## Freshness
 
-Contactus@ compares daniel@ Sent time to contactus inbound received
-time and allows 15 minutes of slack.
-
 Plus-address compares Gmail `internalDate` to processing time (test
-clock injected) and allows the same 15-minute window. Absent, invalid,
-future (beyond 60s skew), or expired `internalDate` fails. An unchanged
-draft/nonce is not indefinite approval. Cached verified outcomes may be
-reread without re-execution. Already-sent live controls are not
-grandfathered.
+clock injected) and allows 15 minutes. Absent, invalid, future
+(beyond 60s skew), or expired `internalDate` fails. Cached verified
+outcomes may be reread. Already-sent live controls are not
+grandfathered. Never process `1a0979e37a0b0a94`.
 
-## Automation and result gaps
+## Automatic discovery
 
-There is **no** automatic Daniel discovery or watch path. The contactus
-receiver does not read this mailbox. There is no plus-address
-label-added or history recovery. `search_plus_controls_in_daniel_sent`
-is a manual helper, not a poller.
+A small systemd **timer/oneshot**, installed **disabled**, polls Daniel
+Gmail history with `messageAdded` and `labelAdded`. It uses the
+existing Daniel readonly credential only. It does not add Pub/Sub and
+does not change contactus `users.watch` / `watch_cursors`.
 
-`desk-plus-control` is a manual CLI. That is not end-to-end automation.
+Discovery is limited to the existing `B&T Lead Desk/Control` label plus
+the exact sender/recipient subset. Search is `in:sent` plus that label;
+archive/filtering must not hide controls. Results mailbox/label and
+`BT-INTAKE-PROOF-PLUS-RESULT-E9A8` are excluded to prevent loops.
 
-Plus-path processing does not enqueue contactus@ result or CASE mail,
-so it does not create contactus noise and also leaves **no Work-visible
-completion channel**. Work cannot retrieve a saved plus-path result
-from a new packet on this path. Do not invent result-send permissions
-or another route in this milestone.
+History is paginated. The Daniel cursor key is
+`daniel@btpestcontrol.com/plus-control`. Repeated or reordered events
+are deduped in `plus_control_seen`. After history expiration, a bounded
+SENT+Control reconcile (25 messages) runs. Unrelated bodies are not
+stored.
 
-Gmail filters were not changed. No deploy artifact is produced while
-deployment is held.
+Each candidate is independently re-checked (raw envelope, live profile,
+message id, freshness, case/version/body/inbound, single-use) before
+execution.
 
-## Offline proof
+## Atomic save and one result
 
-`PYTHONPATH=src python3 -m unittest tests.test_desk_plus_control` → 22 passed.
+A successful revise consumes the nonce and writes **one** durable
+`plus_combined` result intent in the same SQLite transaction. Retries
+do not save twice. The result combines the spoken outcome, the updated
+draft, and the fresh backend packet binding. It is not a contactus
+result plus a separate CASE email.
 
-`PYTHONPATH=src python3 -m unittest discover -s tests` → 264 passed, 1 skipped.
+If the plus-result sender is not configured, processing is blocked and
+the decision is not consumed.
 
-See `tests/test_desk_plus_control.py` for envelope, profile/id, freshness,
-revise-only, and contactus@ regression coverage. No deploy artifact;
-deployment is held.
+## Result sender
+
+From `daniel@btpestcontrol.com`, sole To
+`daniel+lead-desk-results@btpestcontrol.com`, no Cc/Bcc, backend
+content only. Credential reference:
+`BT_DANIEL_PLUS_RESULT_SEND_TOKEN` /
+`secrets/daniel_plus_result_send_token.json`.
+
+That file is not created by this assignment. The readonly token is not
+widened. contactus send/readonly tokens are not fallbacks.
+
+Gmail `users.messages.send` is not exactly-once from the client view.
+Unknown or timeout outcomes stay `unknown` until provider SENT records
+are reconciled. This path does not claim exactly-once delivery.
+
+## Preflight
+
+`python3 -m bt_intake_proof desk-plus-preflight` reports the live
+Daniel profile, required labels where listable, filter accessibility
+without requesting `gmail.settings`, discovery readiness, sender
+readiness, and activation blockers. It does not recreate or change
+Daniel's filters, routing, labels, or permissions.
+
+## What this assignment does not do
+
+- No live mail send
+- No GCE deploy
+- No new OAuth grant
+- No Fieldwork / LSA / CTM / scheduling / customer send / Grok cutover

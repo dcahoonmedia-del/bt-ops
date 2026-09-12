@@ -696,6 +696,55 @@ def consume_binding(layer: CaseLayer, parsed: dict[str, Any], *, gmail_message_i
     )
 
 
+def _record_plus_terminal_result(
+    layer: CaseLayer,
+    result: dict[str, Any],
+    *,
+    gmail_message_id: str | None,
+    nonce: str | None = None,
+    binding: dict[str, Any] | None = None,
+    draft_text: str = "",
+) -> None:
+    from .desk_plus_result_send import persist_plus_result_intent
+
+    result["control_gmail_id"] = gmail_message_id
+    result["nonce"] = nonce or result.get("nonce")
+    result["transport"] = TRANSPORT_PLUS
+    persist_plus_result_intent(layer, result, binding=binding, draft_text=draft_text)
+
+
+def _commit_plus_success(
+    layer: CaseLayer,
+    applied: dict[str, Any],
+    parsed: dict[str, Any],
+    *,
+    gmail_message_id: str | None,
+) -> None:
+    """Persist consume+revise already in this transaction plus one combined result."""
+    case_id = str(applied.get("case_id") or parsed.get("case_id") or "")
+    fresh_case = layer.get_case(case_id) or {}
+    fresh_draft = layer.latest_draft(case_id) or {}
+    binding = compute_packet_binding(fresh_case, fresh_draft) if fresh_case else None
+    applied["control_gmail_id"] = gmail_message_id
+    applied["nonce"] = parsed.get("nonce") or applied.get("nonce")
+    applied["intent"] = applied.get("intent") or parsed.get("intent")
+    applied["transport"] = TRANSPORT_PLUS
+    applied["execute_send"] = False
+    applied["send_queued"] = False
+    applied["draft_version"] = applied.get("draft_version") or fresh_draft.get("version")
+    applied["human"] = f"Draft updated to v{applied.get('draft_version')}. Nothing sent."
+    applied["binding"] = binding
+    _record_plus_terminal_result(
+        layer,
+        applied,
+        gmail_message_id=gmail_message_id,
+        nonce=applied.get("nonce"),
+        binding=binding,
+        draft_text=str(fresh_draft.get("proposed_response") or ""),
+    )
+    _mark_inbox(layer, gmail_message_id, {k: v for k, v in applied.items() if k != "result_email"})
+
+
 def _send_kwargs(layer: CaseLayer, case: dict[str, Any], draft: dict[str, Any]) -> dict[str, Any]:
     binding = desk_binding_from_case(layer, case["case_id"])
     return {
@@ -843,19 +892,26 @@ def _finish_control_result(
     nonce: str | None = None,
     enqueue: bool = True,
     transport: str | None = None,
+    mark_processed: bool = True,
 ) -> dict[str, Any]:
     result["control_gmail_id"] = gmail_message_id
     result["nonce"] = nonce or result.get("nonce")
     if transport:
         result["transport"] = transport
-    result["result_email"] = format_result_email(result)
+    if transport == TRANSPORT_PLUS:
+        from .desk_plus_result_send import format_plus_combined_result
+
+        result.setdefault("result_email", format_plus_combined_result(result, binding=result.get("binding")))
+    else:
+        result["result_email"] = format_result_email(result)
     result["human_mail_deferred"] = False
     if enqueue and gmail_message_id:
         if _defer_human_mail(result):
             result["human_mail_deferred"] = True
         else:
             enqueue_control_deliveries(layer, result)
-    _mark_inbox(layer, gmail_message_id, {k: v for k, v in result.items() if k != "result_email"})
+    if mark_processed:
+        _mark_inbox(layer, gmail_message_id, {k: v for k, v in result.items() if k != "result_email"})
     return result
 
 
@@ -928,7 +984,14 @@ def process_control_mail(
                 return _finish_control_result(
                     layer, result, gmail_message_id=gmail_message_id, enqueue=enqueue_deliveries
                 )
-            cached["result_email"] = format_result_email(cached)
+            if chosen == TRANSPORT_PLUS:
+                from .desk_plus_result_send import format_plus_combined_result
+
+                cached["result_email"] = cached.get("result_email") or format_plus_combined_result(
+                    cached, binding=cached.get("binding")
+                )
+            else:
+                cached["result_email"] = format_result_email(cached)
             cached["replayed"] = True
             cached["transport"] = chosen
             return cached
@@ -1017,6 +1080,27 @@ def process_control_mail(
             enqueue=False,
             transport=chosen,
         )
+    if chosen == TRANSPORT_PLUS:
+        from .desk_plus_result_send import REASON_CHANNEL_NOT_READY, plus_result_channel_ready
+
+        ready = plus_result_channel_ready()
+        if not ready.get("ready"):
+            result = _fail(
+                REASON_CHANNEL_NOT_READY,
+                intent=parsed.get("intent"),
+                transport=chosen,
+                human="The private result channel is not ready. I did not change the case.",
+                activation_blocker=ready.get("blocker"),
+            )
+            return _finish_control_result(
+                layer,
+                result,
+                gmail_message_id=gmail_message_id,
+                nonce=parsed.get("nonce"),
+                enqueue=False,
+                transport=chosen,
+                mark_processed=False,
+            )
 
     if gmail_message_id:
         persist_origin_proof(layer, inspection.get("inbound") or inbound_preview, inspection.get("origin") or {})
@@ -1058,6 +1142,8 @@ def process_control_mail(
             human="That action is stale or blocked. I did not change the case.",
             transport=chosen,
         )
+        if chosen == TRANSPORT_PLUS:
+            _record_plus_terminal_result(layer, result, gmail_message_id=gmail_message_id, nonce=parsed.get("nonce"))
         return _finish_control_result(
             layer,
             result,
@@ -1083,6 +1169,8 @@ def process_control_mail(
                 human="That action is stale or blocked. I did not change the case.",
                 transport=chosen,
             )
+            if chosen == TRANSPORT_PLUS:
+                _record_plus_terminal_result(layer, result, gmail_message_id=gmail_message_id, nonce=parsed.get("nonce"))
             return _finish_control_result(
                 layer,
                 result,
@@ -1103,6 +1191,8 @@ def process_control_mail(
                 human="That action is stale or blocked. I did not change the case.",
                 transport=chosen,
             )
+            if chosen == TRANSPORT_PLUS:
+                _record_plus_terminal_result(layer, result, gmail_message_id=gmail_message_id, nonce=parsed.get("nonce"))
             return _finish_control_result(
                 layer,
                 result,
@@ -1117,6 +1207,8 @@ def process_control_mail(
             applied.setdefault("intent", parsed["intent"])
             applied.setdefault("case_id", parsed.get("case_id"))
             applied.setdefault("transport", chosen)
+            if chosen == TRANSPORT_PLUS:
+                _record_plus_terminal_result(layer, applied, gmail_message_id=gmail_message_id, nonce=parsed.get("nonce"))
             return _finish_control_result(
                 layer,
                 applied,
@@ -1125,6 +1217,13 @@ def process_control_mail(
                 enqueue=enqueue_deliveries,
                 transport=chosen,
             )
+        if chosen == TRANSPORT_PLUS:
+            try:
+                _commit_plus_success(layer, applied, parsed, gmail_message_id=gmail_message_id)
+            except Exception:
+                if layer.conn.in_transaction:
+                    layer.conn.execute("ROLLBACK")
+                raise
         if layer.conn.in_transaction:
             layer.conn.execute("COMMIT")
     except sqlite3.OperationalError:
@@ -1141,14 +1240,17 @@ def process_control_mail(
     applied.setdefault("send_queued", False)
     applied.setdefault("transport", chosen)
     applied["draft_version"] = applied.get("draft_version") or draft.get("version")
-    applied.setdefault(
-        "human",
-        _human_success(
-            parsed["intent"],
-            owner=applied.get("owner") or parsed.get("owner"),
-            version=applied.get("draft_version"),
-        ),
-    )
+    if chosen == TRANSPORT_PLUS and parsed["intent"] == PLUS_MILESTONE_INTENT:
+        applied["human"] = f"Draft updated to v{applied.get('draft_version')}. Nothing sent."
+    else:
+        applied.setdefault(
+            "human",
+            _human_success(
+                parsed["intent"],
+                owner=applied.get("owner") or parsed.get("owner"),
+                version=applied.get("draft_version"),
+            ),
+        )
     return _finish_control_result(
         layer,
         applied,
@@ -1156,6 +1258,7 @@ def process_control_mail(
         nonce=parsed.get("nonce"),
         enqueue=enqueue_deliveries,
         transport=chosen,
+        mark_processed=chosen != TRANSPORT_PLUS,
     )
 
 

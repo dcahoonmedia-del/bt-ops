@@ -19,6 +19,7 @@ PRESERVE_KEYS = (
     "CODEX_API_KEY",
     "PYTHONPATH",
     "BT_DANIEL_GMAIL_TOKEN",
+    "BT_DANIEL_PLUS_RESULT_SEND_TOKEN",
 )
 
 FORBIDDEN_KEYS = (
@@ -68,6 +69,10 @@ def merge_desk_roundtrip_env(
     merged.setdefault("BT_GMAIL_OAUTH_CLIENT", f"{prefix}/secrets/gmail_oauth_client.json")
     merged.setdefault("BT_GMAIL_SEND_TOKEN", f"{prefix}/secrets/contactus_gmail_send_token.json")
     merged.setdefault("BT_DANIEL_GMAIL_TOKEN", DEFAULT_DANIEL_TOKEN)
+    merged.setdefault(
+        "BT_DANIEL_PLUS_RESULT_SEND_TOKEN",
+        f"{prefix.rstrip('/')}/secrets/daniel_plus_result_send_token.json",
+    )
     merged.setdefault("BT_INTAKE_INTERVAL", "2")
     merged["BT_INTAKE_MODE"] = "isolated_test"
     return merged

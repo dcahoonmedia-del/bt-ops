@@ -1,0 +1,13 @@
+[Unit]
+Description=B&T plus-address private-control poll timer (initially disabled)
+After=network-online.target
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=60s
+AccuracySec=15s
+Persistent=false
+Unit=bt-plus-control-poll.service
+
+[Install]
+WantedBy=timers.target

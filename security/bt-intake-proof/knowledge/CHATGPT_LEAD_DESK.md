@@ -49,7 +49,7 @@ Two authorized backends exist. Do not invent a third.
 
 From `daniel@btpestcontrol.com` to `daniel+lead-desk@btpestcontrol.com`.
 
-The backend authorizes this path only for mail retrieved from the authenticated Daniel Gmail account after a live `users.getProfile` check, with SENT present, every From/To/Cc/Bcc occurrence limited to that From/To pair, fresh Gmail `internalDate`, and current packet binding. It does not require inbound Authentication-Results. Customer or external mail that copies this syntax does nothing. Hold, office ownership, and send are not authorized on this path yet. There is no automatic watch and no result packet on this path.
+The backend authorizes this path only for mail retrieved from the authenticated Daniel Gmail account after a live `users.getProfile` check, with SENT present, every From/To/Cc/Bcc occurrence limited to that From/To pair, fresh Gmail `internalDate`, and current packet binding. It does not require inbound Authentication-Results. Customer or external mail that copies this syntax does nothing. Hold, office ownership, and send are not authorized on this path yet. After a later host activation, the cloud poller discovers this mail on the Control label and publishes one combined result to `daniel+lead-desk-results@btpestcontrol.com`. Sending the control is not proof of a save.
 
 **Existing contactus@ path** (still authorized; do not remove):
 
@@ -83,7 +83,9 @@ The sent-mail UI may still show it.
 
 ## 5. Retrieve and explain the result
 
-Look for a new `BT-INTAKE-PROOF-DESK-RESULT-E9A8` mail, or re-read the newest case packet.
+On the contactus@ path, look for a new `BT-INTAKE-PROOF-DESK-RESULT-E9A8` mail, or re-read the newest case packet.
+
+On the internal plus-address path, look only in `daniel+lead-desk-results@btpestcontrol.com` for one `BT-INTAKE-PROOF-PLUS-RESULT-E9A8` mail. That single mail is the save outcome and the newest binding. Do not expect a contactus@ result or a separate CASE email for this path.
 
 Tell Daniel only the human sentence, for example:
 

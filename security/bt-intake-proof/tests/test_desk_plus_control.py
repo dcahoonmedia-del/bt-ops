@@ -24,6 +24,11 @@ from bt_intake_proof.desk_bridge import (
 )
 from bt_intake_proof.desk_control import INTENT_APPROVE_SEND, INTENT_HOLD, INTENT_REVISE
 from bt_intake_proof.desk_origin import daniel_origin_evidence
+from bt_intake_proof.desk_plus_result_send import (
+    KIND_PLUS_COMBINED,
+    set_test_plus_result_ready,
+    set_test_plus_result_transport,
+)
 from bt_intake_proof.desk_plus_proof import (
     FETCHED_VIA_DANIEL_PLUS,
     FETCHED_VIA_FIXTURE_PLUS,
@@ -189,11 +194,15 @@ class DeskPlusControlTests(unittest.TestCase):
         set_test_plus_fixtures(True)
         set_test_plus_now(self.now)
         set_test_plus_client(None)
+        set_test_plus_result_ready(True)
+        set_test_plus_result_transport(None)
 
     def tearDown(self) -> None:
         set_test_plus_fixtures(False)
         set_test_plus_now(None)
         set_test_plus_client(None)
+        set_test_plus_result_ready(None)
+        set_test_plus_result_transport(None)
         self.store.close()
         self.tmp.cleanup()
 
@@ -268,6 +277,10 @@ class DeskPlusControlTests(unittest.TestCase):
         self.assertIsNone(latest_action(self.layer, self.case_id))
         outbox = self.layer.conn.execute("SELECT kind, status FROM desk_result_outbox").fetchall()
         self.assertEqual(list(outbox), [])
+        plus_out = self.layer.conn.execute(
+            "SELECT kind, status FROM plus_result_outbox"
+        ).fetchall()
+        self.assertEqual([(row["kind"], row["status"]) for row in plus_out], [(KIND_PLUS_COMBINED, "pending")])
         proof = self.layer.conn.execute(
             "SELECT recipient FROM desk_origin_proof WHERE control_gmail_id = ?",
             ("plus-ctrl-1",),

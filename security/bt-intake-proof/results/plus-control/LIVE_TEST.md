@@ -30,7 +30,7 @@ Work or iPhone execution unless that path is independently evidenced.
 | Offline authorization (unit tests / local inspect) | Implemented in this PR; not host runtime |
 | Deployed on GCE | **No.** Deployment is held. “Backend accepts” means this branch’s code, not `/opt/bt-intake-proof` |
 | Saved live case / new draft version | **No.** Host SQLite was not reached |
-| Result delivery to Work | **None.** Plus path does not enqueue contactus@ result/case mail |
+| Result delivery to Work | **None live.** Offline path writes one plus-result intent; live send needs a separate daniel@ send-only token and host activation |
 
 ## Required live checks from the earlier send
 
@@ -45,12 +45,13 @@ Work or iPhone execution unless that path is independently evidenced.
 ## Remaining live blockers
 
 1. Deployment is held. Host is not running this PR.
-2. There is no automatic Daniel discovery, `users.watch`, or
-   label-added / history recovery for plus-address mail. The only
-   processor is manual `desk-plus-control --message-id`.
-3. Plus-path processing does not send a result packet. Work has no
-   completion channel on this path. Do not invent result-send
-   permissions.
+2. Automatic Daniel history discovery and the plus result sender exist
+   in this PR. They are packaged disabled and are **not** running on
+   the GCE host until project-lead activation.
+3. Live result delivery needs a separate already-authorized daniel@
+   `gmail.send`-only token at `BT_DANIEL_PLUS_RESULT_SEND_TOKEN`.
+   Missing that token is an activation blocker and does not consume a
+   new decision. Do not widen the readonly token.
 4. `1a0979e37a0b0a94` must not be processed or timestamp-adjusted.
    First-processing freshness uses provider `internalDate` within 15
    minutes; that message is not grandfathered.

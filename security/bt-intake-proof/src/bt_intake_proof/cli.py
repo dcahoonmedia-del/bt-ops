@@ -406,6 +406,61 @@ def cmd_desk_control(args: argparse.Namespace) -> int:
     return 0 if result.get("ok") else 2
 
 
+def cmd_desk_plus_preflight(_args: argparse.Namespace) -> int:
+    from .desk_plus_preflight import plus_control_preflight
+
+    payload = plus_control_preflight()
+    RESULTS.mkdir(parents=True, exist_ok=True)
+    dest = RESULTS / "live" / "desk-plus-preflight.json"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps(payload, indent=2, default=str) + "\n", encoding="utf-8")
+    _print(payload)
+    return 0 if payload.get("status") == "READY" else 2
+
+
+def cmd_desk_plus_poll(args: argparse.Namespace) -> int:
+    from .cases import CaseLayer
+    from .desk_plus_loop import poll_plus_controls_once
+
+    store = ReceiptStore(Path(args.store) if args.store else store_path())
+    try:
+        layer = CaseLayer(store)
+        payload = poll_plus_controls_once(layer)
+    finally:
+        store.close()
+    RESULTS.mkdir(parents=True, exist_ok=True)
+    dest = RESULTS / "live" / "desk-plus-poll.json"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps(payload, indent=2, default=str) + "\n", encoding="utf-8")
+    _print(payload)
+    if payload.get("reason") == "plus_result_channel_not_ready":
+        return 2
+    return 0 if payload.get("ok") else 2
+
+
+def cmd_desk_plus_deliver_results(args: argparse.Namespace) -> int:
+    from .cases import CaseLayer
+    from .desk_plus_result_send import deliver_plus_results, reconcile_plus_result_outbox
+
+    store = ReceiptStore(Path(args.store) if args.store else store_path())
+    try:
+        layer = CaseLayer(store)
+        reconciled = reconcile_plus_result_outbox(layer, [])
+        delivered = deliver_plus_results(layer)
+    finally:
+        store.close()
+    payload = {
+        "ok": True,
+        "reconciled": reconciled,
+        "delivered": delivered,
+        "blind_retry": False,
+        "exactly_once_delivery": False,
+        "contactus_traffic": False,
+    }
+    _print(payload)
+    return 0
+
+
 def cmd_desk_plus_control(args: argparse.Namespace) -> int:
     from .cases import CaseLayer
     from .desk_bridge import format_result_email, process_plus_control_mail
@@ -544,6 +599,24 @@ def main(argv: list[str] | None = None) -> int:
     dpc.add_argument("--message-id", required=True, help="Gmail id in the authenticated daniel@ mailbox")
     dpc.add_argument("--store", default="")
     dpc.set_defaults(func=cmd_desk_plus_control)
+    dpp = sub.add_parser(
+        "desk-plus-preflight",
+        help="Read-only plus-control discovery/sender readiness. Does not change filters or send mail.",
+    )
+    dpp.set_defaults(func=cmd_desk_plus_preflight)
+    dpo = sub.add_parser(
+        "desk-plus-poll",
+        help="One isolated Daniel history poll. Processes only plus-address revise_draft. Does not use contactus@.",
+    )
+    dpo.add_argument("--store", default="")
+    dpo.add_argument("--once", action="store_true", help="Accepted for systemd oneshot compatibility")
+    dpo.set_defaults(func=cmd_desk_plus_poll)
+    dpr = sub.add_parser(
+        "desk-plus-deliver-results",
+        help="Reconcile then send pending plus results. Never contactus@. Not a live-send from this VM.",
+    )
+    dpr.add_argument("--store", default="")
+    dpr.set_defaults(func=cmd_desk_plus_deliver_results)
     da = sub.add_parser("desk-action", help="Primary path: authorize a ChatGPT structured intent. Does not send.")
     da.add_argument("--intent", default="", help="One of the desk intents, e.g. approve_and_send_current")
     da.add_argument("--json", default="", help="Small JSON action from ChatGPT: {intent, owner, note}")
