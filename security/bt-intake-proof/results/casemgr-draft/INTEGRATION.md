@@ -10,6 +10,6 @@
 | Action 1 / 2 | **untouched** | Do not repeat verify-recipient or recover --execute |
 | Customer / proof send | **BLOCKED** | Packet not sent |
 | New OAuth / scopes | **not requested** | Existing ChatGPT volume login only if host draft needs it |
-| Immutable release | **yes** | Runtime `lead_desk` attention text only |
+| Immutable release | **yes** | SHA256 `3eb86d3e…` source `c3c7629` artifact `1cd083a` |
 
 Exact packet and Codex host steps: `INTERNAL_PACKET.md`.
