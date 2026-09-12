@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# Pack a secrets-free immutable desk-roundtrip tree. Does not SSH or deploy.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO="$(cd "${ROOT}/../.." && pwd)"
+DEST="${ROOT}/results/desk-roundtrip-release"
+STAGE="$(mktemp -d)"
+trap 'rm -rf "$STAGE"' EXIT
+
+COMMIT="$(git -C "$REPO" rev-parse HEAD)"
+mkdir -p "$DEST" "${STAGE}/bt-intake-proof"
+
+rsync -a \
+  --exclude secrets \
+  --exclude results \
+  --exclude .git \
+  --exclude '__pycache__' \
+  --exclude '*.pyc' \
+  "${ROOT}/src" \
+  "${ROOT}/scripts" \
+  "${ROOT}/systemd" \
+  "${ROOT}/tests" \
+  "${STAGE}/bt-intake-proof/"
+
+if [[ -d "${ROOT}/config" ]]; then
+  rsync -a "${ROOT}/config" "${STAGE}/bt-intake-proof/"
+fi
+for item in src scripts systemd tests; do
+  [[ -d "${STAGE}/bt-intake-proof/${item}" ]] || { echo "missing $item" >&2; exit 1; }
+done
+if [[ -e "${STAGE}/bt-intake-proof/secrets" ]]; then
+  echo "refusing to pack secrets" >&2
+  exit 1
+fi
+
+TREE_SHA="$(python3 "${ROOT}/scripts/verify_release.py" --hash-only "${STAGE}/bt-intake-proof" | python3 -c 'import json,sys; print(json.load(sys.stdin)["tree_sha256"])')"
+cat > "${STAGE}/bt-intake-proof/RELEASE.json" <<EOF
+{
+  "package": "bt-intake-desk-roundtrip",
+  "source_commit": "${COMMIT}",
+  "tree_sha256": "${TREE_SHA}",
+  "tree_hash_excludes": ["RELEASE.json", "secrets/", "*.pyc"],
+  "isolation": "isolated_test",
+  "customer_sends": "off",
+  "broad_capture": "off",
+  "proof_reply": "not_included_not_sent",
+  "secrets_included": false
+}
+EOF
+python3 "${ROOT}/scripts/verify_release.py" "${STAGE}/bt-intake-proof" >/dev/null
+
+tar -C "$STAGE" -czf "${DEST}/bt-intake-desk-roundtrip.tar.gz" bt-intake-proof
+TAR_SHA="$(sha256sum "${DEST}/bt-intake-desk-roundtrip.tar.gz" | awk '{print $1}')"
+cp -f "${STAGE}/bt-intake-proof/RELEASE.json" "${DEST}/RELEASE.json"
+python3 "${ROOT}/scripts/prepare_fresh_desk_case.py" --out "$DEST" >/dev/null
+
+RAW="https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/${COMMIT}/security/bt-intake-proof/results/desk-roundtrip-release/bt-intake-desk-roundtrip.tar.gz"
+cat > "${DEST}/TRANSFER" <<EOF
+# Non-secret browser-SSH transfer card. No tokens or client JSON.
+
+FILE=bt-intake-desk-roundtrip.tar.gz
+SHA256=${TAR_SHA}
+SOURCE_COMMIT=${COMMIT}
+RAW=${RAW}
+DEST=/tmp/bt-intake-desk-roundtrip.tar.gz
+
+# On the VM (Google Cloud SSH-in-browser). Keep secrets on the host.
+# Do not send BT-DESK-ROUNDTRIP-SEND-E9A8. Do not reset SQLite.
+
+curl -fsSLo /tmp/bt-intake-desk-roundtrip.tar.gz ${RAW}
+echo "${TAR_SHA}  /tmp/bt-intake-desk-roundtrip.tar.gz" | sha256sum -c
+rm -rf /tmp/bt-intake-desk-roundtrip-src
+mkdir -p /tmp/bt-intake-desk-roundtrip-src
+tar -xzf /tmp/bt-intake-desk-roundtrip.tar.gz -C /tmp/bt-intake-desk-roundtrip-src
+test ! -e /tmp/bt-intake-desk-roundtrip-src/bt-intake-proof/secrets
+python3 /tmp/bt-intake-desk-roundtrip-src/bt-intake-proof/scripts/verify_release.py /tmp/bt-intake-desk-roundtrip-src/bt-intake-proof
+sudo bash /tmp/bt-intake-desk-roundtrip-src/bt-intake-proof/scripts/guarded_desk_roundtrip_deploy.sh
+sudo -u btintake env PYTHONPATH=/opt/bt-intake-proof/src BT_INTAKE_ENV=/etc/bt-intake-proof/env \\
+  python3 /opt/bt-intake-proof/scripts/prepare_fresh_desk_case.py --live --out /tmp/desk-rt-decision
+# Internal CASE packet only. Not the proof reply.
+sudo -u btintake env PYTHONPATH=/opt/bt-intake-proof/src BT_INTAKE_ENV=/etc/bt-intake-proof/env \\
+  python3 /opt/bt-intake-proof/scripts/deliver_desk_case_packet.py
+
+# Rollback uses the revision recorded on this host, not an assumed SHA:
+# sudo bash /opt/bt-intake-proof/scripts/rollback_to_predeploy.sh
+EOF
+
+echo "tarball=${DEST}/bt-intake-desk-roundtrip.tar.gz"
+echo "sha256=${TAR_SHA}"
+echo "source_commit=${COMMIT}"
+echo "tree_sha256=${TREE_SHA}"

@@ -5,21 +5,30 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STAGE="${ROOT}/results/deploy-stage"
 mkdir -p "$STAGE/scripts"
-cp -f "$ROOT/scripts/install_cloud_host.sh" "$STAGE/scripts/"
+cp -f "$ROOT/scripts/guarded_desk_roundtrip_deploy.sh" "$STAGE/scripts/"
+cp -f "$ROOT/scripts/desk_roundtrip_health.sh" "$STAGE/scripts/"
 cp -f "$ROOT/scripts/record_predeploy_revision.sh" "$STAGE/scripts/"
 cp -f "$ROOT/scripts/rollback_to_predeploy.sh" "$STAGE/scripts/"
+cp -f "$ROOT/scripts/prepare_fresh_desk_case.py" "$STAGE/scripts/"
+cp -f "$ROOT/scripts/deliver_desk_case_packet.py" "$STAGE/scripts/"
+cp -f "$ROOT/scripts/verify_daniel_sent_runtime.py" "$STAGE/scripts/"
+cp -f "$ROOT/scripts/merge_desk_roundtrip_env.py" "$STAGE/scripts/"
 cp -f "$ROOT/results/DESK_ROUNDTRIP.md" "$STAGE/"
 cp -f "$ROOT/results/DESK_ORIGIN_EVIDENCE.md" "$STAGE/"
 git -C "$(cd "$ROOT/../.." && pwd)" rev-parse HEAD > "$STAGE/REVIEWED_REVISION.txt"
 cat > "$STAGE/README.md" <<EOF
-Staged only. Origin Sent corroboration is incomplete without the daniel@
-readonly token. Do not deploy until that gate is live.
+Guarded desk-roundtrip stage. Do not run install_cloud_host.sh for this cutover.
 
-On the VM, as root, before install:
-  sudo bash scripts/record_predeploy_revision.sh
-  sudo bash scripts/install_cloud_host.sh
+On the VM, as root, after verifying the immutable tarball SHA256:
 
-Rollback uses the recorded pre-deploy revision, not an assumed SHA:
+  sudo bash scripts/guarded_desk_roundtrip_deploy.sh
+
+That records the actual live tree first, excludes secrets, merges env, and
+health-checks. Rollback uses the recorded pre-deploy revision, not an assumed SHA:
+
   sudo bash scripts/rollback_to_predeploy.sh
+
+Then prepare the unused case and optionally deliver the CASE packet only.
+Do not send BT-DESK-ROUNDTRIP-SEND-E9A8.
 EOF
 echo "staged=$STAGE"

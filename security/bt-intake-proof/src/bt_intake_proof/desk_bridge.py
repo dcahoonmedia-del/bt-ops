@@ -335,6 +335,17 @@ def _table_names(layer: CaseLayer) -> set[str]:
     return {row[0] for row in layer.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
 
 
+def _add_column_if_missing(layer: CaseLayer, table: str, name: str, spec: str) -> None:
+    cols = {row[1] for row in layer.conn.execute(f"PRAGMA table_info({table})")}
+    if name in cols:
+        return
+    try:
+        layer.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {spec}")
+    except sqlite3.OperationalError as exc:
+        if "duplicate column" not in str(exc).lower():
+            raise
+
+
 def ensure_bridge_tables(layer: CaseLayer) -> None:
     names = _table_names(layer)
     if "desk_control_inbox" not in names or "desk_control_consumed" not in names or "desk_result_outbox" not in names:
@@ -374,16 +385,11 @@ def ensure_bridge_tables(layer: CaseLayer) -> None:
         );
         """
     )
-    cols = {row[1] for row in layer.conn.execute("PRAGMA table_info(cases)")}
-    if "owner" not in cols:
-        layer.conn.execute("ALTER TABLE cases ADD COLUMN owner TEXT")
-    if "hold" not in cols:
-        layer.conn.execute("ALTER TABLE cases ADD COLUMN hold INTEGER NOT NULL DEFAULT 0")
-    inbox_cols = {row[1] for row in layer.conn.execute("PRAGMA table_info(desk_control_inbox)")}
-    if "origin_authenticated" not in inbox_cols:
-        layer.conn.execute(
-            "ALTER TABLE desk_control_inbox ADD COLUMN origin_authenticated INTEGER NOT NULL DEFAULT 0"
-        )
+    _add_column_if_missing(layer, "cases", "owner", "TEXT")
+    _add_column_if_missing(layer, "cases", "hold", "INTEGER NOT NULL DEFAULT 0")
+    _add_column_if_missing(
+        layer, "desk_control_inbox", "origin_authenticated", "INTEGER NOT NULL DEFAULT 0"
+    )
     for name, spec in (
         ("subject", "TEXT"),
         ("body", "TEXT"),
@@ -391,13 +397,9 @@ def ensure_bridge_tables(layer: CaseLayer) -> None:
         ("inbound_at", "TEXT"),
         ("recipients_json", "TEXT"),
         ("headers_json", "TEXT"),
+        ("provider_evidence_json", "TEXT"),
     ):
-        if name not in inbox_cols:
-            layer.conn.execute(f"ALTER TABLE desk_control_inbox ADD COLUMN {name} {spec}")
-            inbox_cols.add(name)
-    if "provider_evidence_json" not in inbox_cols:
-        layer.conn.execute("ALTER TABLE desk_control_inbox ADD COLUMN provider_evidence_json TEXT")
-        inbox_cols.add("provider_evidence_json")
+        _add_column_if_missing(layer, "desk_control_inbox", name, spec)
     names = _table_names(layer)
     if "desk_origin_proof" not in names:
         layer.conn.executescript(

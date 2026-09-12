@@ -1,9 +1,13 @@
-Staged only. Origin Sent corroboration is incomplete without the daniel@
-readonly token. Do not deploy until that gate is live.
+Guarded desk-roundtrip stage. Do not run install_cloud_host.sh for this cutover.
 
-On the VM, as root, before install:
-  sudo bash scripts/record_predeploy_revision.sh
-  sudo bash scripts/install_cloud_host.sh
+On the VM, as root, after verifying the immutable tarball SHA256:
 
-Rollback uses the recorded pre-deploy revision, not an assumed SHA:
+  sudo bash scripts/guarded_desk_roundtrip_deploy.sh
+
+That records the actual live tree first, excludes secrets, merges env, and
+health-checks. Rollback uses the recorded pre-deploy revision, not an assumed SHA:
+
   sudo bash scripts/rollback_to_predeploy.sh
+
+Then prepare the unused case and optionally deliver the CASE packet only.
+Do not send BT-DESK-ROUNDTRIP-SEND-E9A8.

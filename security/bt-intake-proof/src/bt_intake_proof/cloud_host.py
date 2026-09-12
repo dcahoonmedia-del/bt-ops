@@ -166,6 +166,9 @@ def run_once(store: ReceiptStore) -> dict[str, Any]:
 
 
 def serve(interval: float = 2.0) -> int:
+    from .intake_mode import require_isolated_live_receiver
+
+    require_isolated_live_receiver()
     store = ReceiptStore(store_path())
     identity = receiver_identity()
     safe_log("cloud_host_start", **identity, store=str(store.path), mailbox=MAILBOX)

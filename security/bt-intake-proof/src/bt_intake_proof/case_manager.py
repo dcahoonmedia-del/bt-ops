@@ -13,6 +13,8 @@ from .constants import MAILBOX
 from .fieldwork_match import match_and_context
 from .fieldwork_readonly import grok_bot_client
 from .knowledge import trusted_rules_text
+from .desk_bridge import install_desk_send_draft
+from .desk_fresh_case import is_desk_roundtrip_receipt
 from .phasee import install_phasee_draft, is_phasee_receipt
 from .review import format_review_email
 from .send_bind import queue_approved_phasee_sends
@@ -192,6 +194,21 @@ def draft_pending_cases(store: ReceiptStore) -> list[dict[str, Any]]:
                 receipt.get("gmail_message_id"),
             )
             saved = install_phasee_draft(layer, case["case_id"], nonce)
+            ran = {"ok": True, "empty_user_input": True, "content_in_user_input": False}
+        elif is_desk_roundtrip_receipt(receipt):
+            layer.save_fieldwork(
+                case["case_id"],
+                {
+                    "status": "not_run",
+                    "source_label": "FIELDWORK_NOT_ACCESSED",
+                    "live": False,
+                    "read_only": True,
+                    "writes_allowed": False,
+                    "reason": "desk_roundtrip_internal_send_test",
+                },
+                receipt.get("gmail_message_id"),
+            )
+            saved = install_desk_send_draft(layer, case["case_id"], nonce)
             ran = {"ok": True, "empty_user_input": True, "content_in_user_input": False}
         else:
             fieldwork = match_and_context(grok_bot_client(), receipt)
