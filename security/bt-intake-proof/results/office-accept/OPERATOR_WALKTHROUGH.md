@@ -62,16 +62,8 @@ Existing policy: `office_owned` needs Brenda or Ally by name. Generic "the offic
 
 Spoken: "Revise the response. Make it shorter and just ask for a callback number."
 
-**[SIMULATED ChatGPT interpretation]** → `INTENT=revise_draft` with the new wording in `NOTE`.
-Exact bound control:
-
-```
-BT-INTAKE-PROOF-DESK-CTRL-E9A8
-INTENT=revise_draft
-NOTE=DRAFT - NOT SENT
-
-Thanks. Please reply with a callback number and we will have the office follow up.
-```
+**[SIMULATED ChatGPT interpretation]** → `INTENT=revise_draft` with the exact new wording encoded for mail.
+Do not put a long draft on a raw `NOTE=` line. Generate `desk-control.txt` (`CTRL-ENC=v1`) so MIME wrap cannot change the text.
 
 Backend saves a new draft version. The previous version cannot authorize a send.
 

@@ -130,6 +130,9 @@ class LeadDeskTests(unittest.TestCase):
         self.assertEqual(before["sha256"], after["sha256"])
         kinds = {item["kind"]: item for item in payload["emails"]}
         self.assertEqual(set(kinds), {"queue", "case", "health"})
+        control = payload.get("control") or {}
+        self.assertEqual(len((control.get("binding") or {}).get("packet_hash") or ""), 64)
+        self.assertTrue(control.get("generate_only"))
         self.assertIn(MARKER_QUEUE, kinds["queue"]["subject"])
         self.assertIn(MARKER_CASE, kinds["case"]["subject"])
         self.assertIn(MARKER_HEALTH, kinds["health"]["subject"])

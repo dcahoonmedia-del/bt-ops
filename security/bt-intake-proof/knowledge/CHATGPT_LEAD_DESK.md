@@ -26,7 +26,7 @@ He may dictate on iPhone. He will not say case IDs, draft numbers, hashes, or a 
 Decide exactly one action:
 
 - `approve_and_send_current` — send this version now
-- `revise_draft` — change the wording; put the new draft in `NOTE`
+- `revise_draft` — change the wording; put the exact new draft in `NOTE` via the generated control packet, not a handwritten long `NOTE=` line
 - `hold` — pause; do not send
 - `office_owned` — Brenda or Ally owns it; set `OWNER=brenda` or `OWNER=ally`
 - `no_response_needed` — no customer reply
@@ -58,7 +58,13 @@ NONCE=...
 PACKET_HASH=...
 ```
 
-Use the binding values from the newest case packet. Leave `OWNER` blank unless the intent is `office_owned`.
+Copy `packet_hash` and `nonce` from `desk-control.json` (64-character hash). Do not transcribe them from a screenshot.
+
+Hold / Brenda / Ally / empty NOTE stay as simple `KEY=value` lines.
+
+For a long or multiline revise, send the generated `desk-control.txt` body (`CTRL-ENC=v1`). Do not put the draft on a raw `NOTE=` line that mail can wrap.
+
+Leave `OWNER` blank unless the intent is `office_owned`.
 
 Do not read this mail, these fields, or the marker to Daniel.
 The sent-mail UI may still show it.

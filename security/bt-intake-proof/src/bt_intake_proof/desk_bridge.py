@@ -42,6 +42,7 @@ from .desk_control import (
     SOURCE_CHATGPT,
     submit_desk_action,
 )
+from .desk_control_codec import decode_control_fields, serialize_control_body
 from .desk_origin import unquoted_control_text
 from .desk_sent_proof import (
     PROOF_VERSION,
@@ -73,7 +74,6 @@ BRIDGE_INTENTS = (
     INTENT_NO_RESPONSE,
 )
 
-_FIELD = re.compile(r"^(INTENT|OWNER|NOTE|CASE_ID|DRAFT_VERSION|NONCE|PACKET_HASH)=(.*)$", re.M)
 _BIND_FIELD = re.compile(
     r"^(CASE_ID|DRAFT_VERSION|NONCE|PACKET_HASH|LATEST_INBOUND|TO_ADDR|BODY_HASH)=(.*)$",
     re.M,
@@ -87,26 +87,30 @@ def looks_like_control_mail(subject: str | None, body: str | None) -> bool:
 
 def parse_control_mail(subject: str | None, body: str | None) -> dict[str, Any]:
     """Parse a ChatGPT control message. No speech interpretation."""
-    blob = f"{subject or ''}\n{body or ''}"
-    if MARKER_CTRL not in blob:
-        return {"ok": False, "reason": "not_control_mail"}
-    fields = {key: (value or "").strip() for key, value in _FIELD.findall(blob)}
-    intent = fields.get("INTENT") or ""
-    version_raw = fields.get("DRAFT_VERSION") or ""
+    decoded = decode_control_fields(subject, body)
+    if not decoded.get("ok"):
+        return {"ok": False, "reason": decoded.get("reason") or "unparsed_control_mail"}
+    fields = decoded.get("fields") or {}
+    intent = (fields.get("INTENT") or "").strip()
+    version_raw = (fields.get("DRAFT_VERSION") or "").strip()
     try:
         draft_version = int(version_raw) if version_raw else None
     except ValueError:
         draft_version = None
     owner = (fields.get("OWNER") or "").strip().lower() or None
+    note = decoded.get("note")
+    if note == "":
+        note = None
     return {
         "ok": True,
         "intent": intent,
         "owner": owner,
-        "note": fields.get("NOTE") or None,
-        "case_id": fields.get("CASE_ID") or None,
+        "note": note,
+        "case_id": (fields.get("CASE_ID") or "").strip() or None,
         "draft_version": draft_version,
-        "nonce": fields.get("NONCE") or None,
-        "packet_hash": fields.get("PACKET_HASH") or None,
+        "nonce": (fields.get("NONCE") or "").strip() or None,
+        "packet_hash": (fields.get("PACKET_HASH") or "").strip() or None,
+        "encoding": decoded.get("encoding"),
         "source": SOURCE_CHATGPT,
         "requires_case_id_from_daniel": False,
         "requires_magic_phrase": False,
@@ -120,23 +124,13 @@ def format_control_mail(
     owner: str | None = None,
     note: str | None = None,
 ) -> dict[str, str]:
-    """ChatGPT-compatible control mail. Daniel should never see this."""
-    lines = [
-        MARKER_CTRL,
-        f"INTENT={intent}",
-        f"OWNER={owner or ''}",
-        f"NOTE={note or ''}",
-        f"CASE_ID={binding.get('case_id') or ''}",
-        f"DRAFT_VERSION={binding.get('draft_version') or ''}",
-        f"NONCE={binding.get('nonce') or ''}",
-        f"PACKET_HASH={binding.get('packet_hash') or ''}",
-    ]
+    """Structured control mail. Keep machine fields out of spoken summaries."""
     return {
         "from": ALLOWED_SENDER,
         "to": MAILBOX,
         "cc": "",
         "subject": MARKER_CTRL,
-        "body": "\n".join(lines) + "\n",
+        "body": serialize_control_body(intent=intent, binding=binding, owner=owner, note=note),
         "kind": "control",
         "marker": MARKER_CTRL,
     }
@@ -313,10 +307,13 @@ def inspect_inbound(
     )
     sender_ok = bool(origin.get("accepted"))
     reason = None
-    if not sender_ok:
+    if not parsed.get("ok"):
+        sender_ok = False
+        reason = str(parsed.get("reason") or "unparsed_control_mail")
+    elif not sender_ok:
         reason = str(origin.get("reason") or "sender_not_verified_daniel")
-    elif quoted_only or not parsed.get("ok") or not parsed.get("intent"):
-        reason = "control_not_in_unquoted_text" if quoted_only or not parsed.get("intent") else None
+    elif quoted_only or not parsed.get("intent"):
+        reason = "control_not_in_unquoted_text"
         if quoted_only:
             sender_ok = False
     return {
@@ -654,7 +651,10 @@ def apply_authorized_action(
         return {**applied, "intent": intent, "applied": "no_response_needed"}
 
     if intent == INTENT_REVISE:
-        new_body = (note or "").strip() or str(draft.get("proposed_response") or "")
+        if note is None or not str(note).strip():
+            new_body = str(draft.get("proposed_response") or "")
+        else:
+            new_body = note
         saved = layer.save_draft(
             case_id,
             {
