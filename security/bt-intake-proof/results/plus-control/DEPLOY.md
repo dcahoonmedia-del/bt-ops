@@ -9,7 +9,7 @@ No live mail. No credential minting. No filter/label changes.
 | Ref | Value |
 | --- | --- |
 | Source commit | `35c4db5f771fbe063c8ee0713787a4271eb2c238` |
-| Artifact commit | pin after this package commit (TRANSFER RAW) |
+| Artifact commit | `3f90b60` (TRANSFER RAW) |
 | Tarball SHA256 | `dd29a5db6844d7099a2c951a8a604c9cbb0b1c392b018ce91d7a077a17c25744` |
 | Tree SHA256 | `061e30c941931501d8496a7a2fae2cd12ca84a9f8b3a18a88fbfcc9ea34acef5` |
 

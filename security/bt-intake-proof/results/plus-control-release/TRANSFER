@@ -4,7 +4,7 @@ FILE=bt-intake-plus-control.tar.gz
 SHA256=dd29a5db6844d7099a2c951a8a604c9cbb0b1c392b018ce91d7a077a17c25744
 SOURCE_COMMIT=35c4db5f771fbe063c8ee0713787a4271eb2c238
 TREE_SHA256=061e30c941931501d8496a7a2fae2cd12ca84a9f8b3a18a88fbfcc9ea34acef5
-RAW=https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/35c4db5f771fbe063c8ee0713787a4271eb2c238/security/bt-intake-proof/results/plus-control-release/bt-intake-plus-control.tar.gz
+RAW=https://raw.githubusercontent.com/dcahoonmedia-del/bt-ops/3f90b60e20f2d2bc7bed392de3eef10a3574dd42/security/bt-intake-proof/results/plus-control-release/bt-intake-plus-control.tar.gz
 DEST=/tmp/bt-intake-plus-control.tar.gz
 
 # On the VM (Google Cloud SSH-in-browser). Keep secrets on the host.
