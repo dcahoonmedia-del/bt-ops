@@ -74,21 +74,12 @@ sudo bash /tmp/bt-intake-desk-roundtrip-src/bt-intake-proof/scripts/guarded_desk
 # sudo bash /opt/bt-intake-proof/scripts/rollback_to_predeploy.sh
 
 # Action 2 already sent_verified/consumed. Do not recover --execute. Do not resend.
-# After deploy + health PASS, inspect current stages only:
-# sudo -u btintake bash /opt/bt-intake-proof/scripts/report_desk_send_outcome.sh \\
-#   --action-id 2 --case-id BTC-contactus-desk-roundtrip-e9a8-20260912
-#
-# If report shows send_stage=sent_verified and recipient_receipt_verified=false,
-# enqueue one accurate result (does not send the proof):
-# sudo -u btintake bash /opt/bt-intake-proof/scripts/report_desk_send_outcome.sh \\
-#   --action-id 2 --case-id BTC-contactus-desk-roundtrip-e9a8-20260912 --enqueue-result
-#
-# Optional existing daniel@ readonly recipient verify. Does not send or change labels.
-# Do not run this to "confirm" Codex prose. Only if a backend receipt row is wanted:
+# Do not enqueue an intermediate sent-stage result. After deploy + health PASS, one command:
 # sudo -u btintake bash /opt/bt-intake-proof/scripts/report_desk_send_outcome.sh \\
 #   --action-id 2 --case-id BTC-contactus-desk-roundtrip-e9a8-20260912 --verify-recipient --enqueue-result
 #
-# Do not reset SQLite, reissue approval, mutate bindings, or send from Cursor/Gmail MCP.
+# That uses existing daniel@ readonly. It does not send the proof, change labels, or forge receipt.
+# Keep customer sends and broad capture OFF. Do not reset SQLite or reissue approval.
 EOF
 cat > "${DEST}/MANIFEST.json" <<EOF
 {

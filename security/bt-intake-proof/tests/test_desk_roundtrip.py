@@ -599,11 +599,12 @@ class DeskRoundtripTests(unittest.TestCase):
         enqueue_send_followup(self.layer, executed[0])
         rows = [dict(row) for row in self.layer.conn.execute("SELECT kind, status FROM desk_result_outbox").fetchall()]
         kinds = [row["kind"] for row in rows]
-        self.assertEqual(kinds.count("result"), 1)
+        self.assertEqual(sum(1 for kind in kinds if kind.startswith("result")), 1)
+        self.assertIn("result_failed", kinds)
         self.assertNotIn("case", kinds)
         self.assertNotIn("case_send", kinds)
         self.assertEqual(rows[0]["status"], "pending")
-        body = self.layer.conn.execute("SELECT body FROM desk_result_outbox WHERE kind = 'result'").fetchone()["body"]
+        body = self.layer.conn.execute("SELECT body FROM desk_result_outbox WHERE kind LIKE 'result%'").fetchone()["body"]
         self.assertIn("did not complete", body)
         self.assertIn("STATUS=failed", body)
 
@@ -628,7 +629,7 @@ class DeskRoundtripTests(unittest.TestCase):
         self.assertTrue(self._apply(INTENT_APPROVE_SEND, binding, gmail_message_id="ctrl-unknown-mail")["ok"])
         timed_out = execute_desk_queued_sends(self.layer, MemorySendTransport(timeout=True))
         enqueue_send_followup(self.layer, timed_out[0])
-        body = self.layer.conn.execute("SELECT body FROM desk_result_outbox WHERE kind = 'result'").fetchone()["body"]
+        body = self.layer.conn.execute("SELECT body FROM desk_result_outbox WHERE kind LIKE 'result%'").fetchone()["body"]
         self.assertIn("unknown", body.lower())
         self.assertIn("STATUS=failed", body)
 
@@ -660,7 +661,7 @@ class DeskRoundtripTests(unittest.TestCase):
         rows = [dict(row) for row in self.layer.conn.execute("SELECT kind, status FROM desk_result_outbox").fetchall()]
         kinds = {(row["kind"], row["status"]) for row in rows}
         self.assertIn(("result", "sent"), kinds)
-        self.assertIn(("result_send", "pending"), kinds)
+        self.assertIn(("result_failed", "pending"), kinds)
         self.assertNotIn(("case_send", "pending"), kinds)
         self.assertEqual(latest_action(self.layer, case_id)["status"], "failed")
 

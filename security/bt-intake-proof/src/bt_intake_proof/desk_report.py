@@ -57,8 +57,10 @@ def report_desk_send_outcome(
         kept = {key: report.get(key) for key in ("contactus_sent", "daniel_inbox", "sent_verify")}
         report.update(inspect_action_outcome(layer, action_id))
         report.update({key: value for key, value in kept.items() if value is not None})
-        report["blockers"] = blockers
         report["would_resend_proof"] = False
+        if not report["sent_verify"].get("ok"):
+            blockers.append("sent_verify_failed")
+        report["blockers"] = list(blockers)
     if verify_recipient_live:
         if inbox_transport is None:
             report["ok"] = False
@@ -77,12 +79,22 @@ def report_desk_send_outcome(
         }
         report.update(inspect_action_outcome(layer, action_id))
         report.update({key: value for key, value in kept.items() if value is not None})
-        report["blockers"] = blockers
         report["would_resend_proof"] = False
+        if not report["recipient_verify"].get("ok"):
+            blockers.append("recipient_verify_failed")
+        report["blockers"] = list(blockers)
     if enqueue_result:
         queued = enqueue_send_outcome(layer, action_id)
         report["outbox"] = queued
         report["mode"] = "enqueue_result"
+        if not queued.get("ok") or queued.get("reason") == "outbox_insert_ignored":
+            blockers.append("outbox_enqueue_failed")
+        elif queued.get("enqueued") or queued.get("already_reported") or queued.get("deferred") or queued.get("updated_pending"):
+            pass
+        else:
+            blockers.append("outbox_enqueue_failed")
+        report["blockers"] = list(blockers)
     report["recipient_receipt_not_claimed_from_api"] = not report.get("recipient_receipt_verified")
-    report["ok"] = not report.get("blockers")
+    report["blockers"] = list(blockers)
+    report["ok"] = not blockers
     return report

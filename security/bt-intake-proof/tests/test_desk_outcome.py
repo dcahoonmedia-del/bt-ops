@@ -12,6 +12,7 @@ from bt_intake_proof.desk_bridge import (
     enqueue_on_demand_case,
     enqueue_send_followup,
     enqueue_send_outcome,
+    ensure_bridge_tables,
     format_control_mail,
     install_desk_send_draft,
     process_control_mail,
@@ -19,7 +20,15 @@ from bt_intake_proof.desk_bridge import (
 from bt_intake_proof.desk_control import INTENT_APPROVE_SEND, INTENT_HOLD
 from bt_intake_proof.desk_fresh_case import FRESH_THREAD_ID, PHASE_E_CASE_ID, fresh_case_id, prepare_fresh_desk_case
 from bt_intake_proof.desk_origin import daniel_origin_evidence
-from bt_intake_proof.desk_outcome import STAGE_PROVIDER_ACCEPTED, STAGE_SENT_VERIFIED, action_send_stage, stage_claims
+from bt_intake_proof.desk_outcome import (
+    STAGE_FAILED,
+    STAGE_PROVIDER_ACCEPTED,
+    STAGE_RECIPIENT_RECEIPT,
+    STAGE_SENT_VERIFIED,
+    STAGE_UNKNOWN,
+    action_send_stage,
+    stage_claims,
+)
 from bt_intake_proof.desk_recover_send import recover_failed_desk_send
 from bt_intake_proof.desk_report import report_desk_send_outcome
 from bt_intake_proof.desk_runtime import finish_desk_roundtrip
@@ -31,6 +40,7 @@ from bt_intake_proof.phasee_constants import (
     STATUS_FAILED,
     STATUS_RECEIPT_VERIFIED,
     STATUS_SENT_VERIFIED,
+    STATUS_UNKNOWN,
 )
 from bt_intake_proof.send_bind import QUEUED_BY_PHASEE, action_row, ensure_send_tables, mark_action, queue_desk_send, queue_phasee_send
 from bt_intake_proof.send_verify import DanielReadonlyInboxVerify, MemoryVerifyTransport, verify_sent
@@ -190,7 +200,7 @@ class DeskOutcomeTests(unittest.TestCase):
         send = MemorySendTransport(fail=True)
         finished = finish_desk_roundtrip(self.store, send_transport=send, verify_transport=MemoryVerifyTransport())
         self.assertFalse(finished["executed"][0]["ok"])
-        body = self.layer.conn.execute("SELECT body FROM desk_result_outbox WHERE kind = 'result'").fetchone()["body"]
+        body = self.layer.conn.execute("SELECT body FROM desk_result_outbox WHERE kind LIKE 'result%'").fetchone()["body"]
         self.assertIn("SEND_STAGE=failed", body)
         self.assertIn("did not complete", body)
         self.assertEqual(execute_desk_queued_sends(self.layer, MemorySendTransport()), [])
@@ -200,7 +210,7 @@ class DeskOutcomeTests(unittest.TestCase):
         finished2 = finish_desk_roundtrip(self.store, send_transport=MemorySendTransport(timeout=True), verify_transport=MemoryVerifyTransport())
         self.assertTrue(finished2["executed"][0].get("unknown"))
         unknown_body = self.layer.conn.execute(
-            "SELECT body FROM desk_result_outbox WHERE control_gmail_id = 'ctrl-unk' AND kind = 'result'"
+            "SELECT body FROM desk_result_outbox WHERE control_gmail_id = 'ctrl-unk' AND kind LIKE 'result%'"
         ).fetchone()["body"]
         self.assertIn("SEND_STAGE=unknown", unknown_body)
         self.assertEqual(execute_desk_queued_sends(self.layer, MemorySendTransport()), [])
@@ -238,6 +248,228 @@ class DeskOutcomeTests(unittest.TestCase):
         leftover = action_row(self.layer, 1)
         self.assertEqual(leftover["queued_by"], QUEUED_BY_PHASEE)
         self.assertEqual(leftover["status"], STATUS_RECEIPT_VERIFIED)
+
+    def _pending_results(self, control_id: str | None = None) -> list[dict]:
+        sql = "SELECT * FROM desk_result_outbox WHERE kind LIKE 'result%' AND status = 'pending'"
+        params: tuple = ()
+        if control_id:
+            sql += " AND control_gmail_id = ?"
+            params = (control_id,)
+        return [dict(row) for row in self.layer.conn.execute(sql, params).fetchall()]
+
+    def _result_rows(self) -> list[dict]:
+        return [dict(row) for row in self.layer.conn.execute("SELECT * FROM desk_result_outbox WHERE kind LIKE 'result%' ORDER BY id").fetchall()]
+
+    def _mark_pending_results_sent(self) -> None:
+        self.layer.conn.execute("UPDATE desk_result_outbox SET status = 'sent' WHERE kind LIKE 'result%' AND status = 'pending'")
+
+    def _seed_legacy_result(self, control_id: str, kind: str, status: str = "sent", body: str = "legacy\n", nonce: str | None = None) -> None:
+        ensure_bridge_tables(self.layer)
+        self.layer.conn.execute(
+            """
+            INSERT INTO desk_result_outbox
+                (control_gmail_id, nonce, kind, subject, body, status, created_at, sent_at)
+            VALUES (?, ?, ?, ?, ?, ?, '2026-09-12T17:20:00+00:00', '2026-09-12T17:20:01+00:00')
+            """,
+            (control_id, nonce, kind, f"{kind} subject", body, status),
+        )
+
+    def _inbox_copy(self, **overrides) -> dict:
+        item = {
+            "from": MAILBOX,
+            "to": [ALLOWED_SENDER],
+            "cc": [],
+            "bcc": [],
+            "subject": DESK_SEND_SUBJECT,
+            "body": DESK_SEND_BODY,
+            "label_ids": ["INBOX", "UNREAD"],
+            "id": "daniel-copy",
+        }
+        item.update(overrides)
+        return item
+
+    def test_four_stage_sequence_keeps_audit_and_enqueues_receipt(self) -> None:
+        self._failed_then_ready()
+        stages = (
+            (STATUS_FAILED, STAGE_FAILED, "result_failed"),
+            (STATUS_ATTEMPTED, STAGE_PROVIDER_ACCEPTED, "result_provider_accepted"),
+            (STATUS_SENT_VERIFIED, STAGE_SENT_VERIFIED, "result_sent_verified"),
+            (STATUS_RECEIPT_VERIFIED, STAGE_RECIPIENT_RECEIPT, "result_recipient_receipt_verified"),
+        )
+        for status, stage, kind in stages:
+            consumed = 1 if status in {STATUS_SENT_VERIFIED, STATUS_RECEIPT_VERIFIED} else 0
+            mark_action(self.layer, 2, status=status, consumed=consumed)
+            queued = enqueue_send_outcome(self.layer, 2)
+            self.assertTrue(queued["ok"], queued)
+            self.assertTrue(queued["enqueued"], queued)
+            pending = self._pending_results()
+            self.assertEqual(len(pending), 1, pending)
+            self.assertEqual(pending[0]["kind"], kind)
+            self.assertEqual(pending[0]["status"], "pending")
+            self.assertIn(f"SEND_STAGE={stage}", pending[0]["body"])
+            self._mark_pending_results_sent()
+        rows = self._result_rows()
+        self.assertEqual([row["kind"] for row in rows], [kind for _status, _stage, kind in stages])
+        self.assertTrue(all(row["status"] == "sent" for row in rows))
+        restart = enqueue_send_outcome(self.layer, 2)
+        self.assertTrue(restart.get("already_reported"), restart)
+        self.assertFalse(restart.get("enqueued"))
+        self.assertEqual(self._pending_results(), [])
+
+    def test_legacy_result_kinds_do_not_drop_later_stages(self) -> None:
+        action = self._failed_then_ready()
+        control_id = action["control_gmail_id"]
+        self._seed_legacy_result(control_id, "result", body="old queued result\n")
+        self._seed_legacy_result(control_id, "result_send", body="SEND_STAGE=failed\n")
+        self._seed_legacy_result(control_id, "result_outcome", body="SEND_STAGE=provider_accepted\n")
+        queued_failed = enqueue_send_outcome(self.layer, 2)
+        self.assertTrue(queued_failed.get("already_reported"), queued_failed)
+        self.assertFalse(queued_failed.get("enqueued"))
+        self.assertEqual(self._pending_results(), [])
+        mark_action(self.layer, 2, status=STATUS_SENT_VERIFIED, consumed=1)
+        queued_sent = enqueue_send_outcome(self.layer, 2)
+        self.assertTrue(queued_sent["ok"] and queued_sent["enqueued"], queued_sent)
+        pending = self._pending_results()
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]["kind"], "result_sent_verified")
+        self._mark_pending_results_sent()
+        mark_action(self.layer, 2, status=STATUS_RECEIPT_VERIFIED)
+        queued_receipt = enqueue_send_outcome(self.layer, 2)
+        self.assertTrue(queued_receipt["ok"] and queued_receipt["enqueued"], queued_receipt)
+        pending = self._pending_results()
+        self.assertEqual(len(pending), 1, pending)
+        self.assertEqual(pending[0]["kind"], "result_recipient_receipt_verified")
+        kinds = {row["kind"] for row in self._result_rows()}
+        self.assertEqual(
+            kinds,
+            {"result", "result_send", "result_outcome", "result_sent_verified", "result_recipient_receipt_verified"},
+        )
+
+    def test_duplicate_sending_unknown_and_pending_consolidation(self) -> None:
+        action = self._failed_then_ready()
+        control_id = action["control_gmail_id"]
+        first = enqueue_send_outcome(self.layer, 2)
+        self.assertTrue(first["enqueued"], first)
+        again = enqueue_send_outcome(self.layer, 2)
+        self.assertTrue(again.get("already_reported"), again)
+        self.assertFalse(again.get("enqueued"))
+        self.assertEqual(len(self._pending_results()), 1)
+        mark_action(self.layer, 2, status=STATUS_ATTEMPTED)
+        changed = enqueue_send_outcome(self.layer, 2)
+        self.assertTrue(changed.get("updated_pending") and changed.get("enqueued"), changed)
+        pending = self._pending_results()
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]["kind"], "result_provider_accepted")
+        self.assertIn("SEND_STAGE=provider_accepted", pending[0]["body"])
+        self._mark_pending_results_sent()
+        mark_action(self.layer, 2, status=STATUS_UNKNOWN)
+        self._seed_legacy_result(control_id, "result_unknown", status="sending", body="SEND_STAGE=unknown\n")
+        protected = enqueue_send_outcome(self.layer, 2)
+        self.assertTrue(protected.get("already_reported"), protected)
+        self.assertFalse(protected.get("enqueued"))
+        self.assertEqual(self._pending_results(), [])
+        self.layer.conn.execute(
+            "UPDATE desk_result_outbox SET status = 'unknown' WHERE kind = 'result_unknown'"
+        )
+        still = enqueue_send_outcome(self.layer, 2)
+        self.assertTrue(still.get("already_reported"), still)
+        self.assertFalse(still.get("enqueued"))
+        self.assertEqual(self._pending_results(), [])
+
+    def test_requested_verify_failures_are_honest(self) -> None:
+        self._failed_then_ready()
+        mark_action(self.layer, 2, status=STATUS_SENT_VERIFIED, consumed=1)
+        missing = report_desk_send_outcome(
+            self.layer,
+            action_id=2,
+            case_id=fresh_case_id(),
+            verify_recipient_live=True,
+            inbox_transport=MemoryVerifyTransport(),
+        )
+        self.assertFalse(missing["ok"], missing)
+        self.assertIn("recipient_verify_failed", missing["blockers"])
+        self.assertEqual(missing["blockers"], ["recipient_verify_failed"])
+        self.assertEqual(missing["recipient_verify"], {"ok": False, "reason": "recipient_count", "count": 0, "action_id": 2})
+        self.assertTrue(missing["sent_verified"])
+        self.assertFalse(missing["recipient_receipt_verified"])
+        self.assertEqual(action_row(self.layer, 2)["status"], STATUS_SENT_VERIFIED)
+
+        duplicate = report_desk_send_outcome(
+            self.layer,
+            action_id=2,
+            case_id=fresh_case_id(),
+            verify_recipient_live=True,
+            inbox_transport=MemoryVerifyTransport(inbox=[self._inbox_copy(id="a"), self._inbox_copy(id="b")]),
+        )
+        self.assertFalse(duplicate["ok"], duplicate)
+        self.assertIn("recipient_verify_failed", duplicate["blockers"])
+        self.assertEqual(duplicate["recipient_verify"]["reason"], "recipient_count")
+        self.assertEqual(duplicate["recipient_verify"]["count"], 2)
+        self.assertTrue(duplicate["sent_verified"])
+        self.assertFalse(duplicate["recipient_receipt_verified"])
+        self.assertEqual(action_row(self.layer, 2)["status"], STATUS_SENT_VERIFIED)
+
+        mismatched = report_desk_send_outcome(
+            self.layer,
+            action_id=2,
+            case_id=fresh_case_id(),
+            verify_recipient_live=True,
+            inbox_transport=MemoryVerifyTransport(
+                inbox=[self._inbox_copy(body=DESK_SEND_BODY.replace("does not book", "DOES book"))]
+            ),
+        )
+        self.assertFalse(mismatched["ok"], mismatched)
+        self.assertIn("recipient_verify_failed", mismatched["blockers"])
+        self.assertEqual(mismatched["recipient_verify"]["reason"], "content_mismatch")
+        self.assertTrue(mismatched["sent_verified"])
+        self.assertFalse(mismatched["recipient_receipt_verified"])
+        self.assertEqual(action_row(self.layer, 2)["status"], STATUS_SENT_VERIFIED)
+
+        sent_failed = report_desk_send_outcome(
+            self.layer,
+            action_id=2,
+            case_id=fresh_case_id(),
+            verify_sent_live=True,
+            sent_transport=MemoryVerifyTransport(),
+        )
+        self.assertFalse(sent_failed["ok"], sent_failed)
+        self.assertIn("sent_verify_failed", sent_failed["blockers"])
+        self.assertFalse(sent_failed["sent_verify"]["ok"])
+        self.assertTrue(sent_failed["sent_verified"])
+        self.assertEqual(action_row(self.layer, 2)["status"], STATUS_SENT_VERIFIED)
+
+        ensure_bridge_tables(self.layer)
+        self._seed_legacy_result(action_row(self.layer, 2)["control_gmail_id"], "result_sent_verified", status="superseded")
+        enqueue_failed = report_desk_send_outcome(
+            self.layer,
+            action_id=2,
+            case_id=fresh_case_id(),
+            enqueue_result=True,
+        )
+        self.assertFalse(enqueue_failed["ok"], enqueue_failed)
+        self.assertIn("outbox_enqueue_failed", enqueue_failed["blockers"])
+        self.assertFalse(enqueue_failed["outbox"].get("enqueued"))
+        self.assertEqual(enqueue_failed["outbox"].get("reason"), "outbox_insert_ignored")
+        self.assertTrue(enqueue_failed["sent_verified"])
+        self.assertFalse(enqueue_failed["recipient_receipt_verified"])
+        self.assertEqual(self._pending_results(), [])
+
+        exact = report_desk_send_outcome(
+            self.layer,
+            action_id=2,
+            case_id=fresh_case_id(),
+            verify_recipient_live=True,
+            enqueue_result=True,
+            inbox_transport=MemoryVerifyTransport(inbox=[self._inbox_copy()]),
+        )
+        self.assertTrue(exact["ok"], exact)
+        self.assertTrue(exact["recipient_receipt_verified"])
+        self.assertTrue(exact["sent_verified"])
+        self.assertEqual(action_row(self.layer, 2)["status"], STATUS_RECEIPT_VERIFIED)
+        self.assertTrue(exact["outbox"].get("enqueued") or exact["outbox"].get("updated_pending"), exact["outbox"])
+        pending = self._pending_results()
+        self.assertEqual(len(pending), 1, pending)
+        self.assertEqual(pending[0]["kind"], "result_recipient_receipt_verified")
 
     def test_recovery_report_does_not_forge_receipt_or_resend(self) -> None:
         self._failed_then_ready()
