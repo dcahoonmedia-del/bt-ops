@@ -87,15 +87,26 @@ def is_lead_status(customer: dict[str, Any] | None) -> bool:
     return status in LEAD_STATUSES
 
 
-def current_gates(*, writes_enabled: bool, mapping_verified: bool, api_role: str = "readonly") -> dict[str, Any]:
+def current_gates(
+    *,
+    writes_enabled: bool,
+    mapping_verified: bool,
+    api_role: str = "readonly",
+    credential_ready: bool = False,
+    oauth_ready: bool = False,
+) -> dict[str, Any]:
     readonly = str(api_role or "readonly").strip().lower() == "readonly"
     return {
         "writes_enabled": bool(writes_enabled) and not readonly,
         "api_role": "readonly" if readonly else "not_readonly",
         "auth_query_parameter": "api_key",
         "authorization_header_auth": False,
-        "fieldwork_get_auth_verified": True,
-        "fieldwork_api_auth_verified": True,
+        "fieldwork_get_protocol_historically_verified": True,
+        "credential_ready": bool(credential_ready),
+        "oauth_ready": bool(oauth_ready),
+        "fieldwork_get_auth_verified": False,
+        "fieldwork_api_auth_verified": False,
+        "live_ready": False,
         "check_connection_is_not_auth_proof": True,
         "work_order_get_id_pairs_verified": True,
         "work_order_id_mapping_verified": True,

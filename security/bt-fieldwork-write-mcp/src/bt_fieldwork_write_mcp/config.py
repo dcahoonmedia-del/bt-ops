@@ -46,7 +46,7 @@ class Settings:
         return cls(
             writes_enabled=_flag("FIELDWORK_WRITES_ENABLED", False),
             mapping_verified=_flag("FIELDWORK_MAPPING_VERIFIED", False),
-            store_path=Path(os.environ.get("FW_WRITE_STORE") or "/tmp/bt-fieldwork-write-mcp.sqlite"),
+            store_path=Path(os.environ.get("FW_WRITE_STORE") or "/var/lib/bt-fieldwork-write-mcp/write.sqlite"),
             api_base=os.environ.get("FIELDWORK_API_BASE") or API_BASE,
             oauth_issuer=os.environ.get("FW_WRITE_OAUTH_ISSUER", "").strip(),
             oauth_audience=os.environ.get("FW_WRITE_OAUTH_AUDIENCE", "").strip(),

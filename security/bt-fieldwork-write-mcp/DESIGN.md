@@ -15,7 +15,7 @@ Isolated sibling of Lead Desk and the existing read-only Fieldwork client. This 
 ## Fail-closed (honest, not stub-as-verified)
 
 - Location notes: typed GET/PATCH against an injected transport. Offline tests use `FakeTransport`. Live HQ is not called here.
-- Work-order notes: path ID vs nested occurrence ID mapping is **unverified**. Execute reports `work_order_id_mapping_unverified` and does not PATCH.
+- Work-order notes do not persist a proposal. Typed read and identity relationships are not validated, so propose returns `live_patch_untested` with no before/after. Execute stays blocked. Live PATCH is untested.
 - Create work order: response schema / remote idempotency / arrival-window representation are **unverified**. Execute reports `work_order_schema_unverified`. `use_time_window` is rejected as `arrival_window_unverified` so start/finish is not treated as a promised arrival window.
 - No customer create. No Lead-status accounts. No `on_our_way` or messaging tools. No generic HTTP passthrough.
 
@@ -33,4 +33,4 @@ Isolated sibling of Lead Desk and the existing read-only Fieldwork client. This 
 
 - Name only: `BT-fieldworks-key`.
 - Future resource: `projects/bt-intake-proof/secrets/BT-fieldworks-key/versions/latest`.
-- Runtime loads env/file into `InMemoryApiKey`. Never logs or returns the value. This package does not call Secret Manager.
+- Production reads one secret, `projects/bt-intake-proof/secrets/BT-fieldworks-key/versions/latest`, through the Secret Manager client into `InMemoryApiKey`. Exceptions are replaced with `secret_read_failed` and are not chained. Env and file loads are offline-only. This package does not call GCP in tests.

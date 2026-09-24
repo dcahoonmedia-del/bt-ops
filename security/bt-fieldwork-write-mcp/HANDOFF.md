@@ -20,21 +20,20 @@ or:
 bash security/bt-fieldwork-write-mcp/scripts/run_offline_tests.sh
 ```
 
-Needs Python 3, `mcp>=1.0`, `PyJWT>=2.7`. No network, GCP, or Fieldwork access.
+Needs Debian 12 Python 3.11+ (this SDK line requires Python >=3.10), `mcp>=2.2.0,<3` (`mcp.server.mcpserver`), and the rest of `requirements.txt`. No network, GCP, or Fieldwork access. MCP 1.x cannot import the server entry point.
 
-Local HEAD: `cc16bf4c77eadd820c788ae114d4f55daf0929da` (cleanup). Implementation commit: `4c935a8e7385e2ac727d9a09a1e41a9e6253f790`.  
-Until a push is authorized, Codex can retrieve this workspace at those SHAs (`git show cc16bf4`). After an authorized push: `git fetch origin cursor/bt-fw-write-mcp-e9a8 && git checkout cursor/bt-fw-write-mcp-e9a8`.
+This checkout is local only. Do not push. Retrieve the review archive from the base64 text file, not from GitHub.
 
 ## What Codex should independently confirm
 
 - Default writes disabled; readonly role blocks execute; `approved=true` is not an approval.
 - GET auth is `api_key` query parameter. Do not log URLs or HTTP exception strings.
 - Identity mismatch, unknown fields, stale/expired/replayed approvals, concurrent duplicates, crash/ambiguous no-retry, failed readback, rejected OAuth.
-- Work-order notes and create-order execute fail closed and report mapping/schema gates.
+- Work-order notes propose returns `live_patch_untested` with no before/after. Create-order execute stays `work_order_schema_unverified`.
 - No customer create, Lead-status write, messaging, or HTTP passthrough tools.
 - Secret value never appears in repr, audit, or tool results.
 - Do not call live Fieldwork. Do not treat this package as live-ready.
 
 ## Remaining live blockers
 
-OAuth authorization-server + connector attach; Fieldwork API auth (401 on token GET; `check_connection` is not proof); isolated SA + one-secret IAM not applied; mapping/schema/arrival-window unverified; writes disabled.
+OAuth authorization server is not configured. Current Fieldwork credential readiness is not live-verified (`check_connection` is not proof). Isolated SA and one-secret IAM are not applied. Live PATCH, create schema, and arrival-window writes are unverified. Writes stay disabled. `credential_ready` is not live readiness.

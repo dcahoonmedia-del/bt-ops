@@ -67,7 +67,7 @@ def occurrence_ids(record: dict[str, Any]) -> dict[str, Any]:
         "arrival_time_window": row.get("arrival_time_window"),
         "arrival_time_window_start": row.get("arrival_time_window_start"),
         "arrival_time_window_end": row.get("arrival_time_window_end"),
-        "arrival_window_display": row.get("arrival_window_display") or row.get("arrival_time_window_display"),
+        "arrival_time_window_str": row.get("arrival_time_window_str"),
     }
 
 
@@ -77,7 +77,7 @@ def location_snapshot(customer: dict[str, Any], location: dict[str, Any]) -> dic
     if not address and isinstance(location.get("address_attributes"), dict):
         address = location["address_attributes"]
     return {
-        "customer_id": customer.get("id") or location.get("customer_id"),
+        "customer_id": customer.get("id"),
         "customer_status": customer.get("customer_status") or customer.get("status") or customer.get("type"),
         "location_id": location.get("id"),
         "name": location.get("name"),
@@ -87,12 +87,32 @@ def location_snapshot(customer: dict[str, Any], location: dict[str, Any]) -> dic
     }
 
 
+def _positive_id(value: Any) -> str | None:
+    if isinstance(value, bool) or isinstance(value, float):
+        return None
+    if isinstance(value, int):
+        text = str(value)
+    elif isinstance(value, str) and value.strip().isdigit():
+        text = str(int(value.strip()))
+    else:
+        return None
+    if int(text) <= 0:
+        return None
+    return text
+
+
 def snapshot_hash(snapshot: dict[str, Any]) -> str:
     return sha256_hex(canonical(snapshot))
 
 
 class Transport(Protocol):
-    def request(self, method: str, path: str, body: dict[str, Any] | None = None) -> tuple[int, Any]:
+    def request(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None = None,
+        query: dict[str, Any] | None = None,
+    ) -> tuple[int, Any]:
         ...
 
 
@@ -109,12 +129,22 @@ class HttpTransport:
         self.api_base = api_base.rstrip("/")
         self._opener = opener or urllib.request.build_opener(_NoRedirect)
 
-    def request(self, method: str, path: str, body: dict[str, Any] | None = None) -> tuple[int, Any]:
+    def request(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None = None,
+        query: dict[str, Any] | None = None,
+    ) -> tuple[int, Any]:
         if not self._key.present():
             raise GateError(GATE_AUTH_UNRESOLVED, reason="fieldwork_api_key_absent")
         clean = path.split("?", 1)[0]
-        query = urllib.parse.urlencode({"api_key": self._key.get()})
-        url = f"{self.api_base}{clean}?{query}"
+        params: list[tuple[str, str]] = [("api_key", self._key.get())]
+        for key, value in (query or {}).items():
+            if key == "api_key" or key not in ALLOWED_QUERY or value is None:
+                continue
+            params.append((key, str(value)))
+        url = f"{self.api_base}{clean}?{urllib.parse.urlencode(params)}"
         data = None if body is None else urllib.parse.urlencode(_flatten(body)).encode("utf-8")
         req = Request(url, data=data, method=method)
         req.add_header("Accept", "application/json")
@@ -151,23 +181,24 @@ class HttpTransport:
             raise GateError("unreadable_response") from None
 
 
-def _flatten(body: dict[str, Any], prefix: str = "") -> dict[str, Any]:
-    flat: dict[str, Any] = {}
+ALLOWED_QUERY = frozenset({"per_page", "page"})
+
+
+def _flatten(body: dict[str, Any], prefix: str = "") -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
     for key, value in body.items():
         name = f"{prefix}[{key}]" if prefix else str(key)
         if isinstance(value, dict):
-            flat.update(_flatten(value, name))
+            pairs.extend(_flatten(value, name))
         elif isinstance(value, list):
-            for idx, item in enumerate(value):
+            for item in value:
                 if isinstance(item, dict):
-                    flat.update(_flatten(item, f"{name}[]"))
+                    pairs.extend(_flatten(item, f"{name}[]"))
                 else:
-                    flat[f"{name}[]"] = item if idx == 0 and f"{name}[]" not in flat else item
-                    if idx:
-                        flat[f"{name}[{idx}]"] = item
+                    pairs.append((f"{name}[]", str(item)))
         elif value is not None:
-            flat[name] = value
-    return flat
+            pairs.append((name, str(value)))
+    return pairs
 
 
 class FakeTransport:
@@ -189,8 +220,14 @@ class FakeTransport:
         location["customer_id"] = customer["id"]
         self.locations[f"{cid}:{lid}"] = location
 
-    def request(self, method: str, path: str, body: dict[str, Any] | None = None) -> tuple[int, Any]:
-        self.calls.append({"method": method, "path": path, "body": body})
+    def request(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None = None,
+        query: dict[str, Any] | None = None,
+    ) -> tuple[int, Any]:
+        self.calls.append({"method": method, "path": path, "body": body, "query": query})
         if method in {"POST", "PATCH", "PUT", "DELETE"}:
             if self.write_mode == "ambiguous":
                 raise AmbiguousWriteError("fake_ambiguous")
@@ -271,17 +308,41 @@ class TypedFieldworkClient:
         self.transport = transport
         self.mapping_verified = mapping_verified
 
+    def api_key_present(self) -> bool:
+        key = getattr(self.transport, "_key", None)
+        return bool(key and key.present())
+
     def get_customer(self, customer_id: str) -> dict[str, Any]:
         status, body = self.transport.request("GET", f"/customers/{customer_id}")
         if status != 200 or not isinstance(body, dict):
             raise GateError("customer_not_found", status=status)
+        if "customer" in body or "service_location" in body or "appointment_occurrence" in body:
+            raise GateError("customer_shape_unverified")
+        if _positive_id(body.get("id")) is None:
+            raise GateError("customer_shape_unverified")
         return body
 
     def get_location(self, customer_id: str, location_id: str) -> dict[str, Any]:
         status, body = self.transport.request("GET", f"/customers/{customer_id}/service_locations/{location_id}")
-        if status != 200 or not isinstance(body, dict):
-            raise GateError("location_not_found", status=status)
+        if status != 200 or not isinstance(body, dict) or "service_location" not in body:
+            raise GateError("location_shape_unverified", status=status)
         return unwrap_service_location(body)
+
+    def assert_location_identity(self, requested_customer: str, requested_location: str, customer: dict[str, Any], location: dict[str, Any]) -> None:
+        customer_id = _positive_id(requested_customer)
+        location_id = _positive_id(requested_location)
+        body_customer = _positive_id(customer.get("id"))
+        body_location = _positive_id(location.get("id"))
+        body_owner = _positive_id(location.get("customer_id"))
+        if not customer_id or not location_id or body_customer != customer_id or body_location != location_id or body_owner != body_customer:
+            raise GateError("identity_mismatch")
+        status = str(customer.get("customer_status") or "").strip().lower()
+        if status != "active":
+            raise GateError("never_lead_status_accounts" if status in {"lead", "leads"} else "customer_status_unverified")
+        address = location.get("address") if isinstance(location.get("address"), dict) else {}
+        name = location.get("name")
+        if not isinstance(name, str) or not name.strip() or _positive_id(location.get("tax_rate_id")) is None or _positive_id(address.get("id")) is None:
+            raise GateError("identity_mismatch")
 
     def search_work_orders(self) -> list[dict[str, Any]]:
         status, body = self.transport.request("GET", "/work_orders/search")

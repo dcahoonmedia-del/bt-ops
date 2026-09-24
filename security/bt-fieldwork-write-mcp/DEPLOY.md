@@ -15,7 +15,7 @@ This service is a **new** systemd unit and working tree. Do not install into `/o
 - Root: `/opt/bt-fieldwork-write-mcp`
 - Store: `/var/lib/bt-fieldwork-write-mcp/write.sqlite` (0600)
 - Env file: `/etc/bt-fieldwork-write-mcp.env` (no API key value)
-- Key file: tmpfs `/run/bt-fieldwork-write-mcp/api-key` mode 0400, loaded in memory only, never copied into the repo or logs
+- API key: one in-memory Secret Manager read of `BT-fieldworks-key` (`FIELDWORK_USE_SECRET_MANAGER=1`). Env and key-file loads are offline-only and must not be the production path. Never copy the value into the repo or logs.
 
 ## Required env (defaults stay fail-closed)
 
@@ -23,7 +23,7 @@ This service is a **new** systemd unit and working tree. Do not install into `/o
 FIELDWORK_WRITES_ENABLED=0
 FIELDWORK_MAPPING_VERIFIED=0
 FIELDWORK_API_BASE=https://api3.fieldworkhq.com/v3.1
-FIELDWORK_API_KEY_FILE=/run/bt-fieldwork-write-mcp/api-key
+FIELDWORK_USE_SECRET_MANAGER=1
 FW_WRITE_STORE=/var/lib/bt-fieldwork-write-mcp/write.sqlite
 FW_WRITE_TRANSPORT=http
 FW_WRITE_OAUTH_ISSUER=
@@ -50,7 +50,7 @@ FW_WRITE_OPERATOR_KEY=   # independent HMAC key; not the Fieldwork secret
 ## Live blockers that remain after this offline code
 
 1. Authorization server (OAuth 2.1) not configured; connector attach not done.
-2. Fieldwork API auth unresolved (`Token token=...` 401 on customers).
+2. Current Fieldwork credential readiness is not live-verified. Historical GET protocol used the `api_key` query parameter. `check_connection` is not proof. The attached receiver identity cannot read the secret.
 3. Receiver SA cannot read `BT-fieldworks-key`; isolated write SA + one-secret IAM not applied.
 4. Work-order path/occurrence ID mapping unverified.
 5. Create-order response schema, remote idempotency, and arrival-window representation unverified.

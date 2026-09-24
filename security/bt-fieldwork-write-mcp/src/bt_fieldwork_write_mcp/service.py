@@ -72,10 +72,16 @@ class WriteService:
         self._now = now or (lambda: datetime.now(timezone.utc))
 
     def gates(self) -> dict[str, Any]:
+        key_ready = False
+        key = getattr(self.client, "api_key_present", None)
+        if callable(key):
+            key_ready = bool(key())
         return current_gates(
             writes_enabled=self.settings.writes_enabled,
             mapping_verified=self.settings.mapping_verified,
             api_role=self.settings.api_role,
+            credential_ready=key_ready,
+            oauth_ready=self.settings.oauth_ready(),
         )
 
     def _fail(self, gate: str, **detail: Any) -> dict[str, Any]:
@@ -118,32 +124,22 @@ class WriteService:
         if not customer_id or not location_id or not isinstance(notes, str):
             return self._fail("unknown_field", fields=["customer_id", "location_id", "notes"])
         customer = self.client.get_customer(customer_id)
-        self.client.reject_if_lead(customer)
         location = self.client.get_location(customer_id, location_id)
+        self.client.assert_location_identity(customer_id, location_id, customer, location)
         before = location_snapshot(customer, location)
         after = dict(before)
         after["notes"] = notes
         return self._persist_proposal(OP_LOCATION_NOTES, payload, identity, f"location:{customer_id}:{location_id}", before, after)
 
     def _propose_work_order_notes(self, payload: dict[str, Any], identity: dict[str, str]) -> dict[str, Any]:
+        del identity
         assert_only(payload, WORK_ORDER_NOTE_FIELDS, label="work_order")
-        if not payload.get("work_order_id") and not payload.get("service_appointment_id"):
-            return self._fail("unknown_field", fields=["work_order_id", "service_appointment_id"])
-        subject = f"work_order:{payload.get('work_order_id') or payload.get('service_appointment_id')}"
-        before = {
-            "work_order_id": payload.get("work_order_id"),
-            "service_appointment_id": payload.get("service_appointment_id"),
-            "id_mapping": "unverified",
-            "instructions": None,
-            "private_notes": None,
-        }
-        after = dict(before)
-        after["instructions"] = payload.get("instructions")
-        after["private_notes"] = payload.get("private_notes")
-        result = self._persist_proposal(OP_WORK_ORDER_NOTES, payload, identity, subject, before, after)
-        result["gates"] = self.gates()
-        result["execute_blocked"] = [GATE_LIVE_PATCH_UNTESTED]
-        return result
+        return self._fail(
+            GATE_LIVE_PATCH_UNTESTED,
+            supported=False,
+            reason="typed_read_and_identity_not_validated",
+            proposal=False,
+        )
 
     def _propose_create(self, payload: dict[str, Any], identity: dict[str, str]) -> dict[str, Any]:
         assert_only(payload, CREATE_FIELDS, label="create")
@@ -330,6 +326,7 @@ class WriteService:
             customer = self.client.get_customer(str(payload["customer_id"]))
             self.client.reject_if_lead(customer)
             location = self.client.get_location(str(payload["customer_id"]), str(payload["location_id"]))
+            self.client.assert_location_identity(str(payload["customer_id"]), str(payload["location_id"]), customer, location)
         except GateError as exc:
             return self._fail(exc.gate, proposal_id=proposal["proposal_id"], **exc.detail)
         current = location_snapshot(customer, location)
@@ -381,8 +378,13 @@ class WriteService:
             "gates": self.gates(),
         }
 
-    def inspect(self, proposal_id: str) -> dict[str, Any]:
+    def inspect(self, proposal_id: str, identity: dict[str, str] | None) -> dict[str, Any]:
+        ident = self._identity_or_reject(identity)
+        if "ok" in ident and ident.get("ok") is False:
+            return ident
         proposal = self.store.get_proposal(proposal_id)
         if proposal is None:
             return self._fail("unknown_operation", proposal_id=proposal_id)
+        if proposal["identity"] != ident:
+            return self._fail(GATE_IDENTITY, proposal_id=proposal_id)
         return {"ok": True, **redact(proposal), "gates": self.gates()}

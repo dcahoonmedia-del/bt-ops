@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any
 
+from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import MCPServer
 
@@ -26,13 +27,19 @@ def _auth_settings(settings: Settings) -> AuthSettings | None:
     )
 
 
-def build_mcp(
-    service: WriteService,
-    settings: Settings,
-    verifier: JwtTokenVerifier,
-    *,
-    identity_provider: Callable[[], dict[str, str] | None] | None = None,
-) -> MCPServer:
+def request_identity() -> dict[str, str] | None:
+    token = get_access_token()
+    if token is None:
+        return None
+    claims = dict(token.claims or {})
+    email = str(claims.get("email") or "").strip().lower()
+    sub = str(token.subject or claims.get("sub") or "").strip()
+    if not email or not sub:
+        return None
+    return {"sub": sub, "email": email}
+
+
+def build_mcp(service: WriteService, settings: Settings, verifier: JwtTokenVerifier) -> MCPServer:
     auth = _auth_settings(settings)
     server = MCPServer(
         name="bt-fieldwork-write-mcp",
@@ -48,17 +55,14 @@ def build_mcp(
         auth=auth,
     )
 
-    def _identity() -> dict[str, str] | None:
-        if identity_provider is not None:
-            return identity_provider()
-        return None
-
     @server.tool(name="report_gates", description="Report closed write gates. Not live readiness.")
-    def report_gates() -> dict[str, Any]:
+    async def report_gates() -> dict[str, Any]:
         return {
             "ok": True,
             "live_ready": False,
-            "fieldwork_api_auth_verified": True,
+            "fieldwork_api_auth_verified": False,
+            "credential_ready": service.gates().get("credential_ready"),
+            "oauth_ready": settings.oauth_ready(),
             "live_patch_tested": False,
             "check_connection_is_not_auth_proof": True,
             "gates": service.gates(),
@@ -66,8 +70,8 @@ def build_mcp(
         }
 
     @server.tool(name="propose_write", description="Build an immutable exact-before/after proposal. Does not write.")
-    def propose_write(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
-        identity = _identity()
+    async def propose_write(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
+        identity = request_identity()
         if identity is None:
             return {"ok": False, "gate": GATE_AUTH, "gates": service.gates()}
         return redact(service.propose(operation, payload, identity))
@@ -76,12 +80,12 @@ def build_mcp(
         name="execute_approved_write",
         description="Execute one independently approved proposal. Ignores approved=true.",
     )
-    def execute_approved_write(
+    async def execute_approved_write(
         proposal_id: str,
         operator_approval: str = "",
         approved: bool | None = None,
     ) -> dict[str, Any]:
-        identity = _identity()
+        identity = request_identity()
         if identity is None:
             return {"ok": False, "gate": GATE_AUTH, "gates": service.gates()}
         return redact(
@@ -94,18 +98,16 @@ def build_mcp(
         )
 
     @server.tool(name="inspect_proposal", description="Inspect a stored proposal. No secrets.")
-    def inspect_proposal(proposal_id: str) -> dict[str, Any]:
-        return redact(service.inspect(proposal_id))
+    async def inspect_proposal(proposal_id: str) -> dict[str, Any]:
+        identity = request_identity()
+        if identity is None:
+            return {"ok": False, "gate": GATE_AUTH, "gates": service.gates()}
+        return redact(service.inspect(proposal_id, identity))
 
     return server
 
 
-def build_server(
-    settings: Settings | None = None,
-    service: WriteService | None = None,
-    *,
-    identity_provider: Callable[[], dict[str, str] | None] | None = None,
-) -> MCPServer:
+def build_server(settings: Settings | None = None, service: WriteService | None = None) -> MCPServer:
     from .fieldwork import HttpTransport, TypedFieldworkClient
     from .store import WriteStore
 
@@ -116,7 +118,9 @@ def build_server(
         client = TypedFieldworkClient(transport, mapping_verified=settings.mapping_verified)
         service = WriteService(settings, store, client)
     verifier = JwtTokenVerifier(settings)
-    return build_mcp(service, settings, verifier, identity_provider=identity_provider)
+    if not settings.oauth_ready():
+        raise RuntimeError("oauth_required")
+    return build_mcp(service, settings, verifier)
 
 
 def closed_startup_gates(settings: Settings) -> dict[str, Any]:
@@ -128,5 +132,7 @@ def closed_startup_gates(settings: Settings) -> dict[str, Any]:
             writes_enabled=settings.writes_enabled,
             mapping_verified=settings.mapping_verified,
             api_role=settings.api_role,
+            credential_ready=False,
+            oauth_ready=settings.oauth_ready(),
         ),
     }

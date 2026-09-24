@@ -48,7 +48,7 @@ def _settings(path: Path, **overrides: object) -> Settings:
         oauth_audience="bt-fieldwork-write",
         oauth_resource="https://write.example.test/mcp",
         oauth_jwks_url="",
-        hs256_secret="hs256-test-secret",
+        hs256_secret="hs256-test-secret-32bytes-min-ok",
         required_scopes=("fieldwork.write",),
         permitted_users=("daniel@btpestcontrol.com",),
         operator_key="operator-test-key",
@@ -262,11 +262,12 @@ class WriteMcpTests(unittest.TestCase):
             {"work_order_id": "10", "service_appointment_id": "20", "instructions": "gate code"},
             IDENTITY,
         )
-        self.assertTrue(proposed["ok"], proposed)
-        self.assertIn(GATE_LIVE_PATCH_UNTESTED, proposed["execute_blocked"])
-        token = self.h.approve(proposed["proposal_id"])
-        result = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=token)
-        self.assertEqual(result["gate"], GATE_LIVE_PATCH_UNTESTED)
+        self.assertFalse(proposed["ok"])
+        self.assertEqual(proposed["gate"], GATE_LIVE_PATCH_UNTESTED)
+        self.assertFalse(proposed.get("proposal", True))
+        self.assertNotIn("before", proposed)
+        self.assertNotIn("after", proposed)
+        self.assertEqual(proposed.get("reason"), "typed_read_and_identity_not_validated")
         self.assertFalse(any(call["method"] == "PATCH" and "work_orders" in call["path"] for call in self.h.transport.calls))
 
     def test_create_work_order_fail_closed_unverified_schema(self) -> None:
@@ -347,7 +348,10 @@ class WriteMcpTests(unittest.TestCase):
     def test_gates_do_not_claim_live_readiness(self) -> None:
         gates = self.h.service.gates()
         self.assertFalse(gates["writes_enabled"])
-        self.assertTrue(gates["fieldwork_get_auth_verified"])
+        self.assertTrue(gates["fieldwork_get_protocol_historically_verified"])
+        self.assertFalse(gates["fieldwork_get_auth_verified"])
+        self.assertFalse(gates["credential_ready"])
+        self.assertFalse(gates["live_ready"])
         self.assertEqual(gates["auth_query_parameter"], "api_key")
         self.assertFalse(gates["live_patch_tested"])
         self.assertFalse(gates["arrival_window_write_verified"])
@@ -359,7 +363,7 @@ class WriteMcpTests(unittest.TestCase):
 
     def test_mcp_server_has_no_forbidden_tools(self) -> None:
         verifier = JwtTokenVerifier(self.h.settings)
-        server = build_mcp(self.h.service, self.h.settings, verifier, identity_provider=lambda: IDENTITY)
+        server = build_mcp(self.h.service, self.h.settings, verifier)
         names = {tool.name for tool in server._tool_manager.list_tools()}
         self.assertEqual(names, {"report_gates", "propose_write", "execute_approved_write", "inspect_proposal"})
         for forbidden in ("create_customer", "on_our_way", "http", "passthrough", "send_message"):
