@@ -97,13 +97,13 @@ def build_mcp(service: WriteService, settings: Settings, verifier: JwtTokenVerif
     return server
 
 
-def build_bridge_server(settings: Settings, service: WriteService) -> Any:
+def build_bridge_server(settings: Settings, service: WriteService, fieldwork_key: str = "") -> Any:
     """FastMCP Auth0 bridge. Not used by the default direct-JWT server."""
     from fastmcp import FastMCP
 
     from .auth0_bridge import bridge_identity_from_token, build_auth0_provider
 
-    provider = build_auth0_provider(settings)
+    provider = build_auth0_provider(settings, fieldwork_key=fieldwork_key)
     mcp = FastMCP(name="bt-fieldwork-write-mcp", auth=provider)
 
     def _identity() -> dict[str, str] | None:

@@ -35,9 +35,14 @@ def main() -> None:
         from .server import build_bridge_server
         from .store import WriteStore
 
+        fieldwork_key = load_api_key()
         store = WriteStore(settings.store_path)
-        client = TypedFieldworkClient(HttpTransport(load_api_key(), api_base=settings.api_base))
-        server = build_bridge_server(settings, WriteService(settings, store, client))
+        client = TypedFieldworkClient(HttpTransport(fieldwork_key, api_base=settings.api_base))
+        try:
+            server = build_bridge_server(settings, WriteService(settings, store, client), fieldwork_key=fieldwork_key.get())
+        except ValueError as exc:
+            print({"ok": False, "gate": "auth0_bridge_blocked", "reason": str(exc).split(":")[0]}, file=sys.stderr, flush=True)
+            raise SystemExit(2) from None
         server.run(transport="http")
         return
     server = build_server(settings)

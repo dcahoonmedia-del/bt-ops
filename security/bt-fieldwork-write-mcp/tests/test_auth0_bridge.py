@@ -69,14 +69,32 @@ class Auth0BridgeTests(unittest.TestCase):
     def test_production_requirements_fail_closed(self) -> None:
         settings = _bridge(self.root, auth0_base_url="http://write.example.test")
         self.assertIn("auth0_base_url", bridge_blockers(settings))
+        http_callback = _bridge(self.root, auth0_allowed_callbacks=("http://example.com/callback",))
+        self.assertIn("auth0_allowed_callbacks", bridge_blockers(http_callback))
+        userinfo = _bridge(self.root, auth0_allowed_callbacks=("https://user:secret@chatgpt.com/callback",))
+        self.assertIn("auth0_allowed_callbacks", bridge_blockers(userinfo))
+        fragment = _bridge(self.root, auth0_allowed_callbacks=("https://chatgpt.com/callback#frag",))
+        self.assertIn("auth0_allowed_callbacks", bridge_blockers(fragment))
         wild = _bridge(self.root, auth0_allowed_callbacks=("https://*.example.com/cb",))
         self.assertIn("auth0_allowed_callbacks", bridge_blockers(wild))
         tmp = _bridge(self.root, auth0_storage_path="/tmp/bridge")
         self.assertIn("auth0_storage_path", bridge_blockers(tmp))
+        private_tmp = _bridge(self.root, auth0_storage_path="/private/tmp/auth0-store")
+        self.assertIn("auth0_storage_path", bridge_blockers(private_tmp))
         short = _bridge(self.root, auth0_jwt_signing_key="short-key")
         self.assertIn("auth0_jwt_signing_key", bridge_blockers(short))
-        mismatch = _bridge(self.root, auth0_audience="https://other.example/api")
-        self.assertIn("auth0_audience", bridge_blockers(mismatch))
+        other_resource = _bridge(self.root, oauth_resource="https://different.example/mcp")
+        self.assertIn("auth0_resource", bridge_blockers(other_resource))
+        other_audience = _bridge(
+            self.root,
+            oauth_audience="https://different.example/mcp",
+            auth0_audience="https://different.example/mcp",
+        )
+        self.assertIn("auth0_resource", bridge_blockers(other_audience))
+        same = _bridge(self.root, auth0_jwt_signing_key=Fernet.generate_key().decode("utf-8"))
+        # signing key may still be long enough; force it equal to the storage key
+        tied = _bridge(self.root, auth0_jwt_signing_key=same.auth0_storage_key, auth0_storage_key=same.auth0_storage_key)
+        self.assertIn("auth0_keys_not_distinct", bridge_blockers(tied))
 
     def test_identity_rules(self) -> None:
         mapped = {"auth0|daniel": "daniel@btpestcontrol.com"}
@@ -108,6 +126,19 @@ class Auth0BridgeTests(unittest.TestCase):
         self.assertEqual(identity["sub"], "auth0|daniel")
         self.assertNotIn("upstream-secret", str(identity))
         self.assertIsNone(bridge_identity_from_token(_Token({"email": "daniel@btpestcontrol.com", "email_verified": False}, subject="auth0|other"), settings))
+        forged = bridge_identity_from_token(
+            _Token(
+                {"sub": "auth0|daniel", "upstream_claims": {"sub": "auth0|forged", "email": "daniel@btpestcontrol.com", "email_verified": True}},
+                subject="auth0|daniel",
+            ),
+            settings,
+        )
+        self.assertIsNone(forged)
+        from bt_fieldwork_write_mcp.auth0_bridge import fieldwork_key_reused
+
+        self.assertTrue(fieldwork_key_reused(settings, settings.auth0_client_secret))
+        self.assertFalse(fieldwork_key_reused(settings, "different-fieldwork-key"))
+        self.assertNotIn(settings.auth0_client_secret, "fieldwork_key_reused_as_oauth_secret")
 
     def test_encrypted_store_survives_restart(self) -> None:
         import asyncio
@@ -148,18 +179,3 @@ class Auth0BridgeTests(unittest.TestCase):
         self.assertEqual(provider._allowed_client_redirect_uris, ["https://chatgpt.com/connector/oauth/callback"])
         self.assertEqual(str(provider._token_validator.audience), "https://write.example.test/mcp")
         self.assertNotIn("bridge-client-secret", repr(provider))
-        from fastmcp import FastMCP
-        from starlette.testclient import TestClient
-
-        mcp = FastMCP(name="bt-fieldwork-write-mcp", auth=provider)
-
-        @mcp.tool
-        async def report_gates() -> dict:
-            return {"ok": False, "gate": "oauth_rejected", "live_auth0_verified": False}
-
-        app = mcp.http_app(transport="http", allowed_hosts=["*"])
-        with TestClient(app) as client:
-            denied = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
-        self.assertIn(denied.status_code, {401, 403, 406})
-        self.assertNotIn("bridge-client-secret", denied.text)
-        self.assertNotIn("live_auth0_verified\": true", denied.text)

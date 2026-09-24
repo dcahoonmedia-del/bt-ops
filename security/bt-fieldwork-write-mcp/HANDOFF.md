@@ -36,7 +36,7 @@ This checkout is local only. Do not push. Retrieve the review archive from the b
 
 ## Remaining live blockers
 
-Direct JWT mode remains the default. The optional Auth0 bridge (`FW_WRITE_AUTH_MODE=auth0_bridge`) uses FastMCP `Auth0Provider` and stays off until external HTTPS, consent, PKCE, exact callbacks, audience, encrypted durable storage, and a signing key are all present. Offline tests of that bridge are not live Auth0 or ChatGPT success.
+Direct JWT mode remains the default. The optional Auth0 bridge (`FW_WRITE_AUTH_MODE=auth0_bridge`) uses FastMCP `Auth0Provider` and stays off until external HTTPS callbacks, consent, PKCE, the published resource, encrypted durable storage, and a distinct signing key are all present. Offline ASGI tests use synthetic tokens and are not live Auth0 or ChatGPT success. If Auth0 omits a new ID token on refresh, an expired original ID token is not reused. The refreshed session keeps working only when the verified access-token subject is in the configured subject map.
 
 The existing VM has only the receiver service account. A second Unix user is not cloud isolation. Do not grant the receiver the Fieldwork secret. Hosting and domain are not selected. Production Google social credentials are still a deployment gate; the local sign-in used Auth0 development keys.
 
