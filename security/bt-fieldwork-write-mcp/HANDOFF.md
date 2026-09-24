@@ -22,7 +22,8 @@ bash security/bt-fieldwork-write-mcp/scripts/run_offline_tests.sh
 
 Needs Python 3, `mcp>=1.0`, `PyJWT>=2.7`. No network, GCP, or Fieldwork access.
 
-Until a push is authorized, Codex can retrieve the tree from this workspace commit (see the agent report SHA). After an authorized push: `git fetch origin cursor/bt-fw-write-mcp-e9a8 && git checkout cursor/bt-fw-write-mcp-e9a8`.
+Local HEAD: `cc16bf4c77eadd820c788ae114d4f55daf0929da` (cleanup). Implementation commit: `4c935a8e7385e2ac727d9a09a1e41a9e6253f790`.  
+Until a push is authorized, Codex can retrieve this workspace at those SHAs (`git show cc16bf4`). After an authorized push: `git fetch origin cursor/bt-fw-write-mcp-e9a8 && git checkout cursor/bt-fw-write-mcp-e9a8`.
 
 ## What Codex should independently confirm
 
