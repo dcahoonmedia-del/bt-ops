@@ -7,6 +7,7 @@ import sys
 
 from .config import Settings
 from .server import build_server, closed_startup_gates
+from .service import WriteService
 
 
 def main() -> None:
@@ -15,12 +16,30 @@ def main() -> None:
     if str(settings.store_path).startswith("/tmp"):
         print({"store": "ephemeral", "path_class": "tmp"}, file=sys.stderr, flush=True)
     transport = os.environ.get("FW_WRITE_TRANSPORT", "stdio").strip().lower()
-    if transport == "http" and not settings.oauth_ready():
+    if settings.auth_mode == "auth0_bridge":
+        from .auth0_bridge import bridge_blockers
+
+        blocked = bridge_blockers(settings)
+        if blocked:
+            print({"ok": False, "gate": "auth0_bridge_blocked", "blocked": blocked}, file=sys.stderr, flush=True)
+            raise SystemExit(2)
+    elif not settings.oauth_ready():
         print({"ok": False, "gate": "oauth_required"}, file=sys.stderr, flush=True)
         raise SystemExit(2)
-    if not settings.oauth_ready():
-        print({"ok": False, "gate": "oauth_required"}, file=sys.stderr, flush=True)
-        raise SystemExit(2)
+    if settings.auth_mode == "auth0_bridge":
+        if transport != "http":
+            print({"ok": False, "gate": "auth0_bridge_requires_http"}, file=sys.stderr, flush=True)
+            raise SystemExit(2)
+        from .fieldwork import HttpTransport, TypedFieldworkClient
+        from .secrets import load_api_key
+        from .server import build_bridge_server
+        from .store import WriteStore
+
+        store = WriteStore(settings.store_path)
+        client = TypedFieldworkClient(HttpTransport(load_api_key(), api_base=settings.api_base))
+        server = build_bridge_server(settings, WriteService(settings, store, client))
+        server.run(transport="http")
+        return
     server = build_server(settings)
     if transport == "http":
         server.run(transport="streamable-http")

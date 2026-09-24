@@ -83,8 +83,14 @@ def require_op(operation: str) -> str:
 def is_lead_status(customer: dict[str, Any] | None) -> bool:
     if not customer:
         return False
-    status = str(customer.get("customer_status") or customer.get("status") or customer.get("type") or "").strip().lower()
-    return status in LEAD_STATUSES
+    found: list[str] = []
+    for key in ("status", "customer_status"):
+        if key not in customer or customer[key] is None:
+            continue
+        text = str(customer[key]).strip().lower()
+        if text:
+            found.append(text)
+    return len(set(found)) == 1 and found[0] in LEAD_STATUSES
 
 
 def current_gates(

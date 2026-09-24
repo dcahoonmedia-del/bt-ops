@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from urllib.parse import parse_qs, urlparse
@@ -55,6 +56,32 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(result["gate"], "identity_mismatch")
         self.assertFalse(any(call["method"] == "PATCH" for call in h.transport.calls))
         h.close()
+
+    def test_status_field_active_and_conflicts(self) -> None:
+        from bt_fieldwork_write_mcp.fieldwork import TypedFieldworkClient
+
+        client = TypedFieldworkClient(FakeTransport())
+        customer = {"id": 41, "status": "active"}
+        location = {"id": 77, "customer_id": 41, "name": "House", "tax_rate_id": 3, "address": {"id": 900}}
+        client.assert_location_identity("41", "77", customer, location)
+        both = {"id": 41, "status": "active", "customer_status": "Active"}
+        client.assert_location_identity("41", "77", both, location)
+        conflict = {"id": 41, "status": "active", "customer_status": "inactive"}
+        with self.assertRaises(GateError) as caught:
+            client.assert_location_identity("41", "77", conflict, location)
+        self.assertEqual(caught.exception.gate, "customer_status_unverified")
+        missing = {"id": 41}
+        with self.assertRaises(GateError) as missing_gate:
+            client.assert_location_identity("41", "77", missing, location)
+        self.assertEqual(missing_gate.exception.gate, "customer_status_unverified")
+        inactive = {"id": 41, "status": "inactive"}
+        with self.assertRaises(GateError) as inactive_gate:
+            client.assert_location_identity("41", "77", inactive, location)
+        self.assertEqual(inactive_gate.exception.gate, "customer_status_rejected")
+        lead = {"id": 41, "status": "Lead"}
+        with self.assertRaises(GateError) as lead_gate:
+            client.assert_location_identity("41", "77", lead, location)
+        self.assertEqual(lead_gate.exception.gate, "never_lead_status_accounts")
 
     def test_customer_wrapper_fails_closed(self) -> None:
         class Wrap(FakeTransport):
@@ -245,13 +272,14 @@ class ReviewTests(unittest.TestCase):
 
     def test_module_entry_exits_without_oauth_on_stderr(self) -> None:
         env = os.environ.copy()
-        env["PYTHONPATH"] = "/workspace/security/bt-fieldwork-write-mcp/src"
+        project_root = Path(__file__).resolve().parents[1]
+        env["PYTHONPATH"] = str(project_root / "src")
         env["FW_WRITE_TRANSPORT"] = "http"
         env["FW_WRITE_OAUTH_ISSUER"] = ""
         env.pop("FW_WRITE_OAUTH_HS256", None)
         proc = subprocess.run(
             [sys.executable, "-m", "bt_fieldwork_write_mcp"],
-            cwd="/workspace/security/bt-fieldwork-write-mcp",
+            cwd=project_root,
             env=env,
             capture_output=True,
             text=True,

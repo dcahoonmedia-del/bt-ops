@@ -47,6 +47,10 @@ FW_WRITE_OPERATOR_KEY=   # independent HMAC key; not the Fieldwork secret
 - Attach the write MCP to the existing hosted read-only Fieldwork MCP URL
 - Restart or edit `bt-intake-receiver.service`
 
+## Identity and hosting (not applied)
+
+The existing VM has only the receiver service account. A second Unix user is not cloud isolation. Do not grant that receiver identity the Fieldwork secret. Hosting and the public domain are not selected. Google social login in the local Auth0 proof used Auth0 development keys; production social credentials are a deployment gate. The Auth0 bridge is optional, off by default, and this checkout does not change Auth0, IAM, or cloud settings.
+
 ## Live blockers that remain after this offline code
 
 1. Authorization server (OAuth 2.1) not configured; connector attach not done.

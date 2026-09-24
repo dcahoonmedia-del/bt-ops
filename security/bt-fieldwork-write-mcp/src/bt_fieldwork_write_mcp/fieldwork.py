@@ -87,6 +87,21 @@ def location_snapshot(customer: dict[str, Any], location: dict[str, Any]) -> dic
     }
 
 
+def _service_status(customer: dict[str, Any]) -> str:
+    """One normalized status from present non-null status fields. Empty means unverified."""
+    found: list[str] = []
+    for key in ("status", "customer_status"):
+        if key not in customer or customer[key] is None:
+            continue
+        text = str(customer[key]).strip().lower()
+        if text:
+            found.append(text)
+    unique = set(found)
+    if len(unique) != 1:
+        raise GateError("customer_status_unverified")
+    return unique.pop()
+
+
 def _positive_id(value: Any) -> str | None:
     if isinstance(value, bool) or isinstance(value, float):
         return None
@@ -336,9 +351,13 @@ class TypedFieldworkClient:
         body_owner = _positive_id(location.get("customer_id"))
         if not customer_id or not location_id or body_customer != customer_id or body_location != location_id or body_owner != body_customer:
             raise GateError("identity_mismatch")
-        status = str(customer.get("customer_status") or "").strip().lower()
+        status = _service_status(customer)
+        if status in {"lead", "leads"}:
+            raise GateError("never_lead_status_accounts")
+        if status == "inactive":
+            raise GateError("customer_status_rejected")
         if status != "active":
-            raise GateError("never_lead_status_accounts" if status in {"lead", "leads"} else "customer_status_unverified")
+            raise GateError("customer_status_unverified")
         address = location.get("address") if isinstance(location.get("address"), dict) else {}
         name = location.get("name")
         if not isinstance(name, str) or not name.strip() or _positive_id(location.get("tax_rate_id")) is None or _positive_id(address.get("id")) is None:

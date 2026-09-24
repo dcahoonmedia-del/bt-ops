@@ -40,6 +40,17 @@ class Settings:
     api_role: str
     proposal_ttl_seconds: int
     approval_ttl_seconds: int
+    auth_mode: str = "jwt"
+    auth0_config_url: str = ""
+    auth0_client_id: str = ""
+    auth0_client_secret: str = ""
+    auth0_audience: str = ""
+    auth0_base_url: str = ""
+    auth0_allowed_callbacks: tuple[str, ...] = ()
+    auth0_jwt_signing_key: str = ""
+    auth0_storage_key: str = ""
+    auth0_storage_path: str = ""
+    auth0_subject_map: tuple[str, ...] = ()
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -59,6 +70,17 @@ class Settings:
             api_role=(os.environ.get("FIELDWORK_API_ROLE") or "readonly").strip().lower(),
             proposal_ttl_seconds=int(os.environ.get("FW_WRITE_PROPOSAL_TTL", "1800")),
             approval_ttl_seconds=int(os.environ.get("FW_WRITE_APPROVAL_TTL", "900")),
+            auth_mode=(os.environ.get("FW_WRITE_AUTH_MODE") or "jwt").strip().lower(),
+            auth0_config_url=os.environ.get("FW_WRITE_AUTH0_CONFIG_URL", "").strip(),
+            auth0_client_id=os.environ.get("FW_WRITE_AUTH0_CLIENT_ID", "").strip(),
+            auth0_client_secret=os.environ.get("FW_WRITE_AUTH0_CLIENT_SECRET", "").strip(),
+            auth0_audience=os.environ.get("FW_WRITE_AUTH0_AUDIENCE", "").strip(),
+            auth0_base_url=os.environ.get("FW_WRITE_AUTH0_BASE_URL", "").strip(),
+            auth0_allowed_callbacks=_csv("FW_WRITE_AUTH0_ALLOWED_CALLBACKS"),
+            auth0_jwt_signing_key=os.environ.get("FW_WRITE_AUTH0_JWT_SIGNING_KEY", "").strip(),
+            auth0_storage_key=os.environ.get("FW_WRITE_AUTH0_STORAGE_KEY", "").strip(),
+            auth0_storage_path=os.environ.get("FW_WRITE_AUTH0_STORAGE_PATH", "").strip(),
+            auth0_subject_map=_csv("FW_WRITE_AUTH0_SUBJECT_MAP"),
         )
 
     def oauth_ready(self) -> bool:

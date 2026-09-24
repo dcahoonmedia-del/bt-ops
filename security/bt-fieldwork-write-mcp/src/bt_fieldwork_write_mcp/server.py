@@ -57,17 +57,7 @@ def build_mcp(service: WriteService, settings: Settings, verifier: JwtTokenVerif
 
     @server.tool(name="report_gates", description="Report closed write gates. Not live readiness.")
     async def report_gates() -> dict[str, Any]:
-        return {
-            "ok": True,
-            "live_ready": False,
-            "fieldwork_api_auth_verified": False,
-            "credential_ready": service.gates().get("credential_ready"),
-            "oauth_ready": settings.oauth_ready(),
-            "live_patch_tested": False,
-            "check_connection_is_not_auth_proof": True,
-            "gates": service.gates(),
-            "forbidden": sorted(FORBIDDEN_OPS),
-        }
+        return report_gates_body(service, settings)
 
     @server.tool(name="propose_write", description="Build an immutable exact-before/after proposal. Does not write.")
     async def propose_write(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -105,6 +95,66 @@ def build_mcp(service: WriteService, settings: Settings, verifier: JwtTokenVerif
         return redact(service.inspect(proposal_id, identity))
 
     return server
+
+
+def build_bridge_server(settings: Settings, service: WriteService) -> Any:
+    """FastMCP Auth0 bridge. Not used by the default direct-JWT server."""
+    from fastmcp import FastMCP
+
+    from .auth0_bridge import bridge_identity_from_token, build_auth0_provider
+
+    provider = build_auth0_provider(settings)
+    mcp = FastMCP(name="bt-fieldwork-write-mcp", auth=provider)
+
+    def _identity() -> dict[str, str] | None:
+        from fastmcp.server.dependencies import get_access_token
+
+        return bridge_identity_from_token(get_access_token(), settings)
+
+    @mcp.tool(name="report_gates", description="Report closed write gates. Not live readiness.")
+    async def report_gates() -> dict[str, Any]:
+        if _identity() is None:
+            return {"ok": False, "gate": GATE_AUTH}
+        return report_gates_body(service, settings)
+
+    @mcp.tool(name="propose_write", description="Build an immutable exact-before/after proposal. Does not write.")
+    async def propose_write(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
+        identity = _identity()
+        if identity is None:
+            return {"ok": False, "gate": GATE_AUTH, "gates": service.gates()}
+        return redact(service.propose(operation, payload, identity))
+
+    @mcp.tool(name="execute_approved_write", description="Execute one independently approved proposal. Ignores approved=true.")
+    async def execute_approved_write(proposal_id: str, operator_approval: str = "", approved: bool | None = None) -> dict[str, Any]:
+        identity = _identity()
+        if identity is None:
+            return {"ok": False, "gate": GATE_AUTH, "gates": service.gates()}
+        return redact(service.execute(proposal_id, identity, operator_approval=operator_approval, approved=approved))
+
+    @mcp.tool(name="inspect_proposal", description="Inspect a stored proposal. No secrets.")
+    async def inspect_proposal(proposal_id: str) -> dict[str, Any]:
+        identity = _identity()
+        if identity is None:
+            return {"ok": False, "gate": GATE_AUTH, "gates": service.gates()}
+        return redact(service.inspect(proposal_id, identity))
+
+    return mcp
+
+
+def report_gates_body(service: WriteService, settings: Settings) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "live_ready": False,
+        "fieldwork_api_auth_verified": False,
+        "credential_ready": service.gates().get("credential_ready"),
+        "oauth_ready": settings.oauth_ready(),
+        "auth0_bridge": settings.auth_mode == "auth0_bridge",
+        "live_auth0_verified": False,
+        "live_patch_tested": False,
+        "check_connection_is_not_auth_proof": True,
+        "gates": service.gates(),
+        "forbidden": sorted(FORBIDDEN_OPS),
+    }
 
 
 def build_server(settings: Settings | None = None, service: WriteService | None = None) -> MCPServer:

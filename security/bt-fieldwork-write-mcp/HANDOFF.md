@@ -36,4 +36,8 @@ This checkout is local only. Do not push. Retrieve the review archive from the b
 
 ## Remaining live blockers
 
-OAuth authorization server is not configured. Current Fieldwork credential readiness is not live-verified (`check_connection` is not proof). Isolated SA and one-secret IAM are not applied. Live PATCH, create schema, and arrival-window writes are unverified. Writes stay disabled. `credential_ready` is not live readiness.
+Direct JWT mode remains the default. The optional Auth0 bridge (`FW_WRITE_AUTH_MODE=auth0_bridge`) uses FastMCP `Auth0Provider` and stays off until external HTTPS, consent, PKCE, exact callbacks, audience, encrypted durable storage, and a signing key are all present. Offline tests of that bridge are not live Auth0 or ChatGPT success.
+
+The existing VM has only the receiver service account. A second Unix user is not cloud isolation. Do not grant the receiver the Fieldwork secret. Hosting and domain are not selected. Production Google social credentials are still a deployment gate; the local sign-in used Auth0 development keys.
+
+OAuth authorization server is not configured for production. Current Fieldwork credential readiness is not live-verified (`check_connection` is not proof). Isolated SA and one-secret IAM are not applied. Live PATCH, create schema, and arrival-window writes are unverified. Writes stay disabled. `credential_ready` is not live readiness.

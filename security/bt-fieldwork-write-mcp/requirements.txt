@@ -1,4 +1,6 @@
-# Debian 12 ships Python 3.11. MCP 2.x is required; 1.x has no mcp.server.mcpserver.
+# Debian 12 ships Python 3.11. FastMCP 4.0.9 and MCP 2.x require Python >=3.10.
+# MCP 1.x has no mcp.server.mcpserver. The Auth0 bridge is optional at runtime.
+fastmcp==4.0.9
 mcp>=2.2.0,<3
 PyJWT>=2.8,<3
 cryptography>=42,<47
