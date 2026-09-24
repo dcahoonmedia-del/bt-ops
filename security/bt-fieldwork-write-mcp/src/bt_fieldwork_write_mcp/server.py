@@ -58,7 +58,8 @@ def build_mcp(
         return {
             "ok": True,
             "live_ready": False,
-            "fieldwork_api_auth_verified": False,
+            "fieldwork_api_auth_verified": True,
+            "live_patch_tested": False,
             "check_connection_is_not_auth_proof": True,
             "gates": service.gates(),
             "forbidden": sorted(FORBIDDEN_OPS),
@@ -123,5 +124,9 @@ def closed_startup_gates(settings: Settings) -> dict[str, Any]:
         "oauth_authorization_server_configured": settings.oauth_ready(),
         "writes_enabled": settings.writes_enabled,
         "live_ready": False,
-        **current_gates(writes_enabled=settings.writes_enabled, mapping_verified=settings.mapping_verified),
+        **current_gates(
+            writes_enabled=settings.writes_enabled,
+            mapping_verified=settings.mapping_verified,
+            api_role=settings.api_role,
+        ),
     }

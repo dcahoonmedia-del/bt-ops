@@ -39,6 +39,8 @@ FORBIDDEN_OPS = frozenset(
 
 GATE_WRITES_DISABLED = "writes_disabled"
 GATE_MAPPING_UNVERIFIED = "work_order_id_mapping_unverified"
+GATE_LIVE_PATCH_UNTESTED = "live_patch_untested"
+GATE_READONLY = "readonly_api_role"
 GATE_SCHEMA_UNVERIFIED = "work_order_schema_unverified"
 GATE_LEAD_STATUS = "never_lead_status_accounts"
 GATE_UNKNOWN_FIELD = "unknown_field"
@@ -85,22 +87,32 @@ def is_lead_status(customer: dict[str, Any] | None) -> bool:
     return status in LEAD_STATUSES
 
 
-def current_gates(*, writes_enabled: bool, mapping_verified: bool) -> dict[str, Any]:
+def current_gates(*, writes_enabled: bool, mapping_verified: bool, api_role: str = "readonly") -> dict[str, Any]:
+    readonly = str(api_role or "readonly").strip().lower() == "readonly"
     return {
-        "writes_enabled": bool(writes_enabled),
-        "work_order_id_mapping_verified": bool(mapping_verified),
-        "work_order_schema_verified": bool(mapping_verified),
-        "arrival_window_verified": False,
-        "fieldwork_api_auth_verified": False,
+        "writes_enabled": bool(writes_enabled) and not readonly,
+        "api_role": "readonly" if readonly else "not_readonly",
+        "auth_query_parameter": "api_key",
+        "authorization_header_auth": False,
+        "fieldwork_get_auth_verified": True,
+        "fieldwork_api_auth_verified": True,
         "check_connection_is_not_auth_proof": True,
+        "work_order_get_id_pairs_verified": True,
+        "work_order_id_mapping_verified": True,
+        "live_patch_tested": False,
+        "work_order_schema_verified": False,
+        "arrival_window_read_known": True,
+        "arrival_window_write_verified": False,
+        "arrival_window_verified": False,
         "customer_create": False,
         "lead_status_accounts": False,
         "messaging_tools": False,
         "generic_http": False,
         "closed": [
-            GATE_AUTH_UNRESOLVED,
+            GATE_LIVE_PATCH_UNTESTED,
+            GATE_SCHEMA_UNVERIFIED,
             GATE_ARRIVAL_WINDOW,
+            *( [GATE_READONLY] if readonly else [] ),
             *( [] if writes_enabled else [GATE_WRITES_DISABLED] ),
-            *( [] if mapping_verified else [GATE_MAPPING_UNVERIFIED, GATE_SCHEMA_UNVERIFIED] ),
         ],
     }

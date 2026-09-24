@@ -37,6 +37,7 @@ class Settings:
     required_scopes: tuple[str, ...]
     permitted_users: tuple[str, ...]
     operator_key: str
+    api_role: str
     proposal_ttl_seconds: int
     approval_ttl_seconds: int
 
@@ -55,6 +56,7 @@ class Settings:
             required_scopes=_csv("FW_WRITE_REQUIRED_SCOPES") or DEFAULT_SCOPES,
             permitted_users=tuple(item.lower() for item in _csv("FW_WRITE_PERMITTED_USERS")),
             operator_key=os.environ.get("FW_WRITE_OPERATOR_KEY", "").strip(),
+            api_role=(os.environ.get("FIELDWORK_API_ROLE") or "readonly").strip().lower(),
             proposal_ttl_seconds=int(os.environ.get("FW_WRITE_PROPOSAL_TTL", "1800")),
             approval_ttl_seconds=int(os.environ.get("FW_WRITE_APPROVAL_TTL", "900")),
         )

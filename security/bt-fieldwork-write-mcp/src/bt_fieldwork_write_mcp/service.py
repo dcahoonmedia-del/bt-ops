@@ -12,7 +12,8 @@ from .allowlist import (
     GATE_AUTH,
     GATE_EXPIRED,
     GATE_IDENTITY,
-    GATE_MAPPING_UNVERIFIED,
+    GATE_LIVE_PATCH_UNTESTED,
+    GATE_READONLY,
     GATE_OPERATOR,
     GATE_READBACK,
     GATE_REPLAY,
@@ -71,7 +72,11 @@ class WriteService:
         self._now = now or (lambda: datetime.now(timezone.utc))
 
     def gates(self) -> dict[str, Any]:
-        return current_gates(writes_enabled=self.settings.writes_enabled, mapping_verified=self.settings.mapping_verified)
+        return current_gates(
+            writes_enabled=self.settings.writes_enabled,
+            mapping_verified=self.settings.mapping_verified,
+            api_role=self.settings.api_role,
+        )
 
     def _fail(self, gate: str, **detail: Any) -> dict[str, Any]:
         payload = {"ok": False, "gate": gate, "gates": self.gates()}
@@ -137,7 +142,7 @@ class WriteService:
         after["private_notes"] = payload.get("private_notes")
         result = self._persist_proposal(OP_WORK_ORDER_NOTES, payload, identity, subject, before, after)
         result["gates"] = self.gates()
-        result["execute_blocked"] = [GATE_MAPPING_UNVERIFIED]
+        result["execute_blocked"] = [GATE_LIVE_PATCH_UNTESTED]
         return result
 
     def _propose_create(self, payload: dict[str, Any], identity: dict[str, str]) -> dict[str, Any]:
@@ -162,7 +167,7 @@ class WriteService:
         after = {"created": "not_executed", "payload": payload}
         result = self._persist_proposal(OP_CREATE_WORK_ORDER, payload, identity, subject, before, after)
         result["gates"] = self.gates()
-        result["execute_blocked"] = [GATE_SCHEMA_UNVERIFIED, GATE_MAPPING_UNVERIFIED]
+        result["execute_blocked"] = [GATE_SCHEMA_UNVERIFIED, GATE_ARRIVAL_WINDOW, GATE_LIVE_PATCH_UNTESTED]
         return result
 
     def _persist_proposal(
@@ -244,6 +249,8 @@ class WriteService:
         identity = ident  # type: ignore[assignment]
         if not self.settings.writes_enabled:
             return self._fail(GATE_WRITES_DISABLED, proposal_id=proposal_id)
+        if str(self.settings.api_role or "readonly").lower() == "readonly":
+            return self._fail(GATE_READONLY, proposal_id=proposal_id)
         proposal = self.store.get_proposal(proposal_id)
         if proposal is None:
             return self._fail("unknown_operation", proposal_id=proposal_id)
@@ -265,7 +272,7 @@ class WriteService:
             if existing and existing["used_at"]:
                 return self._fail(GATE_REPLAY, proposal_id=proposal_id)
         if proposal["operation"] == OP_WORK_ORDER_NOTES:
-            return self._fail(GATE_MAPPING_UNVERIFIED, proposal_id=proposal_id)
+            return self._fail(GATE_LIVE_PATCH_UNTESTED, proposal_id=proposal_id)
         if proposal["operation"] == OP_CREATE_WORK_ORDER:
             return self._fail(GATE_SCHEMA_UNVERIFIED, proposal_id=proposal_id)
         stale = self._location_stale(proposal) if proposal["operation"] == OP_LOCATION_NOTES else None
@@ -277,7 +284,7 @@ class WriteService:
         if proposal["operation"] == OP_LOCATION_NOTES:
             return self._execute_location_notes(proposal, clock)
         if proposal["operation"] == OP_WORK_ORDER_NOTES:
-            return self._fail(GATE_MAPPING_UNVERIFIED, proposal_id=proposal_id)
+            return self._fail(GATE_LIVE_PATCH_UNTESTED, proposal_id=proposal_id)
         if proposal["operation"] == OP_CREATE_WORK_ORDER:
             return self._fail(GATE_SCHEMA_UNVERIFIED, proposal_id=proposal_id)
         return self._fail(GATE_UNKNOWN_OP, proposal_id=proposal_id)

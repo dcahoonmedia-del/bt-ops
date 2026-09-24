@@ -28,6 +28,7 @@ def _settings(**overrides: object) -> Settings:
         required_scopes=("fieldwork.write",),
         permitted_users=("daniel@btpestcontrol.com",),
         operator_key="operator-test-key",
+        api_role="readonly",
         proposal_ttl_seconds=1800,
         approval_ttl_seconds=900,
     )

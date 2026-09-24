@@ -24,7 +24,10 @@ Isolated sibling of Lead Desk and the existing read-only Fieldwork client. This 
 - Resource-server JWT checks: issuer, audience, expiry, required scopes, permitted user.
 - This process does not issue tokens. Authorization-server setup and live connector attach remain deployment gates.
 - Homemade static bearer keys are rejected.
-- Fieldwork `Authorization: Token token=...` remains unresolved live (401 on `GET /v3.1/customers?per_page=1`). `GET /check_connection` 204 without a key is **not** auth proof.
+- Fieldwork GET auth is the `api_key` query parameter. Header `Authorization: Token token=...` is not used. Codex verified profile without key 401, with key 200, customer list 200. The key is a readonly API user. `GET /check_connection` is still not auth proof. This process does not call live HQ. URLs and HTTP exception text are never logged.
+- GET `/work_orders` is an array. GET `/work_orders/{id}` and `/show_plain` wrap `{appointment_occurrence:{id, service_appointment_id, ...}}`. Three live samples showed distinct matching pairs. PATCH URL is the service-appointment id and nested occurrence `id` is the work-order id; live PATCH is untested, so execute stays closed (`live_patch_untested`).
+- GET service location wraps `{service_location:{id,name,tax_rate_id,address:{id,notes}}}`. PATCH form keeps name, tax_rate_id, and address id via `address_attributes`.
+- Arrival-window READ fields are known. The write contract is unknown, so schedule and create stay closed. Writes stay disabled. Readonly role blocks execute even if the writes flag is turned on.
 
 ## Secret
 

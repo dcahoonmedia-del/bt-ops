@@ -15,7 +15,8 @@ from bt_fieldwork_write_mcp.allowlist import (
     GATE_EXPIRED,
     GATE_IDENTITY,
     GATE_LEAD_STATUS,
-    GATE_MAPPING_UNVERIFIED,
+    GATE_LIVE_PATCH_UNTESTED,
+    GATE_READONLY,
     GATE_OPERATOR,
     GATE_READBACK,
     GATE_REPLAY,
@@ -51,6 +52,7 @@ def _settings(path: Path, **overrides: object) -> Settings:
         required_scopes=("fieldwork.write",),
         permitted_users=("daniel@btpestcontrol.com",),
         operator_key="operator-test-key",
+        api_role="readonly",
         proposal_ttl_seconds=1800,
         approval_ttl_seconds=900,
     )
@@ -123,14 +125,14 @@ class WriteMcpTests(unittest.TestCase):
 
     def test_approved_true_from_model_is_ignored(self) -> None:
         self.h.close()
-        self.h = Harness(writes_enabled=True)
+        self.h = Harness(writes_enabled=True, api_role="writer")
         proposed = self.h.propose_notes()
         result = self.h.service.execute(proposed["proposal_id"], IDENTITY, approved=True)
         self.assertEqual(result["gate"], GATE_OPERATOR)
 
     def test_identity_mismatch(self) -> None:
         self.h.close()
-        self.h = Harness(writes_enabled=True)
+        self.h = Harness(writes_enabled=True, api_role="writer")
         proposed = self.h.propose_notes()
         token = self.h.approve(proposed["proposal_id"])
         result = self.h.service.execute(proposed["proposal_id"], OTHER, operator_approval=token)
@@ -161,7 +163,7 @@ class WriteMcpTests(unittest.TestCase):
 
     def test_stale_state(self) -> None:
         self.h.close()
-        self.h = Harness(writes_enabled=True)
+        self.h = Harness(writes_enabled=True, api_role="writer")
         proposed = self.h.propose_notes()
         token = self.h.approve(proposed["proposal_id"])
         self.h.transport.locations["41:77"]["address"]["notes"] = "changed by office"
@@ -170,7 +172,7 @@ class WriteMcpTests(unittest.TestCase):
 
     def test_expired_proposal(self) -> None:
         self.h.close()
-        self.h = Harness(writes_enabled=True)
+        self.h = Harness(writes_enabled=True, api_role="writer")
         proposed = self.h.propose_notes()
         token = self.h.approve(proposed["proposal_id"])
         self.h.clock = self.h.clock + timedelta(hours=3)
@@ -179,7 +181,7 @@ class WriteMcpTests(unittest.TestCase):
 
     def test_expired_approval(self) -> None:
         self.h.close()
-        self.h = Harness(writes_enabled=True, approval_ttl_seconds=60)
+        self.h = Harness(writes_enabled=True, api_role="writer", approval_ttl_seconds=60)
         proposed = self.h.propose_notes()
         token = self.h.approve(proposed["proposal_id"])
         self.h.clock = self.h.clock + timedelta(minutes=2)
@@ -188,7 +190,7 @@ class WriteMcpTests(unittest.TestCase):
 
     def test_replayed_approval(self) -> None:
         self.h.close()
-        self.h = Harness(writes_enabled=True)
+        self.h = Harness(writes_enabled=True, api_role="writer")
         proposed = self.h.propose_notes()
         token = self.h.approve(proposed["proposal_id"])
         first = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=token)
@@ -213,7 +215,7 @@ class WriteMcpTests(unittest.TestCase):
 
     def test_crash_after_ambiguous_remote_write_no_retry(self) -> None:
         self.h.close()
-        self.h = Harness(writes_enabled=True)
+        self.h = Harness(writes_enabled=True, api_role="writer")
         proposed = self.h.propose_notes()
         token = self.h.approve(proposed["proposal_id"])
         self.h.transport.write_mode = "ambiguous"
@@ -232,7 +234,7 @@ class WriteMcpTests(unittest.TestCase):
 
     def test_in_flight_restart_is_ambiguous(self) -> None:
         self.h.close()
-        self.h = Harness(writes_enabled=True)
+        self.h = Harness(writes_enabled=True, api_role="writer")
         proposed = self.h.propose_notes()
         self.h.store.begin_attempt(proposed["proposal_id"], f"location:41:77", self.h.clock.isoformat())
         self.h.store.close()
@@ -243,7 +245,7 @@ class WriteMcpTests(unittest.TestCase):
 
     def test_failed_readback(self) -> None:
         self.h.close()
-        self.h = Harness(writes_enabled=True)
+        self.h = Harness(writes_enabled=True, api_role="writer")
         proposed = self.h.propose_notes("new standing")
         token = self.h.approve(proposed["proposal_id"])
         self.h.transport.readback_notes = "old note"
@@ -254,22 +256,22 @@ class WriteMcpTests(unittest.TestCase):
 
     def test_work_order_notes_fail_closed_unverified_mapping(self) -> None:
         self.h.close()
-        self.h = Harness(writes_enabled=True)
+        self.h = Harness(writes_enabled=True, api_role="writer")
         proposed = self.h.service.propose(
             OP_WORK_ORDER_NOTES,
             {"work_order_id": "10", "service_appointment_id": "20", "instructions": "gate code"},
             IDENTITY,
         )
         self.assertTrue(proposed["ok"], proposed)
-        self.assertIn(GATE_MAPPING_UNVERIFIED, proposed["execute_blocked"])
+        self.assertIn(GATE_LIVE_PATCH_UNTESTED, proposed["execute_blocked"])
         token = self.h.approve(proposed["proposal_id"])
         result = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=token)
-        self.assertEqual(result["gate"], GATE_MAPPING_UNVERIFIED)
+        self.assertEqual(result["gate"], GATE_LIVE_PATCH_UNTESTED)
         self.assertFalse(any(call["method"] == "PATCH" and "work_orders" in call["path"] for call in self.h.transport.calls))
 
     def test_create_work_order_fail_closed_unverified_schema(self) -> None:
         self.h.close()
-        self.h = Harness(writes_enabled=True)
+        self.h = Harness(writes_enabled=True, api_role="writer")
         proposed = self.h.service.propose(
             OP_CREATE_WORK_ORDER,
             {
@@ -310,7 +312,7 @@ class WriteMcpTests(unittest.TestCase):
 
     def test_location_notes_success_path_offline(self) -> None:
         self.h.close()
-        self.h = Harness(writes_enabled=True)
+        self.h = Harness(writes_enabled=True, api_role="writer")
         proposed = self.h.propose_notes("leave on porch")
         token = self.h.approve(proposed["proposal_id"])
         result = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=token)
@@ -333,12 +335,26 @@ class WriteMcpTests(unittest.TestCase):
         result = self.h.service.propose(OP_LOCATION_NOTES, {"customer_id": 41, "location_id": 77, "notes": "x"}, None)
         self.assertEqual(result["gate"], GATE_AUTH)
 
+    def test_readonly_blocks_even_when_writes_flag_on(self) -> None:
+        self.h.close()
+        self.h = Harness(writes_enabled=True, api_role="readonly")
+        proposed = self.h.propose_notes()
+        token = self.h.approve(proposed["proposal_id"])
+        result = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=token)
+        self.assertEqual(result["gate"], GATE_READONLY)
+        self.assertFalse(any(call["method"] == "PATCH" for call in self.h.transport.calls))
+
     def test_gates_do_not_claim_live_readiness(self) -> None:
         gates = self.h.service.gates()
         self.assertFalse(gates["writes_enabled"])
-        self.assertFalse(gates["fieldwork_api_auth_verified"])
+        self.assertTrue(gates["fieldwork_get_auth_verified"])
+        self.assertEqual(gates["auth_query_parameter"], "api_key")
+        self.assertFalse(gates["live_patch_tested"])
+        self.assertFalse(gates["arrival_window_write_verified"])
         self.assertTrue(gates["check_connection_is_not_auth_proof"])
-        self.assertIn("fieldwork_api_auth_unresolved", gates["closed"])
+        self.assertIn("writes_disabled", gates["closed"])
+        self.assertIn("readonly_api_role", gates["closed"])
+        self.assertIn("live_patch_untested", gates["closed"])
         self.assertIn("arrival_window_unverified", gates["closed"])
 
     def test_mcp_server_has_no_forbidden_tools(self) -> None:

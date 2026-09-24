@@ -27,7 +27,8 @@ Until a push is authorized, Codex can retrieve this workspace at those SHAs (`gi
 
 ## What Codex should independently confirm
 
-- Default writes disabled; `approved=true` is not an approval.
+- Default writes disabled; readonly role blocks execute; `approved=true` is not an approval.
+- GET auth is `api_key` query parameter. Do not log URLs or HTTP exception strings.
 - Identity mismatch, unknown fields, stale/expired/replayed approvals, concurrent duplicates, crash/ambiguous no-retry, failed readback, rejected OAuth.
 - Work-order notes and create-order execute fail closed and report mapping/schema gates.
 - No customer create, Lead-status write, messaging, or HTTP passthrough tools.
