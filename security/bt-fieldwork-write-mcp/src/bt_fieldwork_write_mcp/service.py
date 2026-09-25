@@ -453,11 +453,24 @@ class WriteService:
 
         bind_residential_location(plan, self.client, self.settings.residential_location_type_id)
         search = duplicate_search(self.client, payload)
-        plan["duplicate_resolution"] = resolve_duplicates(search, confirmed_new=bool(plan.get("confirmed_new")), existing_customer_id=plan.get("existing_customer_id"))
+        plan["duplicate_resolution"] = resolve_duplicates(
+            search,
+            confirmed_new=bool(plan.get("confirmed_new")),
+            existing_customer_id=plan.get("existing_customer_id"),
+            acknowledgment=plan.get("acknowledge_duplicate_coverage"),
+        )
         after = {
             "exists": False,
             "documented_request": plan,
-            "duplicate_search": {"complete": True, "candidate_ids": plan["duplicate_resolution"]["candidate_ids"]},
+            "duplicate_search": {
+                "complete": search["complete"],
+                "candidate_ids": plan["duplicate_resolution"]["candidate_ids"],
+                "coverage_gap": search["coverage_gap"],
+                "searched_fields": search["searched_fields"],
+                "unsearched_fields": search["unsearched_fields"],
+                "coverage_acknowledged": plan["duplicate_resolution"]["coverage_acknowledged"],
+                "no_duplicate_claim": search["no_duplicate_claim"],
+            },
             "contact_requested": plan.get("contact"),
             "contact_count": plan.get("contact_count", 0),
             "primary_email": plan.get("primary_email"),

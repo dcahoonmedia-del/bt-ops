@@ -39,6 +39,7 @@ def _john(**extra: object) -> dict:
             "phone": "9103335555",
         },
         "confirmed_new": True,
+        "acknowledge_duplicate_coverage": ["address", "email"],
     }
     payload.update(extra)
     return payload
@@ -125,10 +126,12 @@ class CustomerLocationContractTests(unittest.TestCase):
     def test_john_doe_proposal_shows_steps_and_does_not_mutate(self) -> None:
         before = len(self.h.transport.calls)
         proposed = self._mcp(_john())
-        self.assertEqual(proposed["reason"], "email_or_address_coverage_gap")
-        self.assertEqual(proposed["coverage_gap"], ["email", "address"])
+        self.assertTrue(proposed["ok"], proposed)
+        self.assertFalse(proposed["after"]["duplicate_search"]["complete"])
+        self.assertFalse(proposed["after"]["duplicate_search"]["no_duplicate_claim"])
+        self.assertEqual(proposed["after"]["duplicate_search"]["coverage_gap"], ["address", "email"])
         self.assertFalse(any(call["method"] in {"POST", "PATCH"} for call in self.h.transport.calls[before:]))
-        plan = customer_request(_john())
+        plan = proposed["after"]["documented_request"]
         customer = plan["customer"]
         self.assertEqual(customer["customer_type"], "Residential")
         self.assertEqual(customer["status"], "active")
@@ -146,13 +149,14 @@ class CustomerLocationContractTests(unittest.TestCase):
         )
         self.assertEqual(plan["contact"]["email"], "dcahoonmedia@gmail.com")  # pragma: allowlist secret
         self.assertTrue(plan["confirmed_new"])
-        self.assertIsNone(plan.get("duplicate_resolution"))
+        self.assertEqual(plan["duplicate_resolution"]["coverage_acknowledged"], True)
         steps = plan["api_steps"]
         self.assertEqual(steps[0]["method"], "POST")
         self.assertEqual(steps[0]["path"], "/customers")
         self.assertEqual(steps[0]["body"]["customer"]["service_locations_attributes"][0]["name"], "Main Location")
-        self.assertEqual(steps[1]["method"], "POST")
-        self.assertEqual(steps[1]["path"], "/customers/{customer_id}/contacts")
+        contact_step = next(step for step in steps if step["path"].endswith("/contacts"))
+        self.assertEqual(contact_step["method"], "POST")
+        self.assertEqual(contact_step["path"], "/customers/{customer_id}/contacts")
         self.assertNotIn("zip", json.dumps(steps))
 
     def test_same_billing_distinct_address_and_extra_location(self) -> None:
@@ -161,8 +165,8 @@ class CustomerLocationContractTests(unittest.TestCase):
         same = customer_request(same_payload)
         self.assertIsNone(same["location_patch"])
         self.assertIsNone(same["contact"])
-        blocked = self._mcp(same_payload)
-        self.assertEqual(blocked["reason"], "email_or_address_coverage_gap")
+        blocked = self._mcp({key: value for key, value in same_payload.items() if key != "acknowledge_duplicate_coverage"})
+        self.assertEqual(blocked["reason"], "coverage_acknowledgment_required")
         distinct = customer_request(
             _john(
                 last_name="Distinct",

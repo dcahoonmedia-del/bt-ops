@@ -20,8 +20,13 @@ def _payload(**extra: object) -> dict:
         "last_name": "Evidence",
         "status": "active",
         "billing_phone": "9103330000",
+        "billing_street": "105 Thorn Tree Ct",
+        "billing_city": "Jacksonville",
+        "billing_state": "NC",
         "service_locations": {"name": "Main Location", "same_as_billing_address": True},
+        "contact": {"first_name": "Case", "last_name": "Evidence", "email": "case@example.test"},
         "confirmed_new": True,
+        "acknowledge_duplicate_coverage": ["address", "email"],
     }
     body.update(extra)
     return body
@@ -167,9 +172,9 @@ class CustomerPostRecoveryTests(unittest.TestCase):
         self.assertTrue(done["ok"], done)
         self.assertEqual(done["created_id"], 88001)
         self.assertFalse(done["reconciled"])
-        self.assertEqual(done["readback"]["contact"], {})
+        self.assertEqual(done["readback"]["contact"]["email"], "case@example.test")
         self.assertEqual(self.script.posts("/customers"), 1)
-        self.assertEqual(self.script.posts("/contacts"), 0)
+        self.assertEqual(self.script.posts("/contacts"), 1)
 
     def test_empty_success_recovers_one_new_account_and_continues_contact(self) -> None:
         self._use(Script(post_status=200, post_body=b""))
@@ -179,7 +184,7 @@ class CustomerPostRecoveryTests(unittest.TestCase):
         self.assertEqual(done["created_id"], 88001)
         self.assertEqual(done["readback"]["location_id"], 88011)
         self.assertEqual(self.script.posts("/customers"), 1)
-        self.assertEqual(self.script.posts("/contacts"), 0)
+        self.assertEqual(self.script.posts("/contacts"), 1)
         journal = self.h.store.creation_journal(self.proposal["proposal_id"])
         customer_step = next(row for row in journal if row["step"] == "customer_post")
         self.assertEqual(customer_step["outcome"], "succeeded")
@@ -227,20 +232,24 @@ class CustomerPostRecoveryTests(unittest.TestCase):
 
     def test_email_or_street_is_a_coverage_gap_and_does_not_post(self) -> None:
         self._use(Script())
-        emailed = self.h.service.propose(
-            "create_customer",
-            _payload(contact={"first_name": "Case", "last_name": "Evidence", "email": "case@example.test"}),
-            IDENTITY,
-        )
+        email_only = _payload()
+        email_only.pop("acknowledge_duplicate_coverage")
+        email_only.pop("billing_street")
+        email_only.pop("billing_city")
+        email_only.pop("billing_state")
+        emailed = self.h.service.propose("create_customer", email_only, IDENTITY)
         self.assertEqual(emailed["gate"], "duplicate_search_incomplete")
-        self.assertEqual(emailed["reason"], "email_or_address_coverage_gap")
+        self.assertEqual(emailed["reason"], "coverage_acknowledgment_required")
         self.assertEqual(emailed["coverage_gap"], ["email"])
+        street_only = _payload()
+        street_only.pop("acknowledge_duplicate_coverage")
+        street_only.pop("contact")
         addressed = self.h.service.propose(
             "create_customer",
-            _payload(billing_street="105 Thorn Tree Ct", billing_city="Jacksonville", billing_state="NC"),
+            street_only,
             IDENTITY,
         )
-        self.assertEqual(addressed["reason"], "email_or_address_coverage_gap")
+        self.assertEqual(addressed["reason"], "coverage_acknowledgment_required")
         self.assertIn("address", addressed["coverage_gap"])
         self.assertEqual(self.script.posts("/customers"), 0)
         self.assertEqual(self.script.posts("/contacts"), 0)
@@ -265,24 +274,23 @@ class CustomerPostRecoveryTests(unittest.TestCase):
             "email": "case@example.test",
             "phone": "9100000000",
         }]
-        phone = self.h.service.propose(
-            "create_customer",
-            _payload(contact={"first_name": "Case", "last_name": "Evidence", "email": "case@example.test", "phone": "9103330000"}),
-            IDENTITY,
-        )
-        self.assertEqual(phone["reason"], "email_or_address_coverage_gap")
+        phone = self._run(_payload(contact={"first_name": "Case", "last_name": "Evidence", "email": "case@example.test", "phone": "9103330000"}))
+        self.assertEqual(phone["partial"]["reason"], "contact_field_conflict")
         self.assertEqual(self.script.posts("/contacts"), 0)
-        self.assertEqual(self.script.posts("/customers"), 0)
+        self.assertEqual(self.script.posts("/customers"), 1)
 
         self.h.close()
         self.h = Harness(writes_enabled=True, api_role="writer")
         self._use(Script())
-        extra = self.h.service.propose(
-            "create_customer",
-            _payload(additional_location={"name": "Shop", "tax_rate_id": 7704, "address": {"street": "2 Side", "city": "Jacksonville", "state": "NC"}}),
-            IDENTITY,
-        )
-        self.assertEqual(extra["reason"], "email_or_address_coverage_gap")
+        self.script.extra_locations = [{
+            "id": 88012,
+            "customer_id": 88001,
+            "name": "Shop",
+            "tax_rate_id": 7704,
+            "address": {"id": 13, "street": "9 Wrong", "city": "Jacksonville", "state": "NC"},
+        }]
+        extra = self._run(_payload(additional_location={"name": "Shop", "tax_rate_id": 7704, "address": {"street": "2 Side", "city": "Jacksonville", "state": "NC"}}))
+        self.assertEqual(extra["partial"]["reason"], "location_field_conflict")
         self.assertEqual(self.script.posts("/service_locations"), 0)
 
         self.h.close()

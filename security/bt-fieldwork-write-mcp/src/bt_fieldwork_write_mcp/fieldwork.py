@@ -1392,7 +1392,7 @@ class TypedFieldworkClient:
         captured = self._capture_write(status, payload)
         if status >= 500:
             raise AmbiguousWriteError(f"remote_{status}", diagnostic=self.last_write_diagnostic)
-        if status != 200:
+        if status not in {200, 204}:
             raise GateError("location_patch_rejected", status=status)
         return captured
 

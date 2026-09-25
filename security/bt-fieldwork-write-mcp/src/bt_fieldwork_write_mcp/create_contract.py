@@ -207,6 +207,11 @@ def customer_request(payload: dict[str, Any]) -> dict[str, Any]:
         _unknown("confirmed_new")
     if "existing_customer_id" in payload:
         plan["existing_customer_id"] = _int(payload.get("existing_customer_id"), "existing_customer_id", positive=True)
+    if "acknowledge_duplicate_coverage" in payload:
+        ack = payload["acknowledge_duplicate_coverage"]
+        if not isinstance(ack, list) or len(ack) != len(set(ack)) or any(item not in {"email", "address"} for item in ack):
+            _unknown("acknowledge_duplicate_coverage")
+        plan["acknowledge_duplicate_coverage"] = sorted(ack)
     plan["confirmed_new"] = payload.get("confirmed_new") is True
     plan["api_steps"] = _customer_api_steps(plan)
     return plan

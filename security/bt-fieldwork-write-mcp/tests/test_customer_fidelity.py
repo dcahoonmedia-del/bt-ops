@@ -55,11 +55,19 @@ class CustomerFidelityTests(unittest.TestCase):
         self.assertEqual(commercial["gate"], "location_type_required")
 
     def test_primary_email_is_not_a_contact_and_does_not_post(self) -> None:
-        proposed = self.h.service.propose("create_customer", _home(primary_email="ada@example.test"), IDENTITY)
-        self.assertEqual(proposed["gate"], "duplicate_search_incomplete")
-        self.assertEqual(proposed["reason"], "email_or_address_coverage_gap")
-        self.assertEqual(proposed["coverage_gap"], ["email"])
-        self.assertEqual(proposed["after"]["contact_count"] if proposed.get("after") else 0, 0)
+        blocked = self.h.service.propose("create_customer", _home(primary_email="ada@example.test", confirmed_new=True), IDENTITY)
+        self.assertEqual(blocked["reason"], "coverage_acknowledgment_required")
+        self.assertEqual(blocked["coverage_gap"], ["email"])
+        self.assertFalse(blocked.get("duplicate_search", {}).get("complete", False))
+        proposed = self.h.service.propose("create_customer", _home(primary_email="ada@example.test", acknowledge_duplicate_coverage=["email"]), IDENTITY)
+        self.assertTrue(proposed["ok"], proposed)
+        self.assertFalse(proposed["after"]["duplicate_search"]["complete"])
+        self.assertFalse(proposed["after"]["duplicate_search"]["no_duplicate_claim"])
+        self.assertEqual(proposed["after"]["contact_count"], 0)
+        self.assertEqual(proposed["after"]["invoice_email"]["write_supported"], False)
+        refused = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=self.h.approve(proposed["proposal_id"]))
+        self.assertEqual(refused["gate"], "invoice_email_write_unverified")
+        self.assertFalse(any(call["method"] == "POST" and call["path"] == "/customers" for call in self.h.transport.calls))
         plan = customer_request(_home(primary_email="ada@example.test"))
         self.assertIsNone(plan["contact"])
         self.assertEqual(plan["invoice_email"]["write_supported"], False)
@@ -91,6 +99,10 @@ class CustomerFidelityTests(unittest.TestCase):
         done = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=self.h.approve(proposed["proposal_id"]))
         self.assertTrue(done["ok"], done)
         self.assertEqual(done["readback"]["reminders_type"]["status"], "unverified")
+        self.assertEqual(done["readback"]["location_type_id"]["status"], "verified")
+        self.assertEqual(done["readback"]["location_type_id"]["value"], 8736)
+        self.assertEqual(done["readback"]["primary_email"]["status"], "not_sent")
+        self.assertEqual(done["readback"]["billing_phone_kind"]["status"], "verified")
         self.assertNotEqual(done["readback"]["reminders_type"].get("value"), False)
         location_id = str(done["readback"]["location_id"])
         customer_id = str(done["readback"]["customer_id"])
@@ -103,10 +115,63 @@ class CustomerFidelityTests(unittest.TestCase):
         self.assertEqual(caught.exception.detail["field"], "reminders_type")
 
     def test_address_coverage_gap_blocks_create_and_an_extra_field_does_not_skip_it(self) -> None:
-        blocked = self.h.service.propose("create_customer", _home(billing_street="9 Billing", billing_city="Buffalo", billing_state="NY"), IDENTITY)
-        self.assertEqual(blocked["reason"], "email_or_address_coverage_gap")
+        blocked = self.h.service.propose("create_customer", _home(billing_street="9 Billing", billing_city="Buffalo", billing_state="NY", confirmed_new=True), IDENTITY)
+        self.assertEqual(blocked["reason"], "coverage_acknowledgment_required")
         self.assertIn("address", blocked["coverage_gap"])
+        allowed = self.h.service.propose("create_customer", _home(last_name="Street", billing_street="9 Billing", billing_city="Buffalo", billing_state="NY", acknowledge_duplicate_coverage=["address"]), IDENTITY)
+        self.assertTrue(allowed["ok"], allowed)
+        self.assertEqual(allowed["after"]["duplicate_search"]["searched_fields"], ["name", "phone"])
+        self.assertEqual(allowed["after"]["duplicate_search"]["unsearched_fields"], ["address"])
         self.assertFalse(any(call["method"] == "POST" for call in self.h.transport.calls))
         bypass = self.h.service.propose("create_customer", _home(invoice_email="ada@example.test"), IDENTITY)
         self.assertEqual(bypass["gate"], "unknown_field")
         self.assertEqual(bypass["fields"], ["invoice_email"])
+
+    def test_location_settings_204_is_verified_and_ambiguous_patch_is_not_resent(self) -> None:
+        from bt_fieldwork_write_mcp.errors import AmbiguousWriteError
+
+        payload = _home(last_name="Report", location_email="reports@example.test", billing_phone_kind="Office", acknowledge_duplicate_coverage=["email"])
+        proposed = self.h.service.propose("create_customer", payload, IDENTITY)
+        self.assertTrue(proposed["ok"], proposed)
+        self.assertEqual(proposed["after"]["billing_phone_kind"], "Office")
+        self.assertEqual(proposed["after"]["reminders_type"], 0)
+        self.assertEqual(proposed["after"]["contact_count"], 0)
+        step = next(item for item in proposed["after"]["documented_request"]["api_steps"] if item["method"] == "PATCH")
+        self.assertEqual(step["body"]["service_location"]["email"], "reports@example.test")
+        self.assertEqual(step["body"]["service_location"]["reminders_type"], 0)
+        self.assertEqual(step["body"]["service_location"]["location_type_id"], 8736)
+        original = self.h.transport.request
+
+        def request(method, path, body=None, query=None):
+            status, payload_body = original(method, path, body, query)
+            if method == "PATCH" and "service_locations" in path:
+                return 204, None
+            return status, payload_body
+
+        self.h.transport.request = request
+        done = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=self.h.approve(proposed["proposal_id"]))
+        self.h.transport.request = original
+        self.assertTrue(done["ok"], done)
+        self.assertEqual(done["readback"]["location_email"]["status"], "verified")
+        self.assertEqual(done["readback"]["location_email"]["value"], "reports@example.test")
+        self.assertEqual(done["readback"]["location_type_id"]["status"], "verified")
+        self.assertEqual(done["readback"]["reminders_type"]["status"], "unverified")
+        patches = [call for call in self.h.transport.calls if call["method"] == "PATCH" and "service_locations" in call["path"]]
+        self.assertEqual(len(patches), 1)
+
+        again = self.h.service.propose("create_customer", _home(last_name="Ambiguous", location_email="other@example.test", acknowledge_duplicate_coverage=["email"]), IDENTITY)
+        self.assertTrue(again["ok"], again)
+        original = self.h.transport.request
+
+        def ambiguous(method, path, body=None, query=None):
+            status, payload_body = original(method, path, body, query)
+            if method == "PATCH" and "service_locations" in path:
+                raise AmbiguousWriteError("timeout_after_apply")
+            return status, payload_body
+
+        self.h.transport.request = ambiguous
+        reconciled = self.h.service.execute(again["proposal_id"], IDENTITY, operator_approval=self.h.approve(again["proposal_id"]))
+        self.h.transport.request = original
+        self.assertTrue(reconciled["ok"], reconciled)
+        self.assertEqual(reconciled["readback"]["location_email"]["value"], "other@example.test")
+        self.assertEqual(len([call for call in self.h.transport.calls if call["method"] == "PATCH" and "service_locations" in call["path"]]), 2)

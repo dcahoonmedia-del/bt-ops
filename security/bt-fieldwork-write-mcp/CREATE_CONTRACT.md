@@ -16,7 +16,7 @@ Accepted:
 - `note`
 - `primary_email` is accepted as caller intent and is not posted. The customer write spec has no `invoice_email`. A caller key named `invoice_email` is `unknown_field`.
 - `location_email` and `location_type_id` are location PATCH fields, together with `reminders_type` `0`. `send_report_email` is not sent. Inherited true may still send a completion report after a location email is added. Inactive reminders do not disable every notice.
-- Name and phone are the only documented duplicate queries. A supplied email or street is `duplicate_search_incomplete` / `email_or_address_coverage_gap`.
+- Name and phone are the only documented duplicate queries. A supplied email or street stays incomplete until `acknowledge_duplicate_coverage` lists that exact gap. The acknowledgment is bound to the proposal and is not a no-duplicate result.
 
 ## Work order `POST /v3.1/work_orders`
 

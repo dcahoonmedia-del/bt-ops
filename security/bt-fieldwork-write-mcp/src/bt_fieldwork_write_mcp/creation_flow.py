@@ -197,9 +197,13 @@ def duplicate_search(client: Any, payload: dict[str, Any]) -> dict[str, Any]:
         gap.append("email")
     if wanted_addresses:
         gap.append("address")
+    gap = sorted(gap)
     return {
         "complete": not gap,
         "coverage_gap": gap,
+        "searched_fields": ["name", "phone"],
+        "unsearched_fields": gap,
+        "no_duplicate_claim": not gap,
         "candidates": candidates,
         "normalized_names": sorted(wanted_names),
         "normalized_phones": sorted(wanted_phones),
@@ -283,9 +287,21 @@ def resolve_duplicates(
     confirmed_new: bool,
     existing_customer_id: int | None,
     approved_candidate_ids: list[Any] | None = None,
+    acknowledgment: list[Any] | None = None,
 ) -> dict[str, Any]:
-    if search.get("coverage_gap"):
-        raise GateError(GATE_DUPLICATE_SEARCH, reason="email_or_address_coverage_gap", coverage_gap=list(search["coverage_gap"]))
+    gap = list(search.get("coverage_gap") or [])
+    acknowledged = sorted(str(item) for item in (acknowledgment or []))
+    if gap and acknowledged != gap:
+        raise GateError(
+            GATE_DUPLICATE_SEARCH,
+            reason="coverage_acknowledgment_required",
+            coverage_gap=gap,
+            searched_fields=["name", "phone"],
+            unsearched_fields=gap,
+            acknowledgment_required=gap,
+        )
+    if acknowledged and not gap:
+        raise GateError("unknown_field", fields=["acknowledge_duplicate_coverage"])
     candidates = search["candidates"]
     current_ids = {str(item.get("id")) for item in candidates}
     if approved_candidate_ids is not None:
@@ -302,7 +318,10 @@ def resolve_duplicates(
         "confirmed_new": confirmed_new,
         "existing_customer_id": existing_customer_id,
         "candidate_ids": [item.get("id") for item in candidates],
-        "complete": True,
+        "complete": not gap,
+        "coverage_gap": gap,
+        "coverage_acknowledged": bool(gap),
+        "no_duplicate_claim": not gap,
     }
 
 
@@ -645,8 +664,9 @@ def customer_readback(client: Any, customer_id: str, *, sent_customer: dict[str,
         "matched_sent_fields": True,
         "billing_phone_kind": {"status": "verified" if "billing_phone_kind" in fields else "not_sent", "value": customer.get("billing_phone_kind")},
         "reminders_type": _reminder_readback(location),
-        "location_email": location.get("email"),
-        "location_type_id": location.get("location_type_id"),
+        "location_email": {"status": "verified" if main_location and "email" in main_location else "not_sent", "value": location.get("email")},
+        "location_type_id": {"status": "verified" if main_location and "location_type_id" in main_location else "not_sent", "value": location.get("location_type_id")},
+        "primary_email": {"status": "not_sent", "reason": "invoice_email_not_in_customer_write_spec"},
         **labels,
     }
 
@@ -663,6 +683,7 @@ def post_customer_steps(service: Any, proposal: dict[str, Any], attempt_id: str)
         confirmed_new=bool(plan.get("confirmed_new")),
         existing_customer_id=plan.get("existing_customer_id"),
         approved_candidate_ids=(plan.get("duplicate_resolution") or {}).get("candidate_ids"),
+        acknowledgment=plan.get("acknowledge_duplicate_coverage"),
     )
     customer_id = str(plan["existing_customer_id"]) if plan.get("existing_customer_id") else None
     recovered_customer = False
@@ -725,8 +746,8 @@ def post_customer_steps(service: Any, proposal: dict[str, Any], attempt_id: str)
         patch = {"service_location": service_location}
         step_id = _step(store, proposal["proposal_id"], "location_patch", patch, customer_id=customer_id, location_id=location_id)
         response, diagnostic = _sent_write(lambda: client.patch_service_location(customer_id, location_id, patch), client)
-        if response is None or _public_diagnostic(diagnostic).get("status") not in {200, "unknown"}:
-            matched = bool(plan.get("location_patch")) and _location_matches(client, customer_id, location_id, plan["location_patch"])
+        if response is None or _public_diagnostic(diagnostic).get("status") not in {200, 204, "unknown"}:
+            matched = _location_matches(client, customer_id, location_id, service_location)
             if not matched:
                 _ambiguous(store, step_id, customer_id=customer_id, location_id=location_id)
                 store.finish_creation_step(step_id, "ambiguous", {"retry": False, "reason": "location_patch_unresolved", "response": _public_diagnostic(diagnostic)}, customer_id=customer_id, location_id=location_id)
@@ -1021,7 +1042,13 @@ def _location_matches(client: Any, customer_id: str, location_id: str, patch: di
         return False
     if not _owned(location, customer_id, location_id):
         return False
-    if location.get("name") != patch.get("name") or location.get("tax_rate_id") != patch.get("tax_rate_id"):
+    if "name" in patch and location.get("name") != patch.get("name"):
+        return False
+    if "tax_rate_id" in patch and location.get("tax_rate_id") != patch.get("tax_rate_id"):
+        return False
+    if "email" in patch and location.get("email") != patch.get("email"):
+        return False
+    if "location_type_id" in patch and location.get("location_type_id") != patch.get("location_type_id"):
         return False
     address = location.get("address") if isinstance(location.get("address"), dict) else {}
     expected = {key: value for key, value in (patch.get("address_attributes") or {}).items() if key != "id"}
