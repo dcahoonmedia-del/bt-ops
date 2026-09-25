@@ -234,19 +234,26 @@ class CreationWorkflowTests(unittest.TestCase):
         self.assertEqual(failed["gate"], GATE_DISTINCT_IDS)
         self.assertEqual(len([call for call in self.h.transport.calls if call["method"] == "POST" and call["path"] == "/work_orders"]), 1)
 
-    def test_timed_start_is_not_downgraded_or_posted(self) -> None:
+    def test_timed_start_posts_the_date_then_patches_the_offset_once(self) -> None:
         timed = "2026-10-02T10:00:00-04:00"
-        proposed = self.h.service.propose("create_work_order", {**_order(), "occurrences": [{"service_route_ids": [1], "starts_at": timed}]}, IDENTITY)
+        proposed = self.h.service.propose("create_work_order", {**_order(), "occurrences": [{"service_route_ids": [1], "starts_at": timed, "duration": 60}]}, IDENTITY)
         self.assertTrue(proposed["ok"], proposed)
-        self.assertEqual(proposed["after"]["documented_request"]["service_appointment"]["appointment_occurrences_attributes"][0]["starts_at"], timed)
-        self.assertEqual(proposed["after"]["starts_at_instant"], "2026-10-02T10:00:00-04:00")
-        self.assertEqual(proposed["after"]["starts_at_timezone"], "-04:00")
+        posted = proposed["after"]["documented_request"]["service_appointment"]["appointment_occurrences_attributes"][0]
+        self.assertEqual(posted["starts_at"], "2026-10-02")
+        self.assertEqual(proposed["after"]["schedule_patch"]["starts_at"], timed)
+        self.assertEqual(proposed["after"]["starts_at_instant"], timed)
         self.assertFalse(proposed["after"]["starts_at_post_ready"])
-        self.assertFalse(proposed["after"]["timed_create_ready"])
         self.assertFalse(proposed["after"]["starts_at_post_clock_live_tested"])
-        blocked = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=self.h.approve(proposed["proposal_id"]))
-        self.assertEqual(blocked["gate"], "starts_at_post_time_unverified")
-        self.assertFalse(any(call["method"] == "POST" and call["path"] == "/work_orders" for call in self.h.transport.calls))
+        self.assertFalse(proposed["after"]["live_tested"])
+        done = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=self.h.approve(proposed["proposal_id"]))
+        self.assertTrue(done["ok"], done)
+        posts = [call for call in self.h.transport.calls if call["method"] == "POST" and call["path"] == "/work_orders"]
+        patches = [call for call in self.h.transport.calls if call["method"] == "PATCH" and call["path"].startswith("/work_orders/")]
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(posts[0]["body"]["service_appointment"]["appointment_occurrences_attributes"][0]["starts_at"], "2026-10-02")
+        self.assertEqual(len(patches), 1)
+        self.assertEqual(patches[0]["body"]["service_appointment"]["appointment_occurrences_attributes"][0]["starts_at"], timed)
+        self.assertEqual(done["readback"]["starts_at"], timed)
         zulu = self.h.service.propose("create_work_order", {**_order(), "occurrences": [{"service_route_ids": [1], "starts_at": "2026-10-02T10:00:00Z"}]}, IDENTITY)
         self.assertEqual(zulu["gate"], "starts_at_datetime_unverified")
 

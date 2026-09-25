@@ -22,9 +22,10 @@ Accepted:
 - `customer_id`, `service_location_id` (existing active customer and location)
 - `repeat_type`: `none` only
 - `repeat_period`: required integer, sent as given, including `0`
-- one occurrence with `service_route_ids` and `starts_at` as `YYYY-MM-DD`
-- optional occurrence `duration` integer
+- one occurrence. `starts_at` and `service_route_ids` may be top-level or inside one `occurrences` item. Omitting them is `missing_field`, not `unknown_field` on `occurrences`. Optional `duration` and `instructions` use the same place.
+- `starts_at` as `YYYY-MM-DD` is the POST value. An offset timestamp is kept on the proposal. The POST body uses that calendar date because the saved create spec types `starts_at` as `date`. One later PATCH sets the approved offset, duration, and routes after distinct occurrence and appointment ids are known. A fresh public create-page fetch returned HTTP 404, so the POST clock itself is not verified.
 - line items: `name`, `type` (`service`, `material`, `other`, `fee`), `quantity`, `price`
+- The catalog line price is the standard initial price when the caller omits `line_items`. A caller line for that same service, quantity, and payable may set a different `price`. That price is the approved line price. The line total is quantity times price. When that price differs from the catalog price and the caller omits `production_value`, production value is that line total. The template price is not written over a specified price.
 - `payable_id` and `payable_type` (`Service`, `Material`, `Fee`) when `type` is `service` or `material`
 
 `starts_at` is swagger type `date` with no format example. Offset-ISO and Zulu are not treated as the documented create format. That datetime gap stays unverified.

@@ -76,6 +76,26 @@ def _parse_iso(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+def _work_order_steps(documented: dict[str, Any], starts: dict[str, Any], occurrence: dict[str, Any]) -> list[dict[str, Any]]:
+    post = {"method": "POST", "path": "/work_orders", "body": documented, "clock_in_post_body": starts.get("kind") != "offset_timestamp"}
+    if starts.get("kind") != "offset_timestamp":
+        return [post]
+    post["starts_at_in_post"] = starts.get("calendar_date")
+    post["reason"] = "create_spec_types_starts_at_as_date"
+    return [
+        post,
+        {
+            "method": "PATCH",
+            "path": "/work_orders/{service_appointment_id}",
+            "occurrence_id": "{occurrence_id}",
+            "starts_at": starts.get("starts_at"),
+            "duration": occurrence.get("duration"),
+            "service_route_ids": list(occurrence.get("service_route_ids") or []),
+            "reason": "documented_schedule_patch_sets_the_approved_offset",
+        },
+    ]
+
+
 def _normalized_start(value: Any) -> Any:
     if not value:
         return value
@@ -356,7 +376,8 @@ class WriteService:
         occurrence = documented["service_appointment"]["appointment_occurrences_attributes"][0]
         starts = applied.get("starts") or {}
         staff = route_staff(self.client, list(occurrence["service_route_ids"]))
-        schedule = schedule_view(self.client, str(occurrence["starts_at"]), list(occurrence["service_route_ids"]))
+        schedule_at = str(applied.get("schedule_starts_at") or occurrence["starts_at"])
+        schedule = schedule_view(self.client, schedule_at, list(occurrence["service_route_ids"]))
         template = catalog["template"]
         after = {
             "exists": False,
@@ -371,7 +392,10 @@ class WriteService:
             "instructions": occurrence.get("instructions"),
             "production_value": occurrence.get("production_value"),
             "line_total": applied.get("line_total"),
-            "service_pricing": {"name": catalog["line"].get("name"), "price": catalog["line"].get("price"), "quantity": catalog["line"].get("quantity"), "payable_id": catalog["line"].get("payable_id"), "payable_type": catalog["line"].get("payable_type"), "taxable": catalog["line"].get("taxable"), "total": applied.get("line_total")},
+            "price": applied.get("price"),
+            "standard_price": applied.get("standard_price"),
+            "price_source": applied.get("price_source"),
+            "service_pricing": {"name": catalog["line"].get("name"), "price": applied.get("price"), "standard_price": applied.get("standard_price"), "price_source": applied.get("price_source"), "quantity": catalog["line"].get("quantity"), "payable_id": catalog["line"].get("payable_id"), "payable_type": catalog["line"].get("payable_type"), "taxable": catalog["line"].get("taxable"), "total": applied.get("line_total"), "production_value": occurrence.get("production_value")},
             "auto_generates_invoice": catalog.get("auto_generates_invoice"),
             "invoice_generation_disclosed": catalog["invoice_generation_disclosed"],
             "invoice_generation_reason": catalog["invoice_generation_reason"],
@@ -384,18 +408,25 @@ class WriteService:
             "timed_create_ready": False,
             "first_live_creation_approval_required": True,
             "starts_at_datetime_format_unverified": True,
+            "post_clock_missing_proof": "Saved create spec types starts_at as date and gives no time example. GET evidence is not POST support. A fresh public create-page fetch returned HTTP 404, so no POST clock field was verified.",
             "use_time_window_sent": False,
             "promised_window_enforced": False,
+            "arrival_window_post_verified": False,
             "response_schema_verified": False,
-            "schema_ready": starts.get("post_ready", True) is not False,
-            "timed_execution_blocked": starts.get("post_ready") is False,
+            "schema_ready": True,
+            "timed_execution_blocked": False,
+            "schedule_patch": None if starts.get("kind") != "offset_timestamp" else {"starts_at": starts.get("starts_at"), "duration": occurrence.get("duration"), "service_route_ids": list(occurrence.get("service_route_ids") or [])},
+            "api_steps": _work_order_steps(documented, starts, occurrence),
             "live_tested": False,
+            "initial_treatment_only": True,
+            "recurrence": False,
+            "agreement": False,
         }
         result = self._persist_proposal(
             OP_CREATE_WORK_ORDER,
             payload,
             identity,
-            f"work_order:{payload.get('customer_id')}:{payload.get('service_location_id')}:{occurrence.get('starts_at')}:{','.join(str(item) for item in occurrence.get('service_route_ids') or [])}",
+            f"work_order:{payload.get('customer_id')}:{payload.get('service_location_id')}:{schedule_at}:{applied.get('price')}:{','.join(str(item) for item in occurrence.get('service_route_ids') or [])}",
             {"exists": False},
             after,
         )

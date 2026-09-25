@@ -27,8 +27,14 @@ CREATE_FIELDS = frozenset(
         "line_items",
         "occurrences",
         "template_id",
+        "starts_at",
+        "duration",
+        "service_route_ids",
+        "instructions",
+        "production_value",
     }
 )
+CALLER_OCCURRENCE_FIELDS = frozenset({"starts_at", "duration", "service_route_ids", "instructions", "production_value"})
 LINE_ITEM_FIELDS = frozenset({"name", "type", "quantity", "price", "payable_id", "payable_type", "taxable"})
 OCCURRENCE_FIELDS = frozenset({"service_route_ids", "starts_at", "duration", "instructions", "production_value"})
 REJECTED_OCCURRENCE_FIELDS = frozenset({"started_at_time", "finished_at_time", "private_notes", "status", "use_time_window"})
@@ -224,7 +230,7 @@ def current_gates(
             "update_work_order_notes": {"propose": bool(mapping_verified), "execute_role": "client.get_api_role", "execute_blocked_by": list(work_order_blocks), "fields": ["instructions", "private_notes"]},
             "update_work_order_schedule": {"propose": bool(mapping_verified), "single_occurrence": True, "execute_role": "client.get_api_role", "execute_blocked_by": list(work_order_blocks), "fields": ["starts_at", "duration", "service_route_ids"], "arrival_window_preserved": False, "arrival_coupling": "fixed_window_selected_by_start_when_occurrence_evidence_is_fresh", "explicit_arrival_window_edit": False},
             "create_customer": {"propose": True, "schema_ready": True, "live_tested": False, "execute_blocked_by": list(write_blocks), "caller_location_key": "service_locations", "caller_location_shape": "one_object_or_one_item_list", "fieldwork_location_key": "service_locations_attributes", "nested_location_fields": ["name", "same_as_billing_address"], "missing_location_gate": "nested_location_required", "address_patch_when_distinct": True, "response_schema_verified": False, "post_response_body_retained": False, "ambiguous_customer_post": "authoritative_get_no_retry"},
-            "create_work_order": {"propose": True, "schema_ready": True, "live_tested": False, "execute_blocked_by": list(write_blocks), "repeat_type": "none", "starts_at_date_only": "YYYY-MM-DD", "timed_create_ready": False, "starts_at_post_clock_live_tested": False, "starts_at_datetime_format_unverified": True, "use_time_window_sent": False, "promised_window_enforced": False, "response_schema_verified": False, "first_live_creation_approval_required": True},
+            "create_work_order": {"propose": True, "schema_ready": True, "live_tested": False, "execute_blocked_by": list(write_blocks), "repeat_type": "none", "caller_schedule_keys": ["starts_at", "duration", "service_route_ids", "instructions"], "missing_schedule_gate": "missing_field", "starts_at_date_only": "YYYY-MM-DD", "offset_starts_at": "date_post_plus_one_schedule_patch", "timed_create_ready": False, "starts_at_post_clock_live_tested": False, "starts_at_datetime_format_unverified": True, "price": "caller_line_price_or_template_standard", "use_time_window_sent": False, "promised_window_enforced": False, "initial_treatment_only": True, "response_schema_verified": False, "first_live_creation_approval_required": True},
             "schedule_or_arrival_window_write": {"propose": False, "execute_blocked_by": [GATE_ARRIVAL_WINDOW]},
             "list_users": {"read": True, "endpoint": "GET /v3.1/users", "projection": "staff_and_branch_fields", "stripe_pk": False},
             "list_service_locations": {"read": True, "endpoint": "GET /v3.1/customers/{customer_id}/service_locations", "customer_required": True, "global_endpoint": False},

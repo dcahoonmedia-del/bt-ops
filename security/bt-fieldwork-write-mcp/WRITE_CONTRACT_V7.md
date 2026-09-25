@@ -24,4 +24,4 @@ Execute calls `client.get_api_role()`. Missing, unreadable, or readonly (includi
 
 ## Create
 
-Customer create and one-time work-order create are documented in `CREATE_CONTRACT.md`. Empty line items or occurrences stay `unknown_field`. Messaging and arrival-window writes stay closed.
+Customer create and one-time work-order create are documented in `CREATE_CONTRACT.md`. An empty occurrence list or empty line-item list is `missing_field`. Messaging and arrival-window writes stay closed.

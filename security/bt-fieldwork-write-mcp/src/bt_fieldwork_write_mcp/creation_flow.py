@@ -277,8 +277,12 @@ def apply_catalog(appointment: dict[str, Any], catalog: dict[str, Any]) -> dict[
     line = catalog["line"]
     sent_line = dict(line)
     supplied = appointment.get("line_items_attributes")
-    if supplied is not None and not _lines_equal(supplied, [sent_line]):
-        raise GateError(GATE_CATALOG, reason="caller_line_disagrees_with_template")
+    price_source = "template_standard"
+    if supplied is not None:
+        if not _line_identity_equal(supplied, sent_line):
+            raise GateError(GATE_CATALOG, reason="caller_line_disagrees_with_template")
+        sent_line["price"] = money_number(supplied[0]["price"])
+        price_source = "caller"
     source = dict(appointment["appointment_occurrences_attributes"][0])
     starts = source.pop("_starts", None) or {}
     occurrence = {key: source[key] for key in ("service_route_ids", "starts_at", "duration", "instructions", "production_value") if key in source}
@@ -286,8 +290,9 @@ def apply_catalog(appointment: dict[str, Any], catalog: dict[str, Any]) -> dict[
         occurrence["duration"] = defaults["duration"]
     if "instructions" not in occurrence:
         occurrence["instructions"] = defaults["instructions"]
-    if "production_value" not in occurrence:
-        occurrence["production_value"] = money_number(defaults["production_value"])
+    schedule_starts = occurrence["starts_at"]
+    if starts.get("kind") == "offset_timestamp":
+        occurrence["starts_at"] = starts["calendar_date"]
     body = {
         "customer_id": appointment["customer_id"],
         "service_location_id": appointment["service_location_id"],
@@ -299,27 +304,40 @@ def apply_catalog(appointment: dict[str, Any], catalog: dict[str, Any]) -> dict[
     if body["repeat_period"] is None or isinstance(body["repeat_period"], bool):
         raise GateError("unknown_field", fields=["repeat_period"])
     total = money(sent_line["quantity"]) * money(sent_line["price"])
+    line_total = int(total) if total == total.to_integral_value() else format(total, "f")
+    if "production_value" not in occurrence:
+        if price_source == "caller" and not money_equal(sent_line["price"], line["price"]):
+            occurrence["production_value"] = line_total
+        else:
+            occurrence["production_value"] = money_number(defaults["production_value"])
     return {
         "service_appointment": body,
         "starts": starts,
-        "line_total": int(total) if total == total.to_integral_value() else format(total, "f"),
+        "line_total": line_total,
+        "price": sent_line["price"],
+        "standard_price": line["price"],
+        "price_source": price_source,
+        "schedule_starts_at": schedule_starts,
     }
 
 
-def _lines_equal(supplied: list[dict[str, Any]], expected: list[dict[str, Any]]) -> bool:
-    if len(supplied) != len(expected):
+def _line_identity_equal(supplied: list[dict[str, Any]], expected: dict[str, Any]) -> bool:
+    """Service identity and quantity stay on the catalog line. Price is the caller's amount."""
+    if len(supplied) != 1 or not isinstance(supplied[0], dict):
         return False
-    for left, right in zip(supplied, expected):
-        for key in ("name", "type", "payable_type"):
-            if left.get(key) != right.get(key):
-                return False
-        for key in ("quantity", "price"):
-            if not money_equal(left.get(key), right.get(key)):
-                return False
-        if str(left.get("payable_id")) != str(right.get("payable_id")):
+    left = supplied[0]
+    for key in ("name", "type", "payable_type"):
+        if left.get(key) != expected.get(key):
             return False
-        if bool(left.get("taxable")) != bool(right.get("taxable")):
-            return False
+    if not money_equal(left.get("quantity"), expected.get("quantity")):
+        return False
+    if "price" not in left:
+        return False
+    money(left.get("price"))
+    if str(left.get("payable_id")) != str(expected.get("payable_id")):
+        return False
+    if bool(left.get("taxable")) != bool(expected.get("taxable")):
+        return False
     return True
 
 
@@ -995,7 +1013,8 @@ def post_work_order(service: Any, proposal: dict[str, Any], attempt_id: str) -> 
     client = service.client
     store = service.store
     sent = proposal["after"]["documented_request"]["service_appointment"]
-    if proposal["after"].get("starts_at_post_ready") is False:
+    schedule_patch = proposal["after"].get("schedule_patch")
+    if proposal["after"].get("starts_at_post_ready") is False and not schedule_patch:
         raise GateError(GATE_STARTS_AT_POST, starts_at_post_clock_live_tested=False, timed_create_ready=False, first_live_creation_approval_required=True)
     catalog = load_catalog(client, proposal["after"].get("template_id"))
     rebuilt = apply_catalog(proposal["after"]["caller_appointment"], catalog)
@@ -1003,7 +1022,8 @@ def post_work_order(service: Any, proposal: dict[str, Any], attempt_id: str) -> 
         raise GateError("stale_state", reason="template_changed")
     service._require_active_location(proposal["payload"])
     occurrence = sent["appointment_occurrences_attributes"][0]
-    current_schedule = schedule_view(client, str(occurrence["starts_at"]), list(occurrence["service_route_ids"]))
+    schedule_at = str((schedule_patch or {}).get("starts_at") or occurrence["starts_at"])
+    current_schedule = schedule_view(client, schedule_at, list(occurrence["service_route_ids"]))
     approved_schedule = proposal["after"].get("schedule") or {}
     if schedule_signature(current_schedule) != schedule_signature(approved_schedule):
         raise GateError("stale_state", reason="schedule_changed")
@@ -1017,12 +1037,15 @@ def post_work_order(service: Any, proposal: dict[str, Any], attempt_id: str) -> 
         reconciled = _reconcile_work_order(client, sent, before)
         if reconciled is None:
             return stop_creation(store, proposal, attempt_id)
-        store.finish_creation_step(step_id, "ambiguous", {"reconciled": True}, customer_id=str(sent["customer_id"]), location_id=str(sent["service_location_id"]))
-        try:
-            readback = work_order_readback(client, sent, reconciled)
-        except GateError:
+        store.finish_creation_step(step_id, "succeeded", {"reconciled": True, "occurrence_id": int(reconciled)}, customer_id=str(sent["customer_id"]), location_id=str(sent["service_location_id"]))
+        row = client.get_work_order(reconciled)
+        appointment_id = row.get("service_appointment_id")
+        if response_id({"id": appointment_id}) is None or str(reconciled) == str(appointment_id):
             return stop_creation(store, proposal, attempt_id)
-        store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "success")
+        sent = _finish_schedule_patch(service, proposal, attempt_id, sent, reconciled, appointment_id)
+        if not isinstance(sent, dict):
+            return sent
+        readback = work_order_readback(client, sent, reconciled)
         return {"ok": True, "readback": readback, "created_id": readback["occurrence_id"], "reconciled": True}
     created = response_id(response)
     appointment_id = response.get("service_appointment_id") if isinstance(response, dict) else None
@@ -1035,8 +1058,49 @@ def post_work_order(service: Any, proposal: dict[str, Any], attempt_id: str) -> 
             stopped["gate"] = GATE_DISTINCT_IDS
         return stopped
     _succeed(store, step_id, {"occurrence_id": created, "service_appointment_id": appointment_id}, customer_id=str(sent["customer_id"]), location_id=str(sent["service_location_id"]))
+    sent = _finish_schedule_patch(service, proposal, attempt_id, sent, str(created), appointment_id)
+    if not isinstance(sent, dict):
+        return sent
     readback = work_order_readback(client, sent, str(created))
     return {"ok": True, "readback": readback, "created_id": created}
+
+
+def _finish_schedule_patch(service: Any, proposal: dict[str, Any], attempt_id: str, sent: dict[str, Any], occurrence_id: str, appointment_id: Any) -> dict[str, Any]:
+    patch = proposal["after"].get("schedule_patch")
+    if not patch:
+        return sent
+    if not _proposal_current(service, proposal):
+        return stop_creation(service.store, proposal, attempt_id)
+    client = service.client
+    store = service.store
+    before = {"work_order_id": occurrence_id, "service_appointment_id": appointment_id}
+    after = {"starts_at": patch["starts_at"], "duration": patch["duration"], "service_route_ids": list(patch["service_route_ids"])}
+    step_id = _step(store, proposal["proposal_id"], "work_order_schedule_patch", after, customer_id=str(sent["customer_id"]), location_id=str(sent["service_location_id"]))
+    try:
+        client.patch_work_order_fields(before, after, ["starts_at", "duration", "service_route_ids"])
+    except AmbiguousWriteError:
+        if not _schedule_patch_landed(client, occurrence_id, appointment_id, patch):
+            _ambiguous(store, step_id, customer_id=str(sent["customer_id"]), location_id=str(sent["service_location_id"]))
+            store.finish_creation_step(step_id, "ambiguous", {"retry": False, "reason": "schedule_patch_unresolved"}, customer_id=str(sent["customer_id"]), location_id=str(sent["service_location_id"]))
+            return stop_creation(store, proposal, attempt_id)
+    _succeed(store, step_id, {"occurrence_id": int(occurrence_id), "service_appointment_id": int(appointment_id)}, customer_id=str(sent["customer_id"]), location_id=str(sent["service_location_id"]))
+    timed = dict(sent)
+    occurrence = dict(sent["appointment_occurrences_attributes"][0])
+    occurrence["starts_at"] = patch["starts_at"]
+    occurrence["duration"] = patch["duration"]
+    occurrence["service_route_ids"] = list(patch["service_route_ids"])
+    timed["appointment_occurrences_attributes"] = [occurrence]
+    return timed
+
+
+def _schedule_patch_landed(client: Any, occurrence_id: str, appointment_id: Any, patch: dict[str, Any]) -> bool:
+    try:
+        row = client.get_work_order(str(occurrence_id))
+    except GateError:
+        return False
+    if str(row.get("id")) != str(occurrence_id) or str(row.get("service_appointment_id")) != str(appointment_id):
+        return False
+    return _same_instant(str(patch["starts_at"]), row.get("starts_at")) and row.get("duration") == patch["duration"] and list(row.get("service_route_ids") or []) == list(patch["service_route_ids"])
 
 
 def _reconcile_work_order(client: Any, sent: dict[str, Any], before: dict[str, Any]) -> str | None:

@@ -24,7 +24,7 @@ PUBLIC_INSTRUCTIONS = (
     "Customer and work-order creation are schema-ready and are not live-tested. "
     "Customer create accepts Residential or Commercial, documented billing fields, and service_locations as one object or a one-item list with only name and same_as_billing_address. That caller wrapper becomes customer[service_locations_attributes] on POST /customers. Email belongs on an explicit contact, not on the customer POST. A distinct service address is a later location PATCH. Omitting the location is nested_location_required, not an unknown service_locations field. "
     "Duplicate search must be complete, and possible matches require confirmed_new or an existing customer id. "
-    "Work-order create fetches the current template and service catalog. A date-only starts_at YYYY-MM-DD can be posted. An offset timestamp is kept and is not turned into a date-only job; posting that clock time is not live-tested and stays blocked. No promised arrival window. "
+    "Work-order create accepts starts_at, duration, service_route_ids, and instructions on the caller or inside one occurrences item. A missing schedule is missing_field, not unknown_field occurrences. The catalog price is the standard initial price. An explicit line price is the approved amount and is not replaced by that standard. A date-only starts_at is one POST. An offset timestamp is a disclosed date POST plus one schedule PATCH of that instant. POST clock acceptance is not live-tested. No promised arrival window. "
     "Writes stay off unless FIELDWORK_WRITES_ENABLED is set and the live API role is writer. "
     "Work-order note and schedule writes also require FIELDWORK_MAPPING_VERIFIED. GET /check_connection is not auth proof. "
     "MCP execution requires FW_WRITE_APPROVAL_MODE=chatgpt_confirmation. A separate approval string is not accepted."
@@ -36,7 +36,7 @@ PROPOSE_DESCRIPTION = (
     "update_work_order_notes(work_order_id, service_appointment_id, instructions and/or private_notes); "
     "update_work_order_schedule(work_order_id, service_appointment_id, starts_at with a numeric offset, duration minutes, service_route_ids); "
     "create_customer is schema-ready and not live-tested: Residential or Commercial; service_locations is one object or a one-item list with only name and same_as_billing_address, posted as service_locations_attributes; billing_phone and billing address stay on the customer; email is contact.email only; confirmed_new or existing_customer_id when search finds a match; "
-    "create_work_order is schema-ready and not live-tested: one occurrence, repeat_type none, date-only starts_at YYYY-MM-DD. Offset-aware starts_at is preserved but execute stays starts_at_post_time_unverified until a documented POST time field is verified. No use_time_window or promised arrival window. "
+    "create_work_order is schema-ready and not live-tested: one initial occurrence, repeat_type none. starts_at, duration, service_route_ids, and instructions may be top-level or inside one occurrences item. Omitting starts_at or service_route_ids is missing_field. The catalog line price is the standard initial price; a caller line price for that same service is the approved price, total, and production amount. Date-only starts_at is one POST. An offset timestamp posts the calendar date because the saved create spec types starts_at as date, then one PATCH sets the approved offset. That POST clock is not live-tested. No use_time_window, agreement, or recurrence. "
     "Rejected: lead status, incomplete duplicate search, recurrence, taxable lines, portal or autopay fields, and caller fields started_at_time, finished_at_time, private_notes, status, or use_time_window."
 )
 
@@ -45,7 +45,7 @@ EXECUTE_DESCRIPTION = (
     "execute that one proposal with approved=true and the exact digest. The result includes readback. "
     "Rejects missing approval, a missing or wrong digest, a stale before, an expired proposal, a tampered stored proposal, "
     "another proposal id, or another user's proposal. "
-    "Customer create can POST the customer, PATCH a distinct service address, POST one caller-supplied extra location, and POST an explicit contact. Work-order create sends one POST. "
+    "Customer create can POST the customer, PATCH a distinct service address, POST one caller-supplied extra location, and POST an explicit contact. Work-order create sends one POST. A timed visit adds one schedule PATCH of the approved offset after distinct ids are known. "
     "A crashed or ambiguous POST is not replayed. An ambiguous customer POST is bound only when one new account matches the approved identity on a later GET. Remaining approved contact or location steps continue once in that same execution. A lost contact or location response is read back, not resent. "
     "Creation is schema-ready and not live-tested. Readback is the fake client's echoed records, not a verified live schema. "
     "Requires FW_WRITE_APPROVAL_MODE=chatgpt_confirmation."

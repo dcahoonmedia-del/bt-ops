@@ -9,6 +9,7 @@ from typing import Any
 from .allowlist import (
     ADDITIONAL_LOCATION_FIELDS,
     CONTACT_FIELDS,
+    CALLER_OCCURRENCE_FIELDS,
     CREATE_FIELDS,
     CUSTOMER_CREATE_FIELDS,
     CUSTOMER_LOCATION_FIELDS,
@@ -398,34 +399,23 @@ def work_order_request(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, dict):
         _unknown("work_order")
     assert_only(payload, CREATE_FIELDS, label="create")
-    occurrences = payload.get("occurrences")
-    if not isinstance(occurrences, list):
-        _unknown("occurrences")
-    for occ in occurrences:
-        if not isinstance(occ, dict):
-            _unknown("occurrences")
-        _occurrence_fields(occ)
+    occurrence = _caller_occurrence(payload)
     repeat = payload.get("repeat_type")
+    if "repeat_type" not in payload:
+        raise GateError("missing_field", fields=["repeat_type"])
     if not isinstance(repeat, str) or repeat not in REPEAT_TYPES:
         _unknown("repeat_type")
     if repeat != "none":
         raise GateError(GATE_RECURRING)
     period = _int(payload.get("repeat_period"), "repeat_period") if "repeat_period" in payload else None
     items = payload.get("line_items")
-    missing: list[str] = []
     if "line_items" in payload and (not isinstance(items, list) or not items):
-        missing.append("line_items")
-    if len(occurrences) == 0:
-        missing.append("occurrences")
-    if missing:
-        raise GateError("unknown_field", fields=missing)
-    if len(occurrences) != 1:
-        raise GateError(GATE_RECURRING)
+        raise GateError("missing_field", fields=["line_items"])
     appointment: dict[str, Any] = {
         "customer_id": _int(payload.get("customer_id"), "customer_id", positive=True),
         "service_location_id": _int(payload.get("service_location_id"), "service_location_id", positive=True),
         "repeat_type": "none",
-        "appointment_occurrences_attributes": [_occurrence(occurrences[0])],
+        "appointment_occurrences_attributes": [_occurrence(occurrence)],
     }
     if period is not None:
         appointment["repeat_period"] = period
@@ -435,6 +425,36 @@ def work_order_request(payload: dict[str, Any]) -> dict[str, Any]:
     if "template_id" in payload:
         body["template_id"] = _int(payload.get("template_id"), "template_id", positive=True)
     return body
+
+
+def _caller_occurrence(payload: dict[str, Any]) -> dict[str, Any]:
+    """One occurrence from a flat caller or from a one-item occurrences list.
+
+    The Fieldwork body key is appointment_occurrences_attributes. A missing
+    occurrences key is not an unknown field the caller sent.
+    """
+    flat = sorted(key for key in CALLER_OCCURRENCE_FIELDS if key in payload)
+    if "occurrences" not in payload:
+        if "starts_at" not in payload or "service_route_ids" not in payload:
+            missing = [key for key in ("starts_at", "service_route_ids") if key not in payload]
+            raise GateError("missing_field", fields=missing)
+        return {key: payload[key] for key in flat}
+    if flat:
+        raise UnknownFieldError(flat)
+    occurrences = payload.get("occurrences")
+    if not isinstance(occurrences, list):
+        _unknown("occurrences")
+    if len(occurrences) == 0:
+        raise GateError("missing_field", fields=["starts_at", "service_route_ids"])
+    if len(occurrences) != 1 or not isinstance(occurrences[0], dict):
+        if len(occurrences) != 1:
+            raise GateError(GATE_RECURRING)
+        _unknown("occurrences")
+    _occurrence_fields(occurrences[0])
+    if "starts_at" not in occurrences[0] or "service_route_ids" not in occurrences[0]:
+        missing = [key for key in ("starts_at", "service_route_ids") if key not in occurrences[0]]
+        raise GateError("missing_field", fields=missing)
+    return occurrences[0]
 
 
 def _occurrence_fields(item: dict[str, Any]) -> None:

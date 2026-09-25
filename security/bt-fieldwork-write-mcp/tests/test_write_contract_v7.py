@@ -152,8 +152,15 @@ class ContractV7Tests(unittest.TestCase):
             IDENTITY,
         )
         self.assertFalse(proposed["ok"])
-        self.assertEqual(proposed["gate"], "unknown_field")
-        self.assertEqual(proposed["fields"], ["line_items", "occurrences"])
+        self.assertEqual(proposed["gate"], "missing_field")
+        self.assertEqual(proposed["fields"], ["starts_at", "service_route_ids"])
+        empty_lines = self.h.service.propose(
+            OP_CREATE_WORK_ORDER,
+            {"customer_id": 41, "service_location_id": 77, "repeat_type": "none", "repeat_period": 0, "line_items": [], "starts_at": "2026-10-02", "service_route_ids": [1]},
+            IDENTITY,
+        )
+        self.assertEqual(empty_lines["gate"], "missing_field")
+        self.assertEqual(empty_lines["fields"], ["line_items"])
         self.assertNotIn("proposal_id", proposed)
         self.assertEqual(self.role.patches, [])
         self.assertFalse(any(call["method"] == "POST" for call in self.h.transport.calls))
