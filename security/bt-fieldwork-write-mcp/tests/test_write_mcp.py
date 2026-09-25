@@ -363,7 +363,7 @@ class WriteMcpTests(unittest.TestCase):
         gates = self.h.service.gates()
         self.assertFalse(gates["writes_enabled"])
         self.assertTrue(gates["fieldwork_get_protocol_historically_verified"])
-        self.assertFalse(gates["fieldwork_get_auth_verified"])
+        self.assertTrue(gates["fieldwork_get_auth_verified"])
         self.assertFalse(gates["credential_ready"])
         self.assertFalse(gates["live_ready"])
         self.assertEqual(gates["auth_query_parameter"], "api_key")

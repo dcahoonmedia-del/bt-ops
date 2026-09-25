@@ -103,19 +103,68 @@ class WriteService:
         self.store = store
         self.client = client
         self._now = now or (lambda: datetime.now(timezone.utc))
+        self._readiness: dict[str, Any] | None = None
+
+    def readiness(self, settings: Settings | None = None) -> dict[str, Any]:
+        """One profile read and one auth snapshot. Later gates() calls reuse it."""
+        settings = settings or self.settings
+        role_error = None
+        try:
+            role = self.client.get_api_role()
+        except Exception as exc:
+            role, role_error = "unknown", getattr(exc, "gate", "read_rejected")
+        normalized = str(role or "unknown").strip().lower().replace("-", "_").replace(" ", "_")
+        credential_ready = bool(getattr(self.client, "api_key_present", lambda: False)())
+        if settings.auth_mode == "auth0_bridge":
+            from .auth0_bridge import bridge_blockers
+
+            auth_configured = not bridge_blockers(settings)
+        else:
+            auth_configured = settings.oauth_ready()
+        approval_supported = settings.approval_mode == "chatgpt_confirmation"
+        auth_verified = role_error is None and normalized in {"writer", "readonly"}
+        writer = auth_verified and normalized == "writer"
+        live_ready = bool(credential_ready and auth_configured and writer and settings.writes_enabled and approval_supported)
+        gates = current_gates(
+            writes_enabled=settings.writes_enabled,
+            mapping_verified=settings.mapping_verified,
+            api_role=normalized,
+            credential_ready=credential_ready,
+            oauth_ready=auth_configured,
+            auth_verified=auth_verified,
+            live_ready=live_ready,
+            approval_mode=settings.approval_mode if approval_supported else "unsupported",
+            approval_supported=approval_supported,
+        )
+        body = {
+            "ok": True,
+            "reads_ready": auth_verified,
+            "live_ready": live_ready,
+            "fieldwork_api_auth_verified": auth_verified,
+            "role_check_error": role_error,
+            "credential_ready": credential_ready,
+            "direct_jwt_configured": settings.auth_mode != "auth0_bridge" and settings.oauth_ready(),
+            "auth0_bridge_configured": settings.auth_mode == "auth0_bridge" and auth_configured,
+            "live_auth0_login_observed_by_this_process": bool(getattr(self, "authenticated_call_observed", False)),
+            "offline_access_requested": settings.auth0_offline_access,
+            "offline_access_required_on_access_token": False,
+            "offline_access_observed_by_this_process": bool(getattr(self, "offline_access_observed", False)),
+            "existing_downstream_sessions_remain_usable": True,
+            "refresh_token_needs_one_new_authorization": not bool(getattr(self, "offline_access_observed", False)),
+            "approval_mode": settings.approval_mode if approval_supported else "unsupported",
+            "approval_mode_configured": settings.approval_mode,
+            "approval_mode_supported": approval_supported,
+            "live_patch_tested": False,
+            "live_patch_tested_is_a_status_not_a_write_block": True,
+            "gates": gates,
+        }
+        self._readiness = body
+        return body
 
     def gates(self) -> dict[str, Any]:
-        key_ready = False
-        key = getattr(self.client, "api_key_present", None)
-        if callable(key):
-            key_ready = bool(key())
-        return current_gates(
-            writes_enabled=self.settings.writes_enabled,
-            mapping_verified=self.settings.mapping_verified,
-            api_role=self._live_api_role(),
-            credential_ready=key_ready,
-            oauth_ready=self.settings.oauth_ready() or self.settings.auth_mode == "auth0_bridge",
-        )
+        if self._readiness is None:
+            return self.readiness()["gates"]
+        return self._readiness["gates"]
 
     def _fail(self, gate: str, **detail: Any) -> dict[str, Any]:
         payload = {"ok": False, "gate": gate, "gates": self.gates()}
@@ -301,6 +350,8 @@ class WriteService:
     ) -> dict[str, Any]:
         clock = _utc(self._now())
         proposal_id = str(uuid.uuid4())
+        created_at = _iso(clock)
+        expires_at = _iso(clock + timedelta(seconds=self.settings.proposal_ttl_seconds))
         digest = proposal_digest(
             proposal_id=proposal_id,
             operation=operation,
@@ -309,6 +360,8 @@ class WriteService:
             before=before,
             after=after,
             payload=payload,
+            created_at=created_at,
+            expires_at=expires_at,
         )
         record = {
             "proposal_id": proposal_id,
@@ -320,8 +373,8 @@ class WriteService:
             "after": after,
             "payload": payload,
             "digest": digest,
-            "created_at": _iso(clock),
-            "expires_at": _iso(clock + timedelta(seconds=self.settings.proposal_ttl_seconds)),
+            "created_at": created_at,
+            "expires_at": expires_at,
         }
         try:
             self.store.create_proposal(record)
@@ -368,13 +421,19 @@ class WriteService:
         if "ok" in ident and ident.get("ok") is False:
             return ident
         identity = ident  # type: ignore[assignment]
+        snap = self.readiness()
         if not self.settings.writes_enabled:
             return self._fail(GATE_WRITES_DISABLED, proposal_id=proposal_id)
-        if self._live_api_role() != "writer":
+        if snap.get("role_check_error"):
+            return self._fail(str(snap["role_check_error"]), proposal_id=proposal_id)
+        if snap["gates"]["api_role"] != "writer":
             return self._fail(GATE_READONLY, proposal_id=proposal_id)
         proposal = self.store.get_proposal(proposal_id)
         if proposal is None:
             return self._fail("unknown_operation", proposal_id=proposal_id)
+        rebound = self._bound_digest(proposal)
+        if not hmac.compare_digest(rebound, str(proposal["digest"])):
+            return self._fail(GATE_OPERATOR, proposal_id=proposal_id, reason="stored_proposal_digest_mismatch")
         clock = _utc(self._now())
         if proposal["identity"] != identity:
             return self._fail(GATE_IDENTITY, proposal_id=proposal_id)
@@ -398,9 +457,6 @@ class WriteService:
             stale = self._location_stale(proposal) if proposal["operation"] == OP_LOCATION_NOTES else None
         if stale is not None:
             return stale
-        rebound = self._bound_digest(proposal)
-        if not hmac.compare_digest(rebound, str(proposal["digest"])):
-            return self._fail(GATE_OPERATOR, proposal_id=proposal_id, reason="stored_proposal_digest_mismatch")
         if self.settings.approval_mode == "chatgpt_confirmation":
             # A caller-supplied operator_approval string is not proof in this mode.
             del operator_approval
@@ -429,6 +485,8 @@ class WriteService:
             before=proposal["before"],
             after=proposal["after"],
             payload=proposal["payload"],
+            created_at=proposal["created_at"],
+            expires_at=proposal["expires_at"],
         )
 
     def _record_chatgpt_confirmation(self, proposal: dict[str, Any], digest: str, clock: datetime) -> None:

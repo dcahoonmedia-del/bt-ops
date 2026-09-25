@@ -16,6 +16,25 @@ from .redact import redact
 from .secrets import load_api_key
 from .service import WriteService
 
+PUBLIC_INSTRUCTIONS = (
+    "Read the Fieldwork record, propose one change, inspect it, and show the user the exact before and after. "
+    "Obtain explicit user approval of that before and after. Then execute only with approved=true and the exact digest "
+    "from that proposal, and show the live readback. Do not execute a draft, a stale proposal, a different proposal, "
+    "or a change the user did not approve. No customer create, no work-order create, no Lead-status accounts, "
+    "no messaging, no generic HTTP, no recurring-series edits, and no arrival-window edits. "
+    "Writes stay off unless FIELDWORK_WRITES_ENABLED is set and the live API role is writer. "
+    "Work-order writes also require FIELDWORK_MAPPING_VERIFIED. GET /check_connection is not auth proof. "
+    "MCP execution requires FW_WRITE_APPROVAL_MODE=chatgpt_confirmation. A separate approval string is not accepted."
+)
+
+EXECUTE_DESCRIPTION = (
+    "After the user has explicitly approved the exact before and after shown by inspect_proposal, "
+    "execute that one proposal with approved=true and the exact digest. The result includes live readback. "
+    "Rejects missing approval, a missing or wrong digest, a stale before, an expired proposal, a tampered stored proposal, "
+    "another proposal id, or another user's proposal. create_work_order cannot execute. "
+    "Requires FW_WRITE_APPROVAL_MODE=chatgpt_confirmation."
+)
+
 
 def _auth_settings(settings: Settings) -> AuthSettings | None:
     if not settings.oauth_ready():
@@ -45,18 +64,7 @@ def build_mcp(service: WriteService, settings: Settings, verifier: JwtTokenVerif
     server = MCPServer(
         name="bt-fieldwork-write-mcp",
         title="B&T Fieldwork write MCP",
-        instructions=(
-            "Narrow Fieldwork writes only. No customer create, no Lead-status accounts, "
-            "no messaging, no generic HTTP. Writes stay off unless FIELDWORK_WRITES_ENABLED is set "
-            "and the live API role is writer. Work-order writes also require FIELDWORK_MAPPING_VERIFIED. "
-            "create_work_order is unsupported. GET /check_connection is not auth proof. "
-            + (
-                "ChatGPT execution requires approved=true and the exact proposal digest. "
-                "A separate approval string is not accepted."
-                if settings.approval_mode == "chatgpt_confirmation"
-                else "Model-supplied approved=true is not proof. Operator HMAC is internal and is not a tool parameter."
-            )
-        ),
+        instructions=PUBLIC_INSTRUCTIONS,
         token_verifier=verifier if auth is not None else None,
         auth=auth,
     )
@@ -74,7 +82,7 @@ def build_mcp(service: WriteService, settings: Settings, verifier: JwtTokenVerif
 
     @server.tool(
         name="execute_approved_write",
-        description="Execute one stored proposal on the fake or live client only when approved is true and expected_digest equals that proposal digest. The digest binds proposal_id, payload, before, after, identity, and target. Do not send an approval string. Rejects a missing, stale, tampered, or cross-proposal digest. create_work_order cannot execute.",
+        description=EXECUTE_DESCRIPTION,
         annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True},
     )
     async def execute_approved_write(
@@ -82,6 +90,8 @@ def build_mcp(service: WriteService, settings: Settings, verifier: JwtTokenVerif
         approved: bool | None = None,
         expected_digest: str = "",
     ) -> dict[str, Any]:
+        if settings.approval_mode != "chatgpt_confirmation":
+            return {"ok": False, "gate": "approval_mode_unsupported", "reason": "mcp_execution_requires_chatgpt_confirmation", "gates": service.readiness(settings)["gates"]}
         identity = request_identity()
         if identity is None:
             return {"ok": False, "gate": GATE_AUTH, "gates": service.gates()}
@@ -112,7 +122,7 @@ def build_bridge_server(settings: Settings, service: WriteService, fieldwork_key
     from .auth0_bridge import bridge_identity_from_token, build_auth0_provider
 
     provider = build_auth0_provider(settings, fieldwork_key=fieldwork_key)
-    mcp = FastMCP(name="bt-fieldwork-write-mcp", auth=provider, instructions="Read schedules, customers, locations, and work orders. Propose an exact before/after change, then execute only with approved=true and that proposal's digest. No approval string. Never create customers or work orders, send messages, change a recurring series, or use generic HTTP. Arrival-window edits are unsupported. Writes require the writes flag, a live writer role, and mapping verification for work orders.")
+    mcp = FastMCP(name="bt-fieldwork-write-mcp", auth=provider, instructions=PUBLIC_INSTRUCTIONS)
 
     def _identity() -> dict[str, str] | None:
         from fastmcp.server.dependencies import get_access_token
@@ -137,8 +147,10 @@ def build_bridge_server(settings: Settings, service: WriteService, fieldwork_key
             return {"ok": False, "gate": GATE_AUTH, "gates": service.gates()}
         return redact(service.propose(operation, payload, identity))
 
-    @mcp.tool(name="execute_approved_write", description="Execute one stored proposal only when approved is true and expected_digest equals that proposal digest. The digest binds proposal_id, payload, before, after, identity, and target. Do not send an approval string. Rejects a missing, stale, tampered, or cross-proposal digest. create_work_order cannot execute.", annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True})
+    @mcp.tool(name="execute_approved_write", description=EXECUTE_DESCRIPTION, annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True})
     async def execute_approved_write(proposal_id: str, approved: bool | None = None, expected_digest: str = "") -> dict[str, Any]:
+        if settings.approval_mode != "chatgpt_confirmation":
+            return {"ok": False, "gate": "approval_mode_unsupported", "reason": "mcp_execution_requires_chatgpt_confirmation", "gates": service.readiness(settings)["gates"]}
         identity = _identity()
         if identity is None:
             return {"ok": False, "gate": GATE_AUTH, "gates": service.gates()}
@@ -239,50 +251,16 @@ def _register_reads(server: Any, service: WriteService, identity_getter: Any = N
             return {"ok": False, "gate": getattr(exc, "gate", "read_rejected")}
 
 def report_gates_body(service: WriteService, settings: Settings) -> dict[str, Any]:
-    role_error = None
-    try:
-        role = service.client.get_api_role()
-    except Exception as exc:
-        role, role_error = "unknown", getattr(exc, "gate", "read_rejected")
-    normalized = str(role or "unknown").strip().lower().replace("-", "_").replace(" ", "_")
-    writer = role_error is None and normalized == "writer"
-    writes_on = bool(settings.writes_enabled) and writer
-    if settings.auth_mode == "auth0_bridge":
-        oauth_ready = not bridge_blockers(settings)
-    else:
-        oauth_ready = settings.oauth_ready()
-    gates = service.gates()
-    gates.update(
-        api_role=normalized,
-        fieldwork_api_auth_verified=role_error is None,
-        fieldwork_get_auth_verified=role_error is None,
-        writes_enabled=writes_on,
-        work_order_id_mapping_verified=bool(settings.mapping_verified),
-        live_ready=writes_on,
-        rollout_safeguard="FIELDWORK_WRITES_ENABLED and live writer role; work orders also need FIELDWORK_MAPPING_VERIFIED",
-        oauth_ready=oauth_ready,
-    )
-    return {
-        "ok": True,
-        "reads_ready": role_error is None,
-        "live_ready": writes_on,
-        "fieldwork_api_auth_verified": role_error is None,
-        "role_check_error": role_error,
-        "credential_ready": service.client.api_key_present(),
-        "direct_jwt_configured": settings.oauth_ready(),
-        "auth0_bridge_configured": settings.auth_mode == "auth0_bridge" and not bridge_blockers(settings),
-        "live_auth0_login_observed_by_this_process": bool(getattr(service, "authenticated_call_observed", False)),
-        "offline_access_requested": settings.auth0_offline_access,
-        "offline_access_required_on_access_token": False,
-        "offline_access_observed_by_this_process": bool(getattr(service, "offline_access_observed", False)),
-        "existing_downstream_sessions_remain_usable": True,
-        "refresh_token_needs_one_new_authorization": not bool(getattr(service, "offline_access_observed", False)),
-        "approval_mode": settings.approval_mode,
-        "live_patch_tested": False,
-        "live_patch_tested_is_a_status_not_a_write_block": True,
-        "gates": gates,
-        "forbidden": sorted(FORBIDDEN_OPS),
-    }
+    body = service.readiness(settings)
+    nested = body["gates"]
+    body["live_ready"] = nested["live_ready"]
+    body["credential_ready"] = nested["credential_ready"]
+    body["oauth_ready"] = nested["oauth_ready"]
+    body["fieldwork_api_auth_verified"] = nested["fieldwork_api_auth_verified"]
+    body["writes_enabled"] = nested["writes_enabled"]
+    body["approval_mode"] = nested["approval_mode"]
+    body["forbidden"] = sorted(FORBIDDEN_OPS)
+    return body
 
 
 def build_server(settings: Settings | None = None, service: WriteService | None = None) -> MCPServer:

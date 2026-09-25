@@ -24,6 +24,8 @@ def proposal_digest(
     before: dict[str, Any],
     after: dict[str, Any],
     payload: dict[str, Any],
+    created_at: str,
+    expires_at: str,
 ) -> str:
     return sha256_hex(
         canonical(
@@ -35,6 +37,8 @@ def proposal_digest(
                 "before": before,
                 "after": after,
                 "payload": payload,
+                "created_at": created_at,
+                "expires_at": expires_at,
             }
         )
     )

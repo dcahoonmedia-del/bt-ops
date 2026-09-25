@@ -109,7 +109,7 @@ class ChatGPTApprovalTests(unittest.TestCase):
         from bt_fieldwork_write_mcp.oauth_rs import JwtTokenVerifier
         from bt_fieldwork_write_mcp.server import build_mcp, request_identity
         from tests.test_write_mcp import IDENTITY
-        server=build_mcp(self.h.service, self.h.settings, JwtTokenVerifier(self.h.settings))
+        server=build_mcp(self.h.service, self.h.service.settings, JwtTokenVerifier(self.h.service.settings))
         tool=next(item for item in server._tool_manager.list_tools() if item.name=='execute_approved_write')
         self.assertNotIn('operator_approval', tool.parameters['properties'])
         names={item.name for item in server._tool_manager.list_tools()}

@@ -393,7 +393,16 @@ class FakeTransport:
             if self.write_mode == "http_500":
                 raise AmbiguousWriteError("remote_500")
         if method == "GET" and path == "/profile":
-            return 200, {"roles": ["schedule", "work_orders"] + (["readonly"] if self.api_role == "readonly" else [])}
+            if self.api_role == "fail":
+                return 500, {"error": "profile_down"}
+            if self.api_role == "unknown":
+                return 200, {"roles": ["mystery"]}
+            roles = ["schedule", "work_orders"]
+            if self.api_role == "readonly":
+                roles.append("readonly")
+            elif self.api_role == "writer":
+                roles.append("writer")
+            return 200, {"roles": roles}
         if method == "GET" and path == "/customers/search":
             return 200, list(self.customers.values())
         if method == "GET" and path == "/service_routes":
@@ -546,9 +555,16 @@ class TypedFieldworkClient:
         roles = body.get("roles")
         if not isinstance(roles, list) or not roles or not all(isinstance(role, str) for role in roles):
             raise GateError("api_role_unverified")
+        names = {role.lower() for role in roles}
+        if "readonly" in names:
+            observed = "readonly"
+        elif "writer" in names:
+            observed = "writer"
+        else:
+            raise GateError("api_role_unverified")
         self.auth_verified = True
-        self.observed_api_role = "readonly" if "readonly" in {role.lower() for role in roles} else "writer"
-        return self.observed_api_role
+        self.observed_api_role = observed
+        return observed
 
     def get_customer(self, customer_id: str) -> dict[str, Any]:
         customer_id = _required_id(customer_id)
