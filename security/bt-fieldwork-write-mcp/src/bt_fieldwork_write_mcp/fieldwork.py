@@ -25,6 +25,7 @@ from .secrets import InMemoryApiKey
 
 _CUSTOMER = re.compile(r"^/customers/\d+$")
 _LOCATION = re.compile(r"^/customers/\d+/service_locations/\d+$")
+_LOCATION_LIST = re.compile(r"^/customers/\d+/service_locations$")
 _WORK_ORDER = re.compile(r"^/work_orders/\d+$")
 _WORK_ORDER_PLAIN = re.compile(r"^/work_orders/\d+/show_plain$")
 _WORK_ORDER_SEARCH = re.compile(r"^/work_orders(/search)?$")
@@ -268,7 +269,20 @@ class HttpTransport:
         clean = path
         _assert_typed_path(method.upper(), clean)
         params: list[tuple[str, str]] = [("api_key", self._key.get())]
-        allowed = SEARCH_QUERY if clean == "/work_orders/search" else WORK_ORDER_QUERY if clean == "/work_orders" else CUSTOMER_SEARCH_QUERY if clean == "/customers/search" else frozenset({"page", "per_page"})
+        if clean == "/work_orders/search":
+            allowed = SEARCH_QUERY
+        elif clean == "/work_orders":
+            allowed = WORK_ORDER_QUERY
+        elif clean == "/customers/search":
+            allowed = CUSTOMER_SEARCH_QUERY
+        elif clean == "/customers/search_by_phone":
+            allowed = PHONE_SEARCH_QUERY
+        elif _LOCATION_LIST.match(clean):
+            allowed = LOCATION_LIST_QUERY
+        elif clean == "/users":
+            allowed = frozenset()
+        else:
+            allowed = frozenset({"page", "per_page"})
         for key, value in (query or {}).items():
             if key == "api_key" or key not in allowed or value is None or value == "":
                 continue
@@ -335,8 +349,19 @@ SEARCH_QUERY = frozenset({
     "work_pool",
     "query",
 })
-CUSTOMER_SEARCH_QUERY = frozenset({"query", "page", "per_page"})
-ALLOWED_QUERY = WORK_ORDER_QUERY | SEARCH_QUERY | CUSTOMER_SEARCH_QUERY
+CUSTOMER_SEARCH_QUERY = frozenset({
+    "query",
+    "filter[customer_status]",
+    "filter[date_added]",
+    "filter[postal_code]",
+    "start_date",
+    "end_date",
+    "page",
+    "per_page",
+})
+PHONE_SEARCH_QUERY = frozenset({"phone", "as_object"})
+LOCATION_LIST_QUERY = frozenset({"page", "per_page", "filter[phone]", "filter[updated_after]"})
+ALLOWED_QUERY = WORK_ORDER_QUERY | SEARCH_QUERY | CUSTOMER_SEARCH_QUERY | PHONE_SEARCH_QUERY | LOCATION_LIST_QUERY
 
 
 def _flatten(body: dict[str, Any], prefix: str = "") -> list[tuple[str, str]]:
@@ -368,6 +393,9 @@ class FakeTransport:
         self.readback_notes: str | None = None
         self.skip_work_order_persist: bool = False
         self.api_role = "readonly"
+        self.users: list[dict[str, Any]] | None = None
+        self.fail_work_order_page: int | None = None
+        self.repeat_work_order_page: bool = False
 
     def add_customer(self, customer: dict[str, Any], location: dict[str, Any]) -> None:
         cid = str(customer["id"])
@@ -404,8 +432,23 @@ class FakeTransport:
             return 200, {"roles": ["mystery"]}
         if method == "GET" and path == "/customers/search":
             return 200, list(self.customers.values())
+        if method == "GET" and path == "/customers/search_by_phone":
+            phone = str((query or {}).get("phone") or "")
+            found = [row for row in self.customers.values() if phone and phone in json.dumps(row)]
+            return 200, {"data": found}
+        if method == "GET" and path == "/users":
+            if self.users is None:
+                return 503, {"error": "users_unavailable"}
+            return 200, self.users
         if method == "GET" and path == "/service_routes":
             return 200, []
+        if method == "GET" and _LOCATION_LIST.match(path):
+            cid = path.split("/")[2]
+            rows = [row for row in self.locations.values() if str(row.get("customer_id")) == cid]
+            page = int((query or {}).get("page") or 1)
+            per_page = int((query or {}).get("per_page") or len(rows) or 1)
+            start = max(page - 1, 0) * per_page
+            return 200, rows[start : start + per_page]
         if method == "GET" and _CUSTOMER.match(path):
             cid = path.rsplit("/", 1)[-1]
             customer = self.customers.get(cid)
@@ -445,9 +488,13 @@ class FakeTransport:
             return 200, {"service_location": location}
         if method == "GET" and (_WORK_ORDER.match(path) or _WORK_ORDER_PLAIN.match(path) or _WORK_ORDER_SEARCH.match(path)):
             if "/search" in path or path == "/work_orders":
-                rows = list(self.work_orders.values())
                 page = int((query or {}).get("page") or 1)
+                if self.fail_work_order_page is not None and page == self.fail_work_order_page:
+                    return 500, {"error": "page_failed"}
+                rows = list(self.work_orders.values())
                 per_page = int((query or {}).get("per_page") or len(rows) or 1)
+                if self.repeat_work_order_page and page > 1:
+                    page = 1
                 start = max(page - 1, 0) * per_page
                 return 200, rows[start : start + per_page]
             wid = path.split("/")[2]
@@ -484,11 +531,12 @@ class FakeTransport:
 
 
 def _assert_typed_path(method: str, path: str) -> None:
-    if method == "GET" and path in {"/profile", "/service_routes", "/customers/search", "/customers"}:
+    if method == "GET" and path in {"/profile", "/service_routes", "/customers/search", "/customers/search_by_phone", "/customers", "/users"}:
         return
     if method == "GET" and (
         _CUSTOMER.match(path)
         or _LOCATION.match(path)
+        or _LOCATION_LIST.match(path)
         or _WORK_ORDER.match(path)
         or _WORK_ORDER_PLAIN.match(path)
         or _WORK_ORDER_SEARCH.match(path)
@@ -538,6 +586,202 @@ def load_route_directory(path: str) -> dict[str, Any] | None:
 # Verified by a live read-only GET /profile. These names are permissions, not a literal writer role.
 LIVE_PERMISSION_ROLES = ("schedule", "customers", "invoicing", "reporting", "agreements", "tasks", "work_orders")
 _KNOWN_PERMISSION_ROLES = frozenset(LIVE_PERMISSION_ROLES)
+
+
+_WORK_ORDER_FILTERS = frozenset({
+    "technician", "start_date", "end_date", "current_technician", "sort_direction", "work_pool",
+    "status", "service_route_ids", "page", "per_page", "max_pages", "customer_id", "service_location_id",
+})
+_CUSTOMER_FILTERS = frozenset({
+    "customer_status", "name", "phone", "postal_code", "billing_postal_code", "date_added",
+    "start_date", "end_date", "page", "per_page", "include_details",
+})
+_SECRET_MARKERS = ("stripe", "card", "cvv", "pan", "secret", "password", "token", "api_key", "account_number")
+_CUSTOMER_DETAIL_KEYS = (
+    "id", "name", "first_name", "last_name", "customer_status", "status", "balance", "terms", "tags",
+    "contacts", "service_locations", "locations", "billing_address", "email", "phone", "phones", "date_added",
+)
+_LOCATION_KEYS = ("id", "customer_id", "name", "email", "tax_rate_id", "service_route_id", "address")
+_ADDRESS_KEYS = ("id", "street", "street2", "city", "state", "zip", "county", "notes", "phone")
+_USER_KEYS = ("id", "first_name", "last_name", "email", "phone_number", "is_technician", "is_admin", "job_title", "service_route_id", "service_route_name")
+_BRANCH_KEYS = ("id", "name", "company_name", "address", "time_zone")
+
+
+def _secret_key(key: str) -> bool:
+    lowered = key.lower()
+    return any(marker in lowered for marker in _SECRET_MARKERS)
+
+
+def _project_customer(row: dict[str, Any], *, include_details: bool) -> dict[str, Any]:
+    keys = _CUSTOMER_DETAIL_KEYS if include_details else ("id", "name", "customer_status", "status")
+    projected = {key: row[key] for key in keys if key in row and not _secret_key(key)}
+    billing = row.get("billing_address")
+    if include_details and isinstance(billing, dict):
+        projected["billing_address"] = {key: billing[key] for key in ("street", "city", "state", "zip", "postal_code") if key in billing and not _secret_key(key)}
+    return projected
+
+
+def _project_location(row: dict[str, Any]) -> dict[str, Any]:
+    projected = {key: row[key] for key in _LOCATION_KEYS if key in row and key != "address"}
+    address = row.get("address") if isinstance(row.get("address"), dict) else {}
+    if address:
+        projected["address"] = {key: address[key] for key in _ADDRESS_KEYS if key in address}
+    return projected
+
+
+def _project_user(row: dict[str, Any]) -> dict[str, Any]:
+    projected = {key: row[key] for key in _USER_KEYS if key in row}
+    branches = []
+    for branch in row.get("branches") or []:
+        if isinstance(branch, dict):
+            branches.append({key: branch[key] for key in _BRANCH_KEYS if key in branch and not _secret_key(key)})
+    projected["branches"] = branches
+    return projected
+
+
+def _try_users(client: "TypedFieldworkClient") -> list[dict[str, Any]] | None:
+    status, body = client.transport.request("GET", "/users")
+    if status != 200:
+        return None
+    return [_project_user(row) for row in _as_list(body)]
+
+
+def _route_directory_from_users(users: list[dict[str, Any]]) -> dict[str, Any]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    unassigned = []
+    for user in users:
+        route_id = user.get("service_route_id")
+        if route_id is None or str(route_id) == "-1":
+            unassigned.append(user)
+            continue
+        grouped.setdefault(str(route_id), []).append(user)
+    routes = []
+    for route_id, staff in grouped.items():
+        names = {person.get("service_route_name") for person in staff}
+        routes.append({
+            "route_id": route_id,
+            "service_route_name": next(iter(names)) if len(names) == 1 else None,
+            "staff": staff,
+            "assignee": None,
+            "ambiguous": len(staff) > 1,
+            "source": "live_user_directory",
+        })
+    return {"source": "live_user_directory", "routes": routes, "unassigned": unassigned}
+
+
+def _routes_for_person(directory: dict[str, Any], technician: str) -> list[str]:
+    wanted = technician.casefold()
+    found = []
+    for route in directory["routes"]:
+        for person in route["staff"]:
+            full = " ".join(str(person.get(key) or "") for key in ("first_name", "last_name")).strip().casefold()
+            if wanted in {full, str(person.get("id") or "").casefold()}:
+                found.append(route["route_id"])
+    return list(dict.fromkeys(found))
+
+
+def search_customers_typed(client: "TypedFieldworkClient", query: str = "", **filters: Any) -> dict[str, Any]:
+    unknown = sorted(set(filters) - _CUSTOMER_FILTERS)
+    if unknown:
+        raise GateError("unsupported_filter", fields=unknown)
+    phone = str(filters.get("phone") or "")
+    include_details = bool(filters.get("include_details"))
+    page = filters.get("page")
+    per_page = int(filters.get("per_page") or 100)
+    if not 1 <= per_page <= 100 or (page is not None and int(page) < 1):
+        raise GateError("invalid_pagination")
+    if phone and any(filters.get(key) for key in ("customer_status", "postal_code", "billing_postal_code", "date_added", "start_date", "end_date", "page")):
+        raise GateError("unsupported_filter", fields=["phone_with_search_filters"])
+    if phone:
+        status, body = client.transport.request("GET", "/customers/search_by_phone", query={"phone": phone, "as_object": True})
+        if status != 200:
+            raise GateError("read_rejected", status=status, path="/customers/search_by_phone")
+        rows = _as_list(body)
+        found = {"items": rows, "complete": True, "truncated": False, "pages_read": 1, "per_page": None, "endpoint": "/customers/search_by_phone"}
+    else:
+        if not str(query or "").strip() and not any(filters.get(key) for key in ("customer_status", "postal_code", "billing_postal_code", "date_added", "start_date", "end_date")):
+            raise GateError("unknown_field")
+        upstream: dict[str, Any] = {}
+        if str(query or "").strip():
+            upstream["query"] = str(query)
+        if filters.get("customer_status"):
+            upstream["filter[customer_status]"] = str(filters["customer_status"])
+        postal = filters.get("billing_postal_code") or filters.get("postal_code")
+        if postal:
+            upstream["filter[postal_code]"] = str(postal)
+        if filters.get("date_added"):
+            upstream["filter[date_added]"] = str(filters["date_added"])
+        for key in ("start_date", "end_date"):
+            if filters.get(key):
+                upstream[key] = str(filters[key])
+        if page is None:
+            found = client._pages("/customers/search", upstream, per_page=per_page)
+        else:
+            status, body = client.transport.request("GET", "/customers/search", query={**upstream, "page": int(page), "per_page": per_page})
+            if status != 200:
+                raise GateError("read_rejected", status=status, path="/customers/search")
+            rows = _as_list(body)
+            short = len(rows) < per_page
+            found = {"items": rows, "complete": short, "truncated": not short, "pages_read": 1, "per_page": per_page, "next_page": None if short else int(page) + 1}
+        found["endpoint"] = "/customers/search"
+        found["date_range_semantics"] = "start_date_and_end_date_are_documented_labels_not_verified_as_created"
+        found["postal_code_scope"] = "documented_as_postal_code_not_billing_specific"
+        found["date_added_is_single_day"] = True
+    name = str(filters.get("name") or "").strip().casefold()
+    if name:
+        found["items"] = [row for row in found["items"] if name in str(row.get("name") or "").casefold()]
+        found["name_filter"] = "local_only"
+        if found.get("truncated"):
+            found["complete"] = False
+    found["items"] = [_project_customer(row, include_details=include_details) for row in found["items"]]
+    found["include_details"] = include_details
+    return found
+
+
+def list_service_locations_typed(client: "TypedFieldworkClient", customer_id: str, **filters: Any) -> dict[str, Any]:
+    unknown = sorted(set(filters) - {"page", "per_page", "phone", "updated_after"})
+    if unknown:
+        raise GateError("unsupported_filter", fields=unknown)
+    customer_id = _required_id(customer_id)
+    per_page = int(filters.get("per_page") or 100)
+    page = int(filters.get("page") or 1)
+    if not 1 <= per_page <= 100 or page < 1:
+        raise GateError("invalid_pagination")
+    query: dict[str, Any] = {"page": page, "per_page": per_page}
+    if filters.get("phone"):
+        query["filter[phone]"] = str(filters["phone"])
+    if filters.get("updated_after"):
+        query["filter[updated_after]"] = str(filters["updated_after"])
+    status, body = client.transport.request("GET", f"/customers/{customer_id}/service_locations", query=query)
+    if status != 200:
+        raise GateError("read_rejected", status=status, path="/customers/{customer_id}/service_locations")
+    rows = []
+    for row in _as_list(body):
+        owner = row.get("customer_id")
+        if owner is not None and str(owner) != customer_id:
+            continue
+        rows.append(_project_location(row))
+    short = len(_as_list(body)) < per_page
+    return {
+        "items": rows,
+        "customer_id": customer_id,
+        "customer_required": True,
+        "global_endpoint": False,
+        "complete": short,
+        "truncated": not short,
+        "next_page": None if short else page + 1,
+        "page": page,
+        "per_page": per_page,
+        "unsupported_filters": ["query", "active", "branch"],
+    }
+
+
+def list_users_typed(client: "TypedFieldworkClient") -> dict[str, Any]:
+    status, body = client.transport.request("GET", "/users")
+    if status != 200:
+        raise GateError("read_rejected", status=status, path="/users")
+    users = [_project_user(row) for row in _as_list(body)]
+    return {"ok": True, "items": users, "count": len(users), "directory": _route_directory_from_users(users), "projection": list(_USER_KEYS) + ["branches"]}
 
 
 class TypedFieldworkClient:
@@ -628,73 +872,157 @@ class TypedFieldworkClient:
             page += 1
         return {"items": rows, "complete": False, "truncated": True, "pages_read": max_pages, "per_page": per_page}
 
-    def search_customers(self, query: str) -> dict[str, Any]:
-        if not str(query or "").strip():
-            raise GateError("unknown_field")
-        return self._pages("/customers/search", {"query": query})
+    def search_customers(self, query: str = "", **filters: Any) -> dict[str, Any]:
+        return search_customers_typed(self, query, **filters)
+
+    def list_service_locations(self, customer_id: str, **filters: Any) -> dict[str, Any]:
+        return list_service_locations_typed(self, customer_id, **filters)
+
+    def list_users(self) -> dict[str, Any]:
+        return list_users_typed(self)
 
     def list_service_routes(self) -> dict[str, Any]:
         result = self._pages("/service_routes")
-        return {**result, "ok": True, "empty_directory_is_not_no_staff": True,
+        users = _try_users(self)
+        body = {**result, "ok": True, "empty_directory_is_not_no_staff": True,
                 "route_names_on": "work_order.service_routes", "configured_snapshot": self.route_directory}
+        if users is None:
+            body["directory_source"] = "configured_snapshot" if self.route_directory else "service_routes_only"
+            body["live_user_directory"] = None
+            body["fallback_reason"] = "live_users_unavailable"
+        else:
+            body["live_user_directory"] = _route_directory_from_users(users)
+            body["directory_source"] = "live_user_directory" if not result["items"] else "service_routes"
+            body["fallback_reason"] = None
+        return body
 
     def list_work_orders(self, **filters: Any) -> dict[str, Any]:
+        unknown = sorted(set(filters) - _WORK_ORDER_FILTERS)
+        if unknown:
+            raise GateError("unsupported_filter", fields=unknown)
+        _schedule_query(filters, include_route_status=True)
         technician = str(filters.pop("technician", "") or "").strip()
+        users = _try_users(self)
+        directory = _route_directory_from_users(users) if users is not None else None
         resolved_from = None
+        fallback_reason = None
         if technician:
-            if not self.route_directory:
-                raise GateError("route_directory_not_configured")
-            wanted = technician.casefold()
-            ids = [
-                row["route_id"]
-                for row in self.route_directory["routes"]
-                if wanted in {str(row.get("user_id") or "").casefold(), str(row.get("user_name") or "").casefold()}
-            ]
+            if directory is not None:
+                ids = _routes_for_person(directory, technician)
+                resolved_from = "live_user_directory"
+            else:
+                if not self.route_directory:
+                    raise GateError("route_directory_not_configured")
+                wanted = technician.casefold()
+                ids = [
+                    row["route_id"]
+                    for row in self.route_directory["routes"]
+                    if wanted in {str(row.get("user_id") or "").casefold(), str(row.get("user_name") or "").casefold()}
+                ]
+                resolved_from = "configured_snapshot"
+                fallback_reason = "live_users_unavailable"
             if not ids:
                 raise GateError("route_directory_unmatched")
             filters["service_route_ids"] = ids
-            resolved_from = "configured_snapshot"
         query = _schedule_query(filters, include_route_status=True)
         per_page = int(filters.pop("per_page", 100) or 100)
         max_pages = int(filters.pop("max_pages", 20) or 20)
+        customer_id = str(filters.pop("customer_id", "") or "")
+        location_id = str(filters.pop("service_location_id", "") or "")
         matched: list[dict[str, Any]] = []
         page = int(filters.pop("page", 1) or 1)
         if not 1 <= per_page <= 100 or not 1 <= max_pages <= 20 or page < 1:
             raise GateError("invalid_pagination")
         final_page = page + max_pages - 1
         pages_read = 0
+        scanned = 0
         complete = False
+        repeated_page = False
+        partial_error = None
+        missing_fields = 0
+        seen_pages: list[tuple[str, ...]] = []
+        seen_ids: set[str] = set()
         while page <= final_page:
             status, body = self.transport.request("GET", "/work_orders", query={**query, "page": page, "per_page": per_page})
             if status != 200:
-                raise GateError("read_rejected", status=status, path="/work_orders")
+                if pages_read == 0:
+                    raise GateError("read_rejected", status=status, path="/work_orders")
+                partial_error = {"gate": "read_rejected", "status": status, "page": page}
+                break
             batch = _as_list(body)
+            signature = tuple(str(item.get("id")) for item in batch)
+            if signature in seen_pages:
+                repeated_page = True
+                complete = False
+                break
+            seen_pages.append(signature)
             pages_read = page
-            matched.extend(item for item in batch if _local_schedule_match(item, filters))
+            scanned += len(batch)
+            for item in batch:
+                if not _local_schedule_match(item, filters):
+                    continue
+                if customer_id:
+                    if item.get("customer_id") is None:
+                        missing_fields += 1
+                        continue
+                    if str(item.get("customer_id")) != customer_id:
+                        continue
+                if location_id:
+                    if item.get("service_location_id") is None:
+                        missing_fields += 1
+                        continue
+                    if str(item.get("service_location_id")) != location_id:
+                        continue
+                identity = str(item.get("id"))
+                if identity in seen_ids:
+                    continue
+                seen_ids.add(identity)
+                matched.append(item)
             if len(batch) < per_page:
                 complete = True
                 break
             page += 1
+        if repeated_page or partial_error is not None:
+            complete = False
         matched.sort(key=lambda row: str(row.get("starts_at") or ""), reverse=filters.get("sort_direction") == "desc")
         by_route = {row["route_id"]: row for row in (self.route_directory or {}).get("routes", [])}
+        live_staff = {entry["route_id"]: entry for entry in (directory or {}).get("routes", [])}
         items = []
         for item in matched:
             view = work_order_view(item)
             route_ids = {str(route) for route in view.get("service_route_ids") or []}
-            snapshot = next((by_route[route] for route in route_ids if route in by_route), None)
-            if snapshot is not None:
-                view["configured_route_assignee"] = {**snapshot, "kind": "configured_snapshot", "not_live_api_staff": True}
+            if directory is not None:
+                staff_groups = [live_staff[route] for route in route_ids if route in live_staff]
+                view["route_staff"] = [person for group in staff_groups for person in group["staff"]]
+                view["route_assignee"] = None
+                view["route_staff_ambiguous"] = any(group["ambiguous"] for group in staff_groups)
+            else:
+                snapshot = next((by_route[route] for route in route_ids if route in by_route), None)
+                if snapshot is not None:
+                    view["configured_route_assignee"] = {**snapshot, "kind": "configured_snapshot", "not_live_api_staff": True}
             items.append(view)
+        local_filter = [name for name, present in (
+            ("date", filters.get("start_date") or filters.get("end_date")),
+            ("status", filters.get("status")),
+            ("service_route_ids", filters.get("service_route_ids")),
+            ("customer_id", customer_id),
+            ("service_location_id", location_id),
+        ) if present]
         return {
             "items": items,
             "technician_resolved_from": resolved_from,
+            "fallback_reason": fallback_reason,
             "complete": complete,
             "truncated": not complete,
             "pages_read": pages_read,
-            "next_page": None if complete else pages_read + 1,
+            "scanned_count": scanned,
+            "next_page": None if complete or repeated_page or partial_error else pages_read + 1,
             "per_page": per_page,
+            "repeated_page": repeated_page,
+            "partial_error": partial_error,
+            "rows_missing_filter_field": missing_fields,
             "server_side_filtering": False,
-            "local_filter": [name for name, present in (("date", filters.get("start_date") or filters.get("end_date")), ("status", filters.get("status")), ("service_route_ids", filters.get("service_route_ids"))) if present],
+            "local_filter": local_filter,
             "upstream_route_filter_observed_ignored": True,
             "timezone": "America/New_York",
         }

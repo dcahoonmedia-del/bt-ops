@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -53,9 +54,7 @@ class _Token:
 
 class Auth0BridgeTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.root = Path(__file__).resolve().parents[1] / ".bridge-store-test"
-        shutil.rmtree(self.root, ignore_errors=True)
-        self.root.mkdir()
+        self.root = Path(tempfile.mkdtemp(prefix="fw-bridge-", dir=str(Path.home())))
 
     def tearDown(self) -> None:
         shutil.rmtree(self.root, ignore_errors=True)

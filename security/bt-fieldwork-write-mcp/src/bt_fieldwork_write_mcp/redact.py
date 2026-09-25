@@ -21,6 +21,9 @@ REDACT_KEYS = {
     "hs256_secret",
     "fieldwork_api_key",
     "bt-fieldworks-key",
+    "stripe_pk",
+    "card_number",
+    "credit_card",
 }
 
 

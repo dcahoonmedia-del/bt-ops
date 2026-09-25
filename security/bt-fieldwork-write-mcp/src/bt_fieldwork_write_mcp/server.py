@@ -180,15 +180,15 @@ def _register_reads(server: Any, service: WriteService, identity_getter: Any = N
             return {"ok": False, "gate": GATE_AUTH}
         return None
 
-    @server.tool(name="search_customers", description="Search customers with the documented query parameter. Reads pages until a short page, or returns truncation and next_page. Does not write.", annotations={"readOnlyHint": True, "destructiveHint": False})
-    async def search_customers(query: str) -> dict[str, Any]:
+    @server.tool(name="search_customers", description="Search customers. Documented search accepts query, filter[customer_status], filter[postal_code], filter[date_added], start_date, end_date, page, and per_page. start_date/end_date are spec labels and are not claimed to be a created-date range. Phone uses GET /customers/search_by_phone and cannot be combined with those filters. name is applied locally and is incomplete when the page scan is truncated. Branch and other undocumented filters are rejected. Does not write.", annotations={"readOnlyHint": True, "destructiveHint": False})
+    async def search_customers(query: str = "", customer_status: str = "", name: str = "", phone: str = "", postal_code: str = "", billing_postal_code: str = "", date_added: str = "", start_date: str = "", end_date: str = "", page: int = 0, per_page: int = 100, include_details: bool = False) -> dict[str, Any]:
         denied = _guard()
         if denied:
             return denied
         try:
-            return redact(service.client.search_customers(query))
+            return redact(service.client.search_customers(query, customer_status=customer_status, name=name, phone=phone, postal_code=postal_code, billing_postal_code=billing_postal_code, date_added=date_added, start_date=start_date, end_date=end_date, page=page or None, per_page=per_page, include_details=include_details))
         except Exception as exc:
-            return {"ok": False, "gate": getattr(exc, "gate", "read_rejected")}
+            return {"ok": False, "gate": getattr(exc, "gate", "read_rejected"), "fields": getattr(exc, "detail", {}).get("fields")}
 
     @server.tool(name="get_customer", description="Read one customer by numeric id. Does not write.", annotations={"readOnlyHint": True, "destructiveHint": False})
     async def get_customer(customer_id: str) -> dict[str, Any]:
@@ -199,6 +199,16 @@ def _register_reads(server: Any, service: WriteService, identity_getter: Any = N
             return redact(service.client.get_customer(customer_id))
         except Exception as exc:
             return {"ok": False, "gate": getattr(exc, "gate", "read_rejected")}
+
+    @server.tool(name="list_service_locations", description="List service locations for one required customer id at GET /customers/{customer_id}/service_locations. Documented filters are page, per_page, filter[phone], and filter[updated_after]. query, active, and branch are rejected. A full page sets truncated and next_page. Does not write.", annotations={"readOnlyHint": True, "destructiveHint": False})
+    async def list_service_locations(customer_id: str, page: int = 1, per_page: int = 100, phone: str = "", updated_after: str = "") -> dict[str, Any]:
+        denied = _guard()
+        if denied:
+            return denied
+        try:
+            return redact(service.client.list_service_locations(customer_id, page=page, per_page=per_page, phone=phone, updated_after=updated_after))
+        except Exception as exc:
+            return {"ok": False, "gate": getattr(exc, "gate", "read_rejected"), "fields": getattr(exc, "detail", {}).get("fields")}
 
     @server.tool(name="get_service_location", description="Read one service location for a customer id and location id. Does not write.", annotations={"readOnlyHint": True, "destructiveHint": False})
     async def get_service_location(customer_id: str, location_id: str) -> dict[str, Any]:
@@ -221,26 +231,36 @@ def _register_reads(server: Any, service: WriteService, identity_getter: Any = N
             return {"ok": False, "gate": getattr(exc, "gate", "read_rejected")}
 
     @server.tool(name="list_work_orders", description="Read work orders for start_date and end_date, with optional status, route, current_technician, sort_direction, and work_pool. Route and status are checked locally because the API ignores the route filter. A full page sets truncated and next_page. Does not write.", annotations={"readOnlyHint": True, "destructiveHint": False})
-    async def list_work_orders(start_date: str = "", end_date: str = "", current_technician: bool = False, sort_direction: str = "asc", work_pool: bool = False, status: str = "", service_route_ids: list[str] | None = None, page: int = 1) -> dict[str, Any]:
+    async def list_work_orders(start_date: str = "", end_date: str = "", current_technician: bool = False, sort_direction: str = "asc", work_pool: bool = False, status: str = "", service_route_ids: list[str] | None = None, customer_id: str = "", service_location_id: str = "", page: int = 1) -> dict[str, Any]:
         denied = _guard()
         if denied:
             return denied
         try:
-            return redact(service.client.list_work_orders(start_date=start_date, end_date=end_date, current_technician=current_technician, sort_direction=sort_direction, work_pool=work_pool, status=status, service_route_ids=service_route_ids or [], page=page))
+            return redact(service.client.list_work_orders(start_date=start_date, end_date=end_date, current_technician=current_technician, sort_direction=sort_direction, work_pool=work_pool, status=status, service_route_ids=service_route_ids or [], customer_id=customer_id, service_location_id=service_location_id, page=page))
         except Exception as exc:
-            return {"ok": False, "gate": getattr(exc, "gate", "read_rejected")}
+            return {"ok": False, "gate": getattr(exc, "gate", "read_rejected"), "fields": getattr(exc, "detail", {}).get("fields")}
 
     @server.tool(name="list_schedule", description="Read the schedule for ISO dates in America/New_York, optionally by technician name or route ids. Includes customer, address, times, arrival window, and distinct occurrence and appointment ids. A configured route directory is labeled as a snapshot. null technician_id is not unassigned. Follow next_page when truncated. Does not write.", annotations={"readOnlyHint": True, "destructiveHint": False})
-    async def list_schedule(start_date: str, end_date: str, current_technician: bool = False, sort_direction: str = "asc", work_pool: bool = False, status: str = "", service_route_ids: list[str] | None = None, technician: str = "", page: int = 1) -> dict[str, Any]:
+    async def list_schedule(start_date: str, end_date: str, current_technician: bool = False, sort_direction: str = "asc", work_pool: bool = False, status: str = "", service_route_ids: list[str] | None = None, customer_id: str = "", service_location_id: str = "", technician: str = "", page: int = 1) -> dict[str, Any]:
         denied = _guard()
         if denied:
             return denied
         try:
-            return redact(service.client.list_work_orders(start_date=start_date, end_date=end_date, current_technician=current_technician, sort_direction=sort_direction, work_pool=work_pool, status=status, service_route_ids=service_route_ids or [], technician=technician, page=page))
+            return redact(service.client.list_work_orders(start_date=start_date, end_date=end_date, current_technician=current_technician, sort_direction=sort_direction, work_pool=work_pool, status=status, service_route_ids=service_route_ids or [], customer_id=customer_id, service_location_id=service_location_id, technician=technician, page=page))
+        except Exception as exc:
+            return {"ok": False, "gate": getattr(exc, "gate", "read_rejected"), "fields": getattr(exc, "detail", {}).get("fields")}
+
+    @server.tool(name="list_users", description="Read staff from GET /users. Returns name, contact, route, and branch id/name/company/address/time zone. Keeps staff assigned to a route even when is_technician is false. Does not return stripe_pk or internal account fields. Does not write.", annotations={"readOnlyHint": True, "destructiveHint": False})
+    async def list_users() -> dict[str, Any]:
+        denied = _guard()
+        if denied:
+            return denied
+        try:
+            return redact(service.client.list_users())
         except Exception as exc:
             return {"ok": False, "gate": getattr(exc, "gate", "read_rejected")}
 
-    @server.tool(name="list_service_routes", description="Read service routes. An empty array is a valid directory, not proof of no staff. Route names on work orders remain usable. Does not write. list_users is not available.", annotations={"readOnlyHint": True, "destructiveHint": False})
+    @server.tool(name="list_service_routes", description="Read GET /service_routes. An empty array is valid and is not proof of no staff. When GET /users succeeds, route relationships come from that live directory and a shared route lists every staff member with no single assignee. A configured snapshot is used only when live users are unavailable, and it is labeled with that reason. Does not write.", annotations={"readOnlyHint": True, "destructiveHint": False})
     async def list_service_routes() -> dict[str, Any]:
         denied = _guard()
         if denied:

@@ -237,7 +237,7 @@ class Phase1BridgeTests(unittest.TestCase):
                 else:
                     self.assertFalse(report["live_ready"])
                 self.assertEqual(nested["operations"]["update_work_order_notes"]["propose"], True)
-                self.assertEqual(nested["operations"]["list_users"]["reason"], "not_implemented/not_live_verified")
+                self.assertTrue(nested["operations"]["list_users"]["read"])
             finally:
                 client.__exit__(None, None, None)
         missing = replace(self._bridge_settings, oauth_issuer="", oauth_audience="", oauth_resource="", auth_mode="jwt", auth0_config_url="")

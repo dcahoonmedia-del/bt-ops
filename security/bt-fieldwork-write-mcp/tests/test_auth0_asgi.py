@@ -10,6 +10,8 @@ import base64
 import hashlib
 import json
 import re
+import shutil
+import tempfile
 import threading
 import time
 import unittest
@@ -112,7 +114,7 @@ class BridgeAsgiTests(unittest.TestCase):
         OIDCProxy.get_oidc_configuration = classmethod(self._discovery)
         proxy_mod.AsyncOAuth2Client = _Upstream
         self.h = Harness()
-        self.root = Path(__file__).resolve().parents[1] / ".bridge-store-test"
+        self.root = Path(tempfile.mkdtemp(prefix="fw-bridge-", dir=str(Path.home())))
         _Upstream.refresh_calls = 0
         self._set_identity("auth0|daniel", "daniel@btpestcontrol.com", True)
 
@@ -122,6 +124,7 @@ class BridgeAsgiTests(unittest.TestCase):
         self.httpd.shutdown()
         self.httpd.server_close()
         self.h.close()
+        shutil.rmtree(self.root, ignore_errors=True)
 
     def _discovery(self, cls, config_url, strict, timeout_seconds):  # noqa: ANN001
         return OIDCConfiguration(
