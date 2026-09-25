@@ -49,6 +49,34 @@ class ScheduleTests(unittest.TestCase):
         self.assertEqual(sent[0]["start_date"], "2026-09-25")
         self.assertEqual(sent[0]["filter[service_routes_ids][]"], ["135779"])
 
+    def test_configured_snapshot_selects_route_without_changing_null_technician(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from bt_fieldwork_write_mcp.fieldwork import load_route_directory
+
+        transport = FakeTransport()
+        transport.work_orders["1"] = _row(1, 2557, "2026-09-25")
+        transport.work_orders["2"] = _row(2, 4550, "2026-09-25")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "routes.json"
+            path.write_text(json.dumps({
+                "source": "operator snapshot",
+                "verified_at": "2026-09-25T01:00:00Z",
+                "routes": [{"route_id": "2557", "name": "Route #3", "user_id": "3081", "user_name": "Daniel Cahoon"}],
+            }), encoding="utf-8")
+            client = TypedFieldworkClient(transport, route_directory=load_route_directory(str(path)))
+        found = client.list_work_orders(start_date="2026-09-25", end_date="2026-09-25", technician="Daniel Cahoon", per_page=10)
+        self.assertEqual([item["work_order_id"] for item in found["items"]], [1])
+        self.assertIsNone(found["items"][0]["technician_id"])
+        self.assertEqual(found["items"][0]["configured_route_assignee"]["route_id"], "2557")
+        self.assertEqual(found["technician_resolved_from"], "configured_snapshot")
+        self.assertTrue(found["items"][0]["configured_route_assignee"]["not_live_api_staff"])
+        routes = client.list_service_routes()
+        self.assertEqual(routes["items"], [])
+        self.assertEqual(routes["configured_snapshot"]["kind"], "configured_snapshot")
+
     def test_full_page_reports_next_page(self) -> None:
         transport = FakeTransport()
         for index in range(4):

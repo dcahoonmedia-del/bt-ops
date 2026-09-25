@@ -37,7 +37,9 @@ def main() -> None:
 
         fieldwork_key = load_api_key()
         store = WriteStore(settings.store_path)
-        client = TypedFieldworkClient(HttpTransport(fieldwork_key, api_base=settings.api_base))
+        from .fieldwork import load_route_directory
+
+        client = TypedFieldworkClient(HttpTransport(fieldwork_key, api_base=settings.api_base), route_directory=load_route_directory(settings.route_directory_path))
         try:
             server = build_bridge_server(settings, WriteService(settings, store, client), fieldwork_key=fieldwork_key.get())
         except ValueError as exc:

@@ -458,10 +458,43 @@ def _assert_typed_path(method: str, path: str) -> None:
     raise GateError("unknown_operation", method=method, path=path)
 
 
+def load_route_directory(path: str) -> dict[str, Any] | None:
+    """Optional operator snapshot. Empty path means disabled. Not live staff data."""
+    if not str(path or "").strip():
+        return None
+    import json
+    from pathlib import Path
+
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise GateError("route_directory_unreadable") from exc
+    if not isinstance(raw, dict) or not str(raw.get("source") or "").strip() or not str(raw.get("verified_at") or "").strip():
+        raise GateError("route_directory_unreadable")
+    routes = []
+    for row in raw.get("routes") or []:
+        if not isinstance(row, dict) or row.get("route_id") is None:
+            continue
+        routes.append({
+            "route_id": str(row.get("route_id")),
+            "name": row.get("name"),
+            "user_id": None if row.get("user_id") is None else str(row.get("user_id")),
+            "user_name": row.get("user_name"),
+        })
+    return {
+        "kind": "configured_snapshot",
+        "not_live_api_staff": True,
+        "source": str(raw["source"]),
+        "verified_at": str(raw["verified_at"]),
+        "routes": routes,
+    }
+
+
 class TypedFieldworkClient:
-    def __init__(self, transport: Transport, *, mapping_verified: bool = False) -> None:
+    def __init__(self, transport: Transport, *, mapping_verified: bool = False, route_directory: dict[str, Any] | None = None) -> None:
         self.transport = transport
         self.mapping_verified = mapping_verified
+        self.route_directory = route_directory
 
     def api_key_present(self) -> bool:
         key = getattr(self.transport, "_key", None)
@@ -538,9 +571,25 @@ class TypedFieldworkClient:
             "complete": True,
             "empty_directory_is_not_no_staff": True,
             "route_names_on": "work_order.service_routes",
+            "configured_snapshot": self.route_directory,
         }
 
     def list_work_orders(self, **filters: Any) -> dict[str, Any]:
+        technician = str(filters.pop("technician", "") or "").strip()
+        resolved_from = None
+        if technician:
+            if not self.route_directory:
+                raise GateError("route_directory_not_configured")
+            wanted = technician.casefold()
+            ids = [
+                row["route_id"]
+                for row in self.route_directory["routes"]
+                if wanted in {str(row.get("user_id") or "").casefold(), str(row.get("user_name") or "").casefold()}
+            ]
+            if not ids:
+                raise GateError("route_directory_unmatched")
+            filters["service_route_ids"] = ids
+            resolved_from = "configured_snapshot"
         query = _schedule_query(filters, include_route_status=True)
         per_page = int(filters.pop("per_page", 100) or 100)
         max_pages = int(filters.pop("max_pages", 20) or 20)
@@ -559,8 +608,18 @@ class TypedFieldworkClient:
                 complete = True
                 break
             page += 1
+        by_route = {row["route_id"]: row for row in (self.route_directory or {}).get("routes", [])}
+        items = []
+        for item in matched:
+            view = work_order_view(item)
+            route_ids = {str(route) for route in view.get("service_route_ids") or []}
+            snapshot = next((by_route[route] for route in route_ids if route in by_route), None)
+            if snapshot is not None:
+                view["configured_route_assignee"] = {**snapshot, "kind": "configured_snapshot", "not_live_api_staff": True}
+            items.append(view)
         return {
-            "items": [work_order_view(item) for item in matched],
+            "items": items,
+            "technician_resolved_from": resolved_from,
             "complete": complete,
             "truncated": not complete,
             "pages_read": pages_read,

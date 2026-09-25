@@ -208,12 +208,12 @@ def _register_reads(server: Any, service: WriteService, identity_getter: Any = N
             return {"ok": False, "gate": getattr(exc, "gate", "read_rejected")}
 
     @server.tool(name="list_schedule", description="Same documented GET /work_orders filters as list_work_orders. Date bounds are sent, not dropped.")
-    async def list_schedule(start_date: str, end_date: str, current_technician: bool = False, sort_direction: str = "asc", work_pool: bool = False, status: str = "", service_route_ids: list[str] | None = None) -> dict[str, Any]:
+    async def list_schedule(start_date: str, end_date: str, current_technician: bool = False, sort_direction: str = "asc", work_pool: bool = False, status: str = "", service_route_ids: list[str] | None = None, technician: str = "") -> dict[str, Any]:
         denied = _guard()
         if denied:
             return denied
         try:
-            return redact(service.client.list_work_orders(start_date=start_date, end_date=end_date, current_technician=current_technician, sort_direction=sort_direction, work_pool=work_pool, status=status, service_route_ids=service_route_ids or []))
+            return redact(service.client.list_work_orders(start_date=start_date, end_date=end_date, current_technician=current_technician, sort_direction=sort_direction, work_pool=work_pool, status=status, service_route_ids=service_route_ids or [], technician=technician))
         except Exception as exc:
             return {"ok": False, "gate": getattr(exc, "gate", "read_rejected")}
 
@@ -261,7 +261,9 @@ def build_server(settings: Settings | None = None, service: WriteService | None 
     if service is None:
         store = WriteStore(settings.store_path)
         transport = HttpTransport(load_api_key(), api_base=settings.api_base)
-        client = TypedFieldworkClient(transport, mapping_verified=settings.mapping_verified)
+        from .fieldwork import load_route_directory
+
+        client = TypedFieldworkClient(transport, mapping_verified=settings.mapping_verified, route_directory=load_route_directory(settings.route_directory_path))
         service = WriteService(settings, store, client)
     verifier = JwtTokenVerifier(settings)
     if not settings.oauth_ready():

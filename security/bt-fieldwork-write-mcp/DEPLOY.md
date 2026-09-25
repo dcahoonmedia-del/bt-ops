@@ -37,6 +37,14 @@ FW_WRITE_OPERATOR_KEY=   # independent HMAC key; not the Fieldwork secret
 
 `FIELDWORK_WRITES_ENABLED` must stay `0` until Fieldwork API auth is proven on a real GET that requires the key. Do not treat `GET /check_connection` 204 as proof.
 
+Optional route snapshot, off when unset. `GET /service_routes` is an empty array. This file is a configured snapshot, not live staff data. Keep `technician_id` null on work orders.
+
+```
+FW_WRITE_ROUTE_DIRECTORY=/var/lib/bt-fieldwork-write-mcp/route-directory.json
+```
+
+The JSON needs `source`, `verified_at`, and `routes` of `route_id`, `name`, `user_id`, `user_name`. Do not commit that file.
+
 ## Do not
 
 - Deploy this unit
