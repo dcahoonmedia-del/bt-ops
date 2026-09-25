@@ -153,12 +153,7 @@ def customer_request(payload: dict[str, Any]) -> dict[str, Any]:
             _unknown("billing_phones_kinds")
         customer["billing_phones_kinds"] = list(kinds)
     _optional_str(payload, "note", customer)
-    locations = payload.get("service_locations")
-    if not isinstance(locations, list) or len(locations) != 1:
-        _unknown("service_locations")
-    loc = locations[0]
-    if not isinstance(loc, dict):
-        _unknown("service_locations")
+    loc = _caller_location(payload)
     assert_only(loc, CUSTOMER_LOCATION_FIELDS, label="service_location")
     name = loc.get("name")
     if not isinstance(name, str) or not name.strip():
@@ -189,7 +184,55 @@ def customer_request(payload: dict[str, Any]) -> dict[str, Any]:
     if "existing_customer_id" in payload:
         plan["existing_customer_id"] = _int(payload.get("existing_customer_id"), "existing_customer_id", positive=True)
     plan["confirmed_new"] = payload.get("confirmed_new") is True
+    plan["api_steps"] = _customer_api_steps(plan)
     return plan
+
+
+def _caller_location(payload: dict[str, Any]) -> dict[str, Any]:
+    """One nested location. A single object and a one-item list are the same caller input.
+
+    The Fieldwork customer POST key is service_locations_attributes. The plural
+    service_locations name is only the caller wrapper. Omitting it is a missing
+    location, not an unknown field injected into the payload.
+    """
+    if "service_locations" not in payload:
+        raise GateError("nested_location_required", fields=["name", "same_as_billing_address"])
+    locations = payload["service_locations"]
+    if isinstance(locations, dict):
+        return locations
+    if isinstance(locations, list) and len(locations) == 1 and isinstance(locations[0], dict):
+        return locations[0]
+    _unknown("service_locations")
+    return {}
+
+
+def _customer_api_steps(plan: dict[str, Any]) -> list[dict[str, Any]]:
+    steps = [{"method": "POST", "path": "/customers", "body": {"customer": plan["customer"]}}]
+    if plan.get("location_patch"):
+        steps.append(
+            {
+                "method": "PATCH",
+                "path": "/customers/{customer_id}/service_locations/{location_id}",
+                "body": {"service_location": plan["location_patch"]},
+            }
+        )
+    if plan.get("additional_location"):
+        steps.append(
+            {
+                "method": "POST",
+                "path": "/customers/{customer_id}/service_locations",
+                "body": {"service_location": plan["additional_location"]},
+            }
+        )
+    if plan.get("contact"):
+        steps.append(
+            {
+                "method": "POST",
+                "path": "/customers/{customer_id}/contacts",
+                "body": {"contact": plan["contact"]},
+            }
+        )
+    return steps
 
 
 def _address(value: Any) -> dict[str, Any]:
