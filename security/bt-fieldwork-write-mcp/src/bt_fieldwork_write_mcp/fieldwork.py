@@ -1331,7 +1331,7 @@ class TypedFieldworkClient:
         status, payload = self.transport.request("PATCH", path, body)
         if status >= 500:
             raise AmbiguousWriteError(f"remote_{status}")
-        if status != 200:
+        if status not in {200, 204}:
             raise GateError("location_patch_rejected", status=status)
         return payload if isinstance(payload, dict) else {}
 

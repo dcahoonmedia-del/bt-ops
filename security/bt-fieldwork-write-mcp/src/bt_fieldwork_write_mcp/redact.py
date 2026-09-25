@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import base64
+import json
+import re
 from typing import Any
+
+_JWT_CANDIDATE = re.compile(r"[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{2,}")
 
 REDACT_KEYS = {
     "api_key",
@@ -27,6 +32,25 @@ REDACT_KEYS = {
 }
 
 
+def _jwt_header(segment: str) -> bool:
+    padded = segment + "=" * (-len(segment) % 4)
+    try:
+        header = json.loads(base64.urlsafe_b64decode(padded))
+    except (ValueError, json.JSONDecodeError):
+        return False
+    return isinstance(header, dict) and isinstance(header.get("alg"), str) and bool(header["alg"])
+
+
+def _mask_tokens(text: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        token = match.group(0)
+        if _jwt_header(token.split(".", 1)[0]):
+            return "[redacted-jwt]"
+        return token
+
+    return _JWT_CANDIDATE.sub(replace, text)
+
+
 def redact(value: Any) -> Any:
     if isinstance(value, dict):
         out = {}
@@ -38,8 +62,8 @@ def redact(value: Any) -> Any:
         return out
     if isinstance(value, list):
         return [redact(item) for item in value]
-    if isinstance(value, str) and len(value) > 24 and value.count(".") == 2:
-        return "[redacted-jwt]"
+    if isinstance(value, str):
+        return _mask_tokens(value)
     return value
 
 
