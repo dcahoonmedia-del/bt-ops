@@ -1,0 +1,22 @@
+# DRAFT. Do not install or enable. Isolated from bt-intake-receiver.service.
+[Unit]
+Description=B&T Fieldwork write MCP (isolated; writes disabled by default)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=btfwwrite
+Group=btfwwrite
+WorkingDirectory=/opt/bt-fieldwork-write-mcp
+EnvironmentFile=/etc/bt-fieldwork-write-mcp.env
+ExecStart=/usr/bin/python3 -m bt_fieldwork_write_mcp
+Restart=on-failure
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/bt-fieldwork-write-mcp /run/bt-fieldwork-write-mcp
+
+[Install]
+WantedBy=multi-user.target
