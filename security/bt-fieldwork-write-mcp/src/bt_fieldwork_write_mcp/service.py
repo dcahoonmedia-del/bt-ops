@@ -370,7 +370,12 @@ class WriteService:
 
         caller = work_order_request(payload)
         self._require_active_location(payload)
-        catalog = load_catalog(self.client, caller.get("template_id"))
+        catalog = load_catalog(
+            self.client,
+            caller.get("template_id"),
+            configured_template_id=self.settings.pestguard_initial_template_id,
+            configured_service_id=self.settings.pestguard_initial_service_id,
+        )
         applied = apply_catalog(caller["service_appointment"], catalog)
         documented = {"service_appointment": applied["service_appointment"]}
         occurrence = documented["service_appointment"]["appointment_occurrences_attributes"][0]

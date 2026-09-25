@@ -202,20 +202,18 @@ def resolve_duplicates(
     }
 
 
-def load_catalog(client: Any, template_id: int | None) -> dict[str, Any]:
+def load_catalog(client: Any, template_id: int | None, *, configured_template_id: str = "", configured_service_id: str = "") -> dict[str, Any]:
     listed = client.list_work_order_templates()
     if not listed.get("complete") or listed.get("repeated_page") or listed.get("partial_error"):
         raise GateError(GATE_TEMPLATE, reason="template_list_incomplete")
     items = listed.get("items") or []
-    if template_id is not None:
-        chosen = [row for row in items if str(row.get("id")) == str(template_id)]
-        if len(chosen) != 1:
-            raise GateError(GATE_TEMPLATE, reason="template_id_not_in_list")
-        chosen_id = chosen[0]["id"]
-    elif len(items) == 1:
-        chosen_id = items[0].get("id")
-    else:
-        raise GateError(GATE_TEMPLATE, reason="template_not_unique")
+    selected = template_id if template_id is not None else configured_template_id
+    if selected is None or str(selected).strip() == "":
+        raise GateError(GATE_TEMPLATE, reason="template_not_configured")
+    chosen = [row for row in items if str(row.get("id")) == str(selected)]
+    if len(chosen) != 1:
+        raise GateError(GATE_TEMPLATE, reason="template_id_not_in_list")
+    chosen_id = chosen[0]["id"]
     template = client.get_work_order_template(str(chosen_id))
     defaults = template.get("work_order")
     if not isinstance(defaults, dict):
@@ -248,6 +246,8 @@ def load_catalog(client: Any, template_id: int | None) -> dict[str, Any]:
         raise GateError(GATE_CATALOG, reason="service_disagrees_with_template")
     if line.get("type") != "service" or line.get("payable_type") != "Service":
         raise GateError(GATE_CATALOG, reason="template_line_type")
+    if str(configured_service_id or "").strip() and str(line.get("payable_id")) != str(configured_service_id).strip():
+        raise GateError(GATE_CATALOG, reason="configured_service_mismatch")
     normalized = {
         "name": line.get("name"),
         "type": line.get("type"),
@@ -1019,7 +1019,12 @@ def post_work_order(service: Any, proposal: dict[str, Any], attempt_id: str) -> 
     schedule_patch = proposal["after"].get("schedule_patch")
     if proposal["after"].get("starts_at_post_ready") is False and not schedule_patch:
         raise GateError(GATE_STARTS_AT_POST, starts_at_post_clock_live_tested=False, timed_create_ready=False, first_live_creation_approval_required=True)
-    catalog = load_catalog(client, proposal["after"].get("template_id"))
+    catalog = load_catalog(
+        client,
+        proposal["after"].get("template_id"),
+        configured_template_id=service.settings.pestguard_initial_template_id,
+        configured_service_id=service.settings.pestguard_initial_service_id,
+    )
     rebuilt = apply_catalog(proposal["after"]["caller_appointment"], catalog)
     if rebuilt["service_appointment"] != sent:
         raise GateError("stale_state", reason="template_changed")

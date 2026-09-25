@@ -54,6 +54,8 @@ class Settings:
     auth0_offline_access: bool = True
     route_directory_path: str = ""
     approval_mode: str = "operator"
+    pestguard_initial_template_id: str = ""
+    pestguard_initial_service_id: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -87,6 +89,8 @@ class Settings:
             auth0_offline_access=_flag("FW_WRITE_AUTH0_OFFLINE_ACCESS", True),
             route_directory_path=os.environ.get("FW_WRITE_ROUTE_DIRECTORY", "").strip(),
             approval_mode=os.environ.get("FW_WRITE_APPROVAL_MODE", "operator").strip(),
+            pestguard_initial_template_id=os.environ.get("FW_PESTGUARD_INITIAL_TEMPLATE_ID", "").strip(),
+            pestguard_initial_service_id=os.environ.get("FW_PESTGUARD_INITIAL_SERVICE_ID", "").strip(),
         )
 
     def oauth_ready(self) -> bool:

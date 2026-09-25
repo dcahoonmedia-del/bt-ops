@@ -60,6 +60,8 @@ def _settings(path: Path, **overrides: object) -> Settings:
         api_role="readonly",
         proposal_ttl_seconds=1800,
         approval_ttl_seconds=900,
+        pestguard_initial_template_id="8835901",
+        pestguard_initial_service_id="38814",
     )
     values.update(overrides)
     return Settings(**values)  # type: ignore[arg-type]
