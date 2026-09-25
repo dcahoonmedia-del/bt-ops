@@ -6,6 +6,12 @@ from typing import Any
 
 REDACT_KEYS = {
     "api_key",
+    "access_token",
+    "refresh_token",
+    "id_token",
+    "client_secret",
+    "calls_auth_token",
+    "operator_approval",
     "auth_token",
     "authorization",
     "token",

@@ -84,6 +84,7 @@ class Harness:
         self.settings = _settings(self.path, **overrides)
         self.store = WriteStore(self.path)
         self.transport = FakeTransport()
+        self.transport.api_role = self.settings.api_role
         self.transport.add_customer(_customer(), _location())
         self.client = TypedFieldworkClient(self.transport, mapping_verified=self.settings.mapping_verified)
         self.service = WriteService(self.settings, self.store, self.client)
@@ -264,7 +265,7 @@ class WriteMcpTests(unittest.TestCase):
         )
         self.assertFalse(missing["ok"])
         self.assertNotIn("before", missing)
-        self.h.transport.work_orders["10"] = {"id": 10, "service_appointment_id": 20, "instructions": "old", "private_notes": "secret"}
+        self.h.transport.work_orders["10"] = {"id": 10, "service_appointment_id": 20, "customer_id": 41, "service_location_id": 77, "instructions": "old", "private_notes": "secret"}
         proposed = self.h.service.propose(
             OP_WORK_ORDER_NOTES,
             {"work_order_id": "10", "service_appointment_id": "20", "instructions": "gate code"},

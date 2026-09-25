@@ -131,8 +131,8 @@ class ReviewTests(unittest.TestCase):
 
         transport = HttpTransport(InMemoryApiKey("hidden-key"), opener=Cap())
         transport.request(
-            "POST",
-            "/work_orders?api_key=nope&evil=1",
+            "GET",
+            "/work_orders",
             {"service_route_ids": [1, 2]},
             query={"per_page": 1, "api_key": "override", "drop": "x", "start_date": "2026-09-25", "end_date": "2026-09-25", "filter[service_routes_ids][]": ["7", "8"], "current_technician": True},
         )

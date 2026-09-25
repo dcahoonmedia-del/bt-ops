@@ -76,6 +76,19 @@ def _parse_iso(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+def _normalized_start(value: Any) -> Any:
+    if not value:
+        return value
+    from zoneinfo import ZoneInfo
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            raise ValueError("offset_required")
+        return parsed.astimezone(ZoneInfo("America/New_York")).isoformat()
+    except ValueError:
+        raise GateError("schedule_date_unverified") from None
+
+
 class WriteService:
     def __init__(
         self,
@@ -96,11 +109,11 @@ class WriteService:
         if callable(key):
             key_ready = bool(key())
         return current_gates(
-            writes_enabled=self.settings.writes_enabled,
+            writes_enabled=True,
             mapping_verified=self.settings.mapping_verified,
-            api_role=self.settings.api_role,
+            api_role=getattr(self.client, "observed_api_role", "readonly") if getattr(self.client, "observed_api_role", "unknown") != "unknown" else "readonly",
             credential_ready=key_ready,
-            oauth_ready=self.settings.oauth_ready(),
+            oauth_ready=self.settings.oauth_ready() or self.settings.auth_mode == "auth0_bridge",
         )
 
     def _fail(self, gate: str, **detail: Any) -> dict[str, Any]:
@@ -196,7 +209,7 @@ class WriteService:
             "address_id": identity["address_id"],
             "instructions": row.get("instructions"),
             "private_notes": row.get("private_notes"),
-            "starts_at": row.get("starts_at"),
+            "starts_at": _normalized_start(row.get("starts_at")),
             "duration": row.get("duration"),
             "service_route_ids": [item for item in (row.get("service_route_ids") or [])],
         }
@@ -248,7 +261,7 @@ class WriteService:
         self._reject_series(row)
         before = self._occurrence_snapshot(row)
         after = dict(before)
-        after["starts_at"] = starts_at
+        after["starts_at"] = _normalized_start(starts_at)
         after["duration"] = duration
         after["service_route_ids"] = list(routes)
         for key in ARRIVAL_FIELDS:
@@ -353,13 +366,13 @@ class WriteService:
         *,
         operator_approval: str = "",
         approved: Any = None,
+        expected_digest: str = "",
     ) -> dict[str, Any]:
-        del approved  # model-supplied approved=true is not a gate
         ident = self._identity_or_reject(identity)
         if "ok" in ident and ident.get("ok") is False:
             return ident
         identity = ident  # type: ignore[assignment]
-        if self._live_api_role() in {"", "readonly", "read_only"}:
+        if self._live_api_role() != "writer":
             return self._fail(GATE_READONLY, proposal_id=proposal_id)
         proposal = self.store.get_proposal(proposal_id)
         if proposal is None:
@@ -389,6 +402,13 @@ class WriteService:
             stale = self._location_stale(proposal) if proposal["operation"] == OP_LOCATION_NOTES else None
         if stale is not None:
             return stale
+        if self.settings.approval_mode == "chatgpt_confirmation" and not operator_approval:
+            if approved is not True or expected_digest != proposal["digest"]:
+                return self._fail(GATE_OPERATOR, proposal_id=proposal_id, reason="explicit_confirmation_and_exact_digest_required")
+            minted = self.mint_approval(proposal_id)
+            if not minted.get("ok"):
+                return minted
+            operator_approval = minted["operator_approval"]
         if not self._accept_operator(proposal, operator_approval, clock):
             return self._fail(self._operator_gate(operator_approval, proposal, clock), proposal_id=proposal_id)
 

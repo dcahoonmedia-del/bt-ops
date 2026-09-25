@@ -91,7 +91,7 @@ class ScheduleTests(unittest.TestCase):
 class WorkOrderNoteWriteTests(unittest.TestCase):
     def setUp(self) -> None:
         self.h = Harness(writes_enabled=True, api_role="writer")
-        self.h.transport.work_orders["10"] = {"id": 10, "service_appointment_id": 20, "instructions": "old", "private_notes": "secret"}
+        self.h.transport.work_orders["10"] = {"id": 10, "service_appointment_id": 20, "customer_id": 41, "service_location_id": 77, "instructions": "old", "private_notes": "secret"}
 
     def tearDown(self) -> None:
         self.h.close()

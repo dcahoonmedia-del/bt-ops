@@ -56,11 +56,11 @@ def build_mcp(service: WriteService, settings: Settings, verifier: JwtTokenVerif
         auth=auth,
     )
 
-    @server.tool(name="report_gates", description="Report closed write gates. Not live readiness.")
+    @server.tool(name="report_gates", description="Report current authentication, live API role, supported reads and write readiness.", annotations={"readOnlyHint": True, "destructiveHint": False})
     async def report_gates() -> dict[str, Any]:
         return report_gates_body(service, settings)
 
-    @server.tool(name="propose_write", description="Build an immutable exact-before/after proposal. Does not write.")
+    @server.tool(name="propose_write", description="Prepare an exact before/after proposal without changing Fieldwork. Operations: update_service_location_notes(customer_id,location_id,notes); update_work_order_notes(work_order_id,service_appointment_id,instructions and/or private_notes); update_work_order_schedule(work_order_id,service_appointment_id,starts_at ISO timestamp with offset,duration minutes,service_route_ids integer array). Show the proposal to the user before execution. Customer creation, messages, series-wide edits, arrival-window edits and work-order creation are unsupported.")
     async def propose_write(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         identity = request_identity()
         if identity is None:
@@ -69,12 +69,14 @@ def build_mcp(service: WriteService, settings: Settings, verifier: JwtTokenVerif
 
     @server.tool(
         name="execute_approved_write",
-        description="Execute one independently approved proposal. Ignores approved=true.",
+        description="Apply exactly one proposed Fieldwork change ONLY after the user has approved its before/after values. Supply approved=true and the exact digest from inspect_proposal. Requires ChatGPT write confirmation; never call for a draft, ambiguous approval, or a different change.",
+        annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True},
     )
     async def execute_approved_write(
         proposal_id: str,
         operator_approval: str = "",
         approved: bool | None = None,
+        expected_digest: str = "",
     ) -> dict[str, Any]:
         identity = request_identity()
         if identity is None:
@@ -85,10 +87,11 @@ def build_mcp(service: WriteService, settings: Settings, verifier: JwtTokenVerif
                 identity,
                 operator_approval=operator_approval,
                 approved=approved,
+                expected_digest=expected_digest,
             )
         )
 
-    @server.tool(name="inspect_proposal", description="Inspect a stored proposal. No secrets.")
+    @server.tool(name="inspect_proposal", description="Inspect a stored proposal. No secrets.", annotations={"readOnlyHint": True, "destructiveHint": False})
     async def inspect_proposal(proposal_id: str) -> dict[str, Any]:
         identity = request_identity()
         if identity is None:
@@ -106,34 +109,39 @@ def build_bridge_server(settings: Settings, service: WriteService, fieldwork_key
     from .auth0_bridge import bridge_identity_from_token, build_auth0_provider
 
     provider = build_auth0_provider(settings, fieldwork_key=fieldwork_key)
-    mcp = FastMCP(name="bt-fieldwork-write-mcp", auth=provider)
+    mcp = FastMCP(name="bt-fieldwork-write-mcp", auth=provider, instructions="Read schedules, customers, locations, and work orders. For writes, propose the exact change, show before/after, obtain explicit user approval, then execute with the proposal digest. Never create customers, send messages, change an entire recurring series, or use generic HTTP. Arrival-window editing and work-order creation are unsupported. Fieldwork live read-only role controls write availability.")
 
     def _identity() -> dict[str, str] | None:
         from fastmcp.server.dependencies import get_access_token
 
-        return bridge_identity_from_token(get_access_token(), settings)
+        token = get_access_token()
+        identity = bridge_identity_from_token(token, settings)
+        if identity is not None:
+            service.authenticated_call_observed = True
+            service.offline_access_observed = "offline_access" in (getattr(token, "scopes", None) or [])
+        return identity
 
-    @mcp.tool(name="report_gates", description="Report closed write gates. Not live readiness.")
+    @mcp.tool(name="report_gates", description="Report current authentication, live API role, supported reads and write readiness.", annotations={"readOnlyHint": True, "destructiveHint": False})
     async def report_gates() -> dict[str, Any]:
         if _identity() is None:
             return {"ok": False, "gate": GATE_AUTH}
         return report_gates_body(service, settings)
 
-    @mcp.tool(name="propose_write", description="Build an immutable exact-before/after proposal. Does not write.")
+    @mcp.tool(name="propose_write", description="Prepare an exact before/after proposal without changing Fieldwork. Operations: update_service_location_notes(customer_id,location_id,notes); update_work_order_notes(work_order_id,service_appointment_id,instructions and/or private_notes); update_work_order_schedule(work_order_id,service_appointment_id,starts_at ISO timestamp with offset,duration minutes,service_route_ids integer array). Show the proposal to the user before execution. Customer creation, messages, series-wide edits, arrival-window edits and work-order creation are unsupported.")
     async def propose_write(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         identity = _identity()
         if identity is None:
             return {"ok": False, "gate": GATE_AUTH, "gates": service.gates()}
         return redact(service.propose(operation, payload, identity))
 
-    @mcp.tool(name="execute_approved_write", description="Execute one independently approved proposal. Ignores approved=true.")
-    async def execute_approved_write(proposal_id: str, operator_approval: str = "", approved: bool | None = None) -> dict[str, Any]:
+    @mcp.tool(name="execute_approved_write", description="Apply exactly one proposed Fieldwork change ONLY after explicit user approval of its before/after values. Supply approved=true and the exact digest from inspect_proposal. Never call for a draft or ambiguous approval.", annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True})
+    async def execute_approved_write(proposal_id: str, operator_approval: str = "", approved: bool | None = None, expected_digest: str = "") -> dict[str, Any]:
         identity = _identity()
         if identity is None:
             return {"ok": False, "gate": GATE_AUTH, "gates": service.gates()}
-        return redact(service.execute(proposal_id, identity, operator_approval=operator_approval, approved=approved))
+        return redact(service.execute(proposal_id, identity, operator_approval=operator_approval, approved=approved, expected_digest=expected_digest))
 
-    @mcp.tool(name="inspect_proposal", description="Inspect a stored proposal. No secrets.")
+    @mcp.tool(name="inspect_proposal", description="Inspect a stored proposal. No secrets.", annotations={"readOnlyHint": True, "destructiveHint": False})
     async def inspect_proposal(proposal_id: str) -> dict[str, Any]:
         identity = _identity()
         if identity is None:
@@ -157,7 +165,7 @@ def _register_reads(server: Any, service: WriteService, identity_getter: Any = N
             return {"ok": False, "gate": GATE_AUTH}
         return None
 
-    @server.tool(name="search_customers", description="Search customers by the documented query parameter. Pages until a short page or reports truncation.")
+    @server.tool(name="search_customers", description="Search customers by the documented query parameter. Pages until a short page or reports truncation.", annotations={"readOnlyHint": True, "destructiveHint": False})
     async def search_customers(query: str) -> dict[str, Any]:
         denied = _guard()
         if denied:
@@ -167,7 +175,7 @@ def _register_reads(server: Any, service: WriteService, identity_getter: Any = N
         except Exception as exc:
             return {"ok": False, "gate": getattr(exc, "gate", "read_rejected")}
 
-    @server.tool(name="get_customer", description="GET one customer by id. Flat id-bearing body only.")
+    @server.tool(name="get_customer", description="GET one customer by id. Flat id-bearing body only.", annotations={"readOnlyHint": True, "destructiveHint": False})
     async def get_customer(customer_id: str) -> dict[str, Any]:
         denied = _guard()
         if denied:
@@ -177,7 +185,7 @@ def _register_reads(server: Any, service: WriteService, identity_getter: Any = N
         except Exception as exc:
             return {"ok": False, "gate": getattr(exc, "gate", "read_rejected")}
 
-    @server.tool(name="get_service_location", description="GET one service location wrapper for a customer.")
+    @server.tool(name="get_service_location", description="GET one service location wrapper for a customer.", annotations={"readOnlyHint": True, "destructiveHint": False})
     async def get_service_location(customer_id: str, location_id: str) -> dict[str, Any]:
         denied = _guard()
         if denied:
@@ -187,7 +195,7 @@ def _register_reads(server: Any, service: WriteService, identity_getter: Any = N
         except Exception as exc:
             return {"ok": False, "gate": getattr(exc, "gate", "read_rejected")}
 
-    @server.tool(name="get_work_order", description="GET one work order. Occurrence id and service-appointment id stay distinct.")
+    @server.tool(name="get_work_order", description="GET one work order. Occurrence id and service-appointment id stay distinct.", annotations={"readOnlyHint": True, "destructiveHint": False})
     async def get_work_order(work_order_id: str) -> dict[str, Any]:
         denied = _guard()
         if denied:
@@ -197,27 +205,27 @@ def _register_reads(server: Any, service: WriteService, identity_getter: Any = N
         except Exception as exc:
             return {"ok": False, "gate": getattr(exc, "gate", "read_rejected")}
 
-    @server.tool(name="list_work_orders", description="GET /work_orders with documented date, route, technician, and pool filters. Pages until short or reports truncation.")
-    async def list_work_orders(start_date: str = "", end_date: str = "", current_technician: bool = False, sort_direction: str = "asc", work_pool: bool = False, status: str = "", service_route_ids: list[str] | None = None) -> dict[str, Any]:
+    @server.tool(name="list_work_orders", description="GET /work_orders with documented date, route, technician, and pool filters. Pages until short or reports truncation.", annotations={"readOnlyHint": True, "destructiveHint": False})
+    async def list_work_orders(start_date: str = "", end_date: str = "", current_technician: bool = False, sort_direction: str = "asc", work_pool: bool = False, status: str = "", service_route_ids: list[str] | None = None, page: int = 1) -> dict[str, Any]:
         denied = _guard()
         if denied:
             return denied
         try:
-            return redact(service.client.list_work_orders(start_date=start_date, end_date=end_date, current_technician=current_technician, sort_direction=sort_direction, work_pool=work_pool, status=status, service_route_ids=service_route_ids or []))
+            return redact(service.client.list_work_orders(start_date=start_date, end_date=end_date, current_technician=current_technician, sort_direction=sort_direction, work_pool=work_pool, status=status, service_route_ids=service_route_ids or [], page=page))
         except Exception as exc:
             return {"ok": False, "gate": getattr(exc, "gate", "read_rejected")}
 
-    @server.tool(name="list_schedule", description="Same documented GET /work_orders filters as list_work_orders. Date bounds are sent, not dropped.")
-    async def list_schedule(start_date: str, end_date: str, current_technician: bool = False, sort_direction: str = "asc", work_pool: bool = False, status: str = "", service_route_ids: list[str] | None = None, technician: str = "") -> dict[str, Any]:
+    @server.tool(name="list_schedule", description="Read the live schedule for ISO dates in America/New_York, optionally by technician full name or route IDs. Includes customer names, addresses, times, arrival windows and distinct occurrence/appointment IDs. A configured route-to-technician snapshot is labeled; null technician_id does not mean unassigned. Follow next_page if truncated.", annotations={"readOnlyHint": True, "destructiveHint": False})
+    async def list_schedule(start_date: str, end_date: str, current_technician: bool = False, sort_direction: str = "asc", work_pool: bool = False, status: str = "", service_route_ids: list[str] | None = None, technician: str = "", page: int = 1) -> dict[str, Any]:
         denied = _guard()
         if denied:
             return denied
         try:
-            return redact(service.client.list_work_orders(start_date=start_date, end_date=end_date, current_technician=current_technician, sort_direction=sort_direction, work_pool=work_pool, status=status, service_route_ids=service_route_ids or [], technician=technician))
+            return redact(service.client.list_work_orders(start_date=start_date, end_date=end_date, current_technician=current_technician, sort_direction=sort_direction, work_pool=work_pool, status=status, service_route_ids=service_route_ids or [], technician=technician, page=page))
         except Exception as exc:
             return {"ok": False, "gate": getattr(exc, "gate", "read_rejected")}
 
-    @server.tool(name="list_service_routes", description="GET /service_routes with page and per_page only.")
+    @server.tool(name="list_service_routes", description="GET /service_routes with page and per_page only.", annotations={"readOnlyHint": True, "destructiveHint": False})
     async def list_service_routes() -> dict[str, Any]:
         denied = _guard()
         if denied:
@@ -228,27 +236,36 @@ def _register_reads(server: Any, service: WriteService, identity_getter: Any = N
             return {"ok": False, "gate": getattr(exc, "gate", "read_rejected")}
 
 def report_gates_body(service: WriteService, settings: Settings) -> dict[str, Any]:
+    role_error = None
+    try:
+        role = service.client.get_api_role()
+    except Exception as exc:
+        role, role_error = "unknown", getattr(exc, "gate", "read_rejected")
+    gates = service.gates()
+    gates.update(api_role=role, fieldwork_api_auth_verified=role_error is None,
+                 fieldwork_get_auth_verified=role_error is None,
+                 writes_enabled=role == "writer",
+                 rollout_safeguard="Fieldwork API user's live read-only role",
+                 oauth_ready=settings.auth_mode == "auth0_bridge" and not bridge_blockers(settings) or settings.oauth_ready())
     return {
         "ok": True,
-        "live_ready": False,
-        "fieldwork_api_auth_verified": False,
-        "credential_ready": service.gates().get("credential_ready"),
+        "reads_ready": role_error is None,
+        "live_ready": role_error is None and role == "writer",
+        "fieldwork_api_auth_verified": role_error is None,
+        "role_check_error": role_error,
+        "credential_ready": service.client.api_key_present(),
         "direct_jwt_configured": settings.oauth_ready(),
         "auth0_bridge_configured": settings.auth_mode == "auth0_bridge" and not bridge_blockers(settings),
-        "active_auth_configured": (settings.auth_mode == "auth0_bridge" and not bridge_blockers(settings)) or (settings.auth_mode != "auth0_bridge" and settings.oauth_ready()),
-        "live_auth0_login_observed_by_this_process": False,
+        "live_auth0_login_observed_by_this_process": bool(getattr(service, "authenticated_call_observed", False)),
         "offline_access_requested": settings.auth0_offline_access,
         "offline_access_required_on_access_token": False,
-        "offline_access_allow_saved_by_operator": True,
-        "offline_access_observed_by_this_process": False,
+        "offline_access_observed_by_this_process": bool(getattr(service, "offline_access_observed", False)),
         "existing_downstream_sessions_remain_usable": True,
-        "refresh_token_needs_one_new_authorization": True,
-        "reuse_storage_path_configured": bool(settings.auth0_storage_path),
-        "reuse_storage_key_configured": bool(settings.auth0_storage_key),
-        "reuse_signing_key_configured": bool(settings.auth0_jwt_signing_key),
+        "refresh_token_needs_one_new_authorization": not bool(getattr(service, "offline_access_observed", False)),
+        "approval_mode": settings.approval_mode,
         "live_patch_tested": False,
-        "check_connection_is_not_auth_proof": True,
-        "gates": service.gates(),
+        "live_patch_tested_is_a_status_not_a_write_block": True,
+        "gates": gates,
         "forbidden": sorted(FORBIDDEN_OPS),
     }
 

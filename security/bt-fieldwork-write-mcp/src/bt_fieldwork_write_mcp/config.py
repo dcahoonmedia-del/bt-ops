@@ -53,6 +53,7 @@ class Settings:
     auth0_subject_map: tuple[str, ...] = ()
     auth0_offline_access: bool = True
     route_directory_path: str = ""
+    approval_mode: str = "operator"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -85,6 +86,7 @@ class Settings:
             auth0_subject_map=_csv("FW_WRITE_AUTH0_SUBJECT_MAP"),
             auth0_offline_access=_flag("FW_WRITE_AUTH0_OFFLINE_ACCESS", True),
             route_directory_path=os.environ.get("FW_WRITE_ROUTE_DIRECTORY", "").strip(),
+            approval_mode=os.environ.get("FW_WRITE_APPROVAL_MODE", "operator").strip(),
         )
 
     def oauth_ready(self) -> bool:
