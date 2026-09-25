@@ -25,6 +25,8 @@ from .secrets import InMemoryApiKey
 _CUSTOMER = re.compile(r"^/customers/\d+$")
 _LOCATION = re.compile(r"^/customers/\d+/service_locations/\d+$")
 _LOCATION_LIST = re.compile(r"^/customers/\d+/service_locations$")
+_CONTACT_LIST = re.compile(r"^/customers/\d+/contacts$")
+_TEMPLATE = re.compile(r"^/work_order_templates/\d+$")
 _WORK_ORDER = re.compile(r"^/work_orders/\d+$")
 _WORK_ORDER_PLAIN = re.compile(r"^/work_orders/\d+/show_plain$")
 _WORK_ORDER_SEARCH = re.compile(r"^/work_orders(/search)?$")
@@ -397,6 +399,14 @@ class FakeTransport:
         self.repeat_work_order_page: bool = False
         self.return_create_id = True
         self._next_id = 900000
+        self.customer_search_fault: str | None = None
+        self.fail_write_exact: set[str] = set()
+        self.fail_write_suffixes: set[str] = set()
+        self.raise_after_exact: set[str] = set()
+        self.contacts: dict[str, dict[str, Any]] = {}
+        self.services = [_catalog_service()]
+        self.templates = [_catalog_template()]
+        self.readback_line_price = None
 
     def add_customer(self, customer: dict[str, Any], location: dict[str, Any]) -> None:
         cid = str(customer["id"])
@@ -415,7 +425,7 @@ class FakeTransport:
     ) -> tuple[int, Any]:
         self.calls.append({"method": method, "path": path, "body": body, "query": query})
         if method in {"POST", "PATCH", "PUT", "DELETE"}:
-            if self.write_mode == "ambiguous":
+            if self.write_mode == "ambiguous" or path in self.fail_write_exact or any(path.endswith(suffix) for suffix in self.fail_write_suffixes):
                 raise AmbiguousWriteError("fake_ambiguous")
             if self.write_mode == "drop":
                 raise AmbiguousWriteError("fake_drop")
@@ -432,7 +442,17 @@ class FakeTransport:
                 return 200, {"roles": list(LIVE_PERMISSION_ROLES)}
             return 200, {"roles": ["mystery"]}
         if method == "GET" and path == "/customers/search":
-            return 200, list(self.customers.values())
+            return self._fake_customer_search(query)
+        if method == "GET" and path == "/work_order_templates":
+            return 200, [{"id": row["id"], "name": row["name"]} for row in self.templates]
+        if method == "GET" and path.startswith("/work_order_templates/"):
+            wanted = path.rsplit("/", 1)[-1]
+            for row in self.templates:
+                if str(row["id"]) == wanted:
+                    return 200, {"service_appointment_template": row}
+            return 404, None
+        if method == "GET" and path == "/services":
+            return 200, list(self.services)
         if method == "GET" and path == "/customers/search_by_phone":
             phone = str((query or {}).get("phone") or "")
             found = [row for row in self.customers.values() if phone and phone in json.dumps(row)]
@@ -482,8 +502,9 @@ class FakeTransport:
             address = dict(location.get("address") or {})
             if addr.get("id") is not None:
                 address["id"] = addr["id"]
-            if "notes" in addr:
-                address["notes"] = addr["notes"]
+            for field in ("attention", "street", "street2", "city", "state", "zip", "county", "phone", "phone_ext", "phone_note", "phone_kind", "notes"):
+                if field in addr:
+                    address[field] = addr[field]
             location["address"] = address
             self.locations[key] = location
             return 200, {"service_location": location}
@@ -502,7 +523,11 @@ class FakeTransport:
             wo = self.work_orders.get(str(wid))
             if wo is None:
                 return 404, None
-            return 200, {"appointment_occurrence": wo}
+            view = dict(wo)
+            if self.readback_line_price is not None and view.get("line_items"):
+                view["line_items"] = [dict(item) for item in view["line_items"]]
+                view["line_items"][0]["price"] = self.readback_line_price
+            return 200, {"appointment_occurrence": view}
         if method == "PATCH" and _WORK_ORDER.match(path):
             appointment_id = path.split("/")[2]
             match = None
@@ -533,56 +558,159 @@ class FakeTransport:
                 self.write_mode = "ok"
                 raise AmbiguousWriteError("timeout_after_apply")
             return 200, {"appointment_occurrence": match}
+        if method == "GET" and _CONTACT_LIST.match(path):
+            cid = path.split("/")[2]
+            rows = [row for key, row in self.contacts.items() if key.startswith(f"{cid}:")]
+            return 200, rows
+        if method == "POST" and _CONTACT_LIST.match(path):
+            return self._finish_write(path, self._fake_contact(path, body))
+        if method == "POST" and _LOCATION_LIST.match(path):
+            return self._finish_write(path, self._fake_location_create(path, body))
         if method == "POST" and path == "/customers":
-            return self._fake_create(body)
+            return self._finish_write(path, self._fake_customer(body))
         if method == "POST" and path == "/work_orders":
-            return self._fake_create(body)
+            return self._finish_write(path, self._fake_work_order(body))
         return 404, None
+
+    def _finish_write(self, path: str, response: tuple[int, dict[str, Any]]) -> tuple[int, dict[str, Any]]:
+        if path in self.raise_after_exact:
+            raise AmbiguousWriteError("timeout_after_apply")
+        return response
+
+    def _fake_customer_search(self, query: dict[str, Any] | None) -> tuple[int, Any]:
+        if self.customer_search_fault == "error":
+            return 500, {"error": "search_failed"}
+        page = int((query or {}).get("page") or 1)
+        per_page = int((query or {}).get("per_page") or 100)
+        rows = list(self.customers.values())
+        if self.customer_search_fault == "repeat" and page > 1:
+            page = 1
+        if self.customer_search_fault == "incomplete":
+            seed = rows or [{"id": 1, "name": "pad"}]
+            return 200, [seed[index % len(seed)] for index in range(per_page)]
+        start = max(page - 1, 0) * per_page
+        return 200, rows[start : start + per_page]
+
+    def _fake_customer(self, body: dict[str, Any] | None) -> tuple[int, dict[str, Any]]:
+        customer = (body or {}).get("customer") if isinstance(body, dict) else {}
+        if not isinstance(customer, dict):
+            customer = {}
+        created = self._new_id()
+        location_id = self._new_id()
+        nested = (customer.get("service_locations_attributes") or [{}])[0]
+        if not isinstance(nested, dict):
+            nested = {}
+        display = customer.get("name") or " ".join(part for part in (customer.get("first_name"), customer.get("last_name")) if part) or customer.get("last_name")
+        self.customers[str(created)] = {
+            "id": created,
+            "customer_type": customer.get("customer_type"),
+            "name": display,
+            "first_name": customer.get("first_name"),
+            "last_name": customer.get("last_name"),
+            "status": customer.get("status") or "active",
+            "customer_status": customer.get("status") or "active",
+            "email": None,
+            "billing_phone": customer.get("billing_phone"),
+            "billing_address": {
+                "street": customer.get("billing_street"),
+                "city": customer.get("billing_city"),
+                "state": customer.get("billing_state"),
+                "zip": customer.get("billing_zip"),
+            },
+        }
+        self.locations[f"{created}:{location_id}"] = {
+            "id": location_id,
+            "customer_id": created,
+            "name": nested.get("name"),
+            "same_as_billing_address": nested.get("same_as_billing_address"),
+            "address": {"id": self._new_id()},
+        }
+        response: dict[str, Any] = {"echo": body, "test_double": True, "response_schema": "fake_test_double_not_live_schema"}
+        if self.return_create_id:
+            response["id"] = created
+        return 200, response
+
+    def _fake_contact(self, path: str, body: dict[str, Any] | None) -> tuple[int, dict[str, Any]]:
+        cid = path.split("/")[2]
+        contact = (body or {}).get("contact") if isinstance(body, dict) else {}
+        created = self._new_id()
+        stored = {"id": created, "customer_id": int(cid), **(contact if isinstance(contact, dict) else {})}
+        self.contacts[f"{cid}:{created}"] = stored
+        if cid in self.customers:
+            self.customers[cid]["email"] = stored.get("email")
+        response: dict[str, Any] = {"echo": body, "test_double": True, "response_schema": "fake_test_double_not_live_schema"}
+        if self.return_create_id:
+            response["id"] = created
+        return 200, response
+
+    def _fake_location_create(self, path: str, body: dict[str, Any] | None) -> tuple[int, dict[str, Any]]:
+        cid = path.split("/")[2]
+        location = (body or {}).get("service_location") if isinstance(body, dict) else {}
+        created = self._new_id()
+        stored = {
+            "id": created,
+            "customer_id": int(cid),
+            "name": (location or {}).get("name"),
+            "tax_rate_id": (location or {}).get("tax_rate_id"),
+            "address": {"id": self._new_id(), **(((location or {}).get("address_attributes")) or {})},
+        }
+        self.locations[f"{cid}:{created}"] = stored
+        response: dict[str, Any] = {"echo": body, "test_double": True, "response_schema": "fake_test_double_not_live_schema"}
+        if self.return_create_id:
+            response["id"] = created
+        return 200, response
+
+    def _fake_work_order(self, body: dict[str, Any] | None) -> tuple[int, dict[str, Any]]:
+        appointment = (body or {}).get("service_appointment") if isinstance(body, dict) else {}
+        if not isinstance(appointment, dict):
+            appointment = {}
+        occurrence_id = self._new_id()
+        appointment_id = self._new_id()
+        occ = (appointment.get("appointment_occurrences_attributes") or [{}])[0]
+        if not isinstance(occ, dict):
+            occ = {}
+        lines = appointment.get("line_items_attributes") or []
+        stored = {
+            "id": occurrence_id,
+            "service_appointment_id": appointment_id,
+            "customer_id": appointment.get("customer_id"),
+            "service_location_id": appointment.get("service_location_id"),
+            "repeat_type": appointment.get("repeat_type"),
+            "repeat_period": appointment.get("repeat_period"),
+            "starts_at": occ.get("starts_at"),
+            "starts_at_date": occ.get("starts_at"),
+            "duration": occ.get("duration"),
+            "instructions": occ.get("instructions"),
+            "production_value": occ.get("production_value"),
+            "service_route_ids": list(occ.get("service_route_ids") or []),
+            "line_items": lines,
+            "status": "scheduled",
+        }
+        self.work_orders[str(occurrence_id)] = stored
+        response: dict[str, Any] = {
+            "echo": body,
+            "test_double": True,
+            "response_schema": "fake_test_double_not_live_schema",
+            "appointment_occurrence": {"id": occurrence_id, "service_appointment_id": appointment_id},
+        }
+        if self.return_create_id:
+            response["id"] = occurrence_id
+            response["service_appointment_id"] = appointment_id
+        return 200, response
 
     def _new_id(self) -> int:
         self._next_id += 1
         return self._next_id
 
-    def _fake_create(self, body: dict[str, Any] | None) -> tuple[int, dict[str, Any]]:
-        """Echo the request. This body is a test double, not a live Fieldwork schema."""
-        created = self._new_id()
-        response: dict[str, Any] = {
-            "echo": body,
-            "test_double": True,
-            "response_schema": "fake_test_double_not_live_schema",
-        }
-        if self.return_create_id:
-            response["id"] = created
-        customer = (body or {}).get("customer") if isinstance(body, dict) else None
-        if isinstance(customer, dict):
-            self.customers[str(created)] = {
-                "id": created,
-                "customer_type": customer.get("customer_type"),
-                "name": customer.get("name") or customer.get("last_name"),
-                "first_name": customer.get("first_name"),
-                "last_name": customer.get("last_name"),
-                "status": customer.get("status"),
-                "customer_status": customer.get("status"),
-            }
-        appointment = (body or {}).get("service_appointment") if isinstance(body, dict) else None
-        if isinstance(appointment, dict):
-            self.work_orders[str(created)] = {
-                "id": created,
-                "customer_id": appointment.get("customer_id"),
-                "service_location_id": appointment.get("service_location_id"),
-                "repeat_type": appointment.get("repeat_type"),
-                "repeat_period": appointment.get("repeat_period"),
-            }
-        return 200, response
-
-
 def _assert_typed_path(method: str, path: str) -> None:
-    if method == "GET" and path in {"/profile", "/service_routes", "/customers/search", "/customers/search_by_phone", "/customers", "/users"}:
+    if method == "GET" and path in {"/profile", "/service_routes", "/customers/search", "/customers/search_by_phone", "/customers", "/users", "/work_order_templates", "/services"}:
         return
     if method == "GET" and (
         _CUSTOMER.match(path)
         or _LOCATION.match(path)
         or _LOCATION_LIST.match(path)
+        or _CONTACT_LIST.match(path)
+        or _TEMPLATE.match(path)
         or _WORK_ORDER.match(path)
         or _WORK_ORDER_PLAIN.match(path)
         or _WORK_ORDER_SEARCH.match(path)
@@ -594,7 +722,42 @@ def _assert_typed_path(method: str, path: str) -> None:
         return
     if method == "POST" and path in {"/work_orders", "/customers"}:
         return
+    if method == "POST" and (_LOCATION_LIST.match(path) or _CONTACT_LIST.match(path)):
+        return
     raise GateError("unknown_operation", method=method, path=path)
+
+
+def _catalog_service() -> dict[str, Any]:
+    """Fake catalog row. Label is description. Not a live schema and not a branch default."""
+    return {"id": 38814, "description": "PestGuard - Set-up", "price": 150}
+
+
+def _catalog_template() -> dict[str, Any]:
+    """Fake template body returned under service_appointment_template."""
+    return {
+        "id": 8835901,
+        "name": "PestGuard - Initial 2026",
+        "repeat_type": "none",
+        "repeat_period": 1,
+        "billing_frequency": 0,
+        "discount": 0,
+        "tax_amount": 0,
+        "auto_generates_invoice": False,
+        "duration": 60,
+        "production_value": 150,
+        "instructions": "Initial service",
+        "specific": False,
+        "callback": False,
+        "line_items": [{
+            "payable_id": 38814,
+            "payable_type": "Service",
+            "type": "service",
+            "name": "PestGuard - Set-up",
+            "quantity": 1,
+            "price": 150,
+            "taxable": False,
+        }],
+    }
 
 
 def load_route_directory(path: str) -> dict[str, Any] | None:
@@ -1155,6 +1318,51 @@ class TypedFieldworkClient:
     def patch_work_order_notes(self, before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
         fields = [key for key in ("instructions", "private_notes") if after.get(key) != before.get(key)]
         return self.patch_work_order_fields(before, after, fields)
+
+    def list_contacts(self, customer_id: str) -> dict[str, Any]:
+        customer_id = _required_id(customer_id)
+        found = self._pages(f"/customers/{customer_id}/contacts")
+        found["customer_id"] = customer_id
+        return found
+
+    def create_contact(self, customer_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        path = f"/customers/{_required_id(customer_id)}/contacts"
+        _assert_typed_path("POST", path)
+        status, payload = self.transport.request("POST", path, body)
+        if status >= 500:
+            raise AmbiguousWriteError(f"remote_{status}")
+        return payload if isinstance(payload, dict) else {}
+
+    def create_service_location(self, customer_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        path = f"/customers/{_required_id(customer_id)}/service_locations"
+        _assert_typed_path("POST", path)
+        status, payload = self.transport.request("POST", path, body)
+        if status >= 500:
+            raise AmbiguousWriteError(f"remote_{status}")
+        return payload if isinstance(payload, dict) else {}
+
+    def patch_service_location(self, customer_id: str, location_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        path = f"/customers/{_required_id(customer_id)}/service_locations/{_required_id(location_id)}"
+        _assert_typed_path("PATCH", path)
+        status, payload = self.transport.request("PATCH", path, body)
+        if status >= 500:
+            raise AmbiguousWriteError(f"remote_{status}")
+        if status != 200:
+            raise GateError("location_patch_rejected", status=status)
+        return payload if isinstance(payload, dict) else {}
+
+    def list_work_order_templates(self) -> dict[str, Any]:
+        return self._pages("/work_order_templates")
+
+    def get_work_order_template(self, template_id: str) -> dict[str, Any]:
+        template_id = _required_id(template_id)
+        status, body = self.transport.request("GET", f"/work_order_templates/{template_id}")
+        if status != 200 or not isinstance(body, dict) or not isinstance(body.get("service_appointment_template"), dict):
+            raise GateError("template_unverified", status=status)
+        return body["service_appointment_template"]
+
+    def list_services(self) -> dict[str, Any]:
+        return self._pages("/services")
 
     def create_customer(self, body: dict[str, Any]) -> dict[str, Any]:
         path = "/customers"

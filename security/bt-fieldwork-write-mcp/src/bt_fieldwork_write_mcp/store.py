@@ -79,6 +79,18 @@ class WriteStore:
               proposal_id TEXT,
               detail_json TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS creation_journal (
+              step_id TEXT PRIMARY KEY,
+              proposal_id TEXT NOT NULL,
+              step TEXT NOT NULL,
+              intent_json TEXT NOT NULL,
+              result_json TEXT,
+              customer_id TEXT,
+              contact_id TEXT,
+              location_id TEXT,
+              outcome TEXT NOT NULL,
+              at TEXT NOT NULL
+            );
             """
         )
 
@@ -119,11 +131,22 @@ class WriteStore:
                         "INSERT INTO audit(at, event, proposal_id, detail_json) VALUES (?,?,?,?)",
                         (_now(), "ambiguous_after_restart", row["proposal_id"], _json({"gate": GATE_AMBIGUOUS})),
                     )
+                journal = list(self._conn.execute("SELECT proposal_id, step FROM creation_journal WHERE outcome = 'intended'"))
+                for row in journal:
+                    self._conn.execute(
+                        "UPDATE creation_journal SET outcome = 'ambiguous', result_json = ? WHERE proposal_id = ? AND step = ? AND outcome = 'intended'",
+                        (_json({"gate": GATE_AMBIGUOUS, "crash": True}), row["proposal_id"], row["step"]),
+                    )
+                    self._conn.execute("UPDATE proposals SET status = 'ambiguous' WHERE proposal_id = ?", (row["proposal_id"],))
+                    self._conn.execute(
+                        "INSERT INTO audit(at, event, proposal_id, detail_json) VALUES (?,?,?,?)",
+                        (_now(), "creation_step_ambiguous_after_restart", row["proposal_id"], _json({"step": row["step"]})),
+                    )
                 self._conn.execute("COMMIT")
             except Exception:
                 self._conn.execute("ROLLBACK")
                 raise
-        return len(rows)
+        return len(rows) + len(journal)
 
     def create_proposal(self, record: dict[str, Any]) -> None:
         with self._lock:
@@ -330,6 +353,63 @@ class WriteStore:
             (subject_key,),
         ).fetchone()
         return row is not None
+
+    def begin_creation_step(self, proposal_id: str, step: str, intent: dict[str, Any], *, customer_id: str | None = None, contact_id: str | None = None, location_id: str | None = None) -> str:
+        step_id = str(uuid.uuid4())
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                prior = self._conn.execute(
+                    "SELECT step, outcome FROM creation_journal WHERE proposal_id = ? AND outcome IN ('intended','ambiguous')",
+                    (proposal_id,),
+                ).fetchone()
+                if prior is not None:
+                    raise GateError(GATE_AMBIGUOUS, proposal_id=proposal_id, failed_step=prior["step"])
+                self._conn.execute(
+                    """INSERT INTO creation_journal(
+                        step_id, proposal_id, step, intent_json, customer_id, contact_id, location_id, outcome, at
+                    ) VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (step_id, proposal_id, step, _json(intent), customer_id, contact_id, location_id, "intended", _now()),
+                )
+                self._conn.execute("COMMIT")
+            except GateError:
+                self._conn.execute("ROLLBACK")
+                raise
+            except Exception:
+                self._conn.execute("ROLLBACK")
+                raise
+        return step_id
+
+    def finish_creation_step(self, step_id: str, outcome: str, result: dict[str, Any] | None = None, *, customer_id: str | None = None, contact_id: str | None = None, location_id: str | None = None) -> None:
+        with self._lock:
+            self._conn.execute(
+                """UPDATE creation_journal
+                   SET outcome = ?, result_json = ?,
+                       customer_id = COALESCE(?, customer_id),
+                       contact_id = COALESCE(?, contact_id),
+                       location_id = COALESCE(?, location_id)
+                   WHERE step_id = ?""",
+                (outcome, _json(result or {}), customer_id, contact_id, location_id, step_id),
+            )
+
+    def creation_journal(self, proposal_id: str) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM creation_journal WHERE proposal_id = ? ORDER BY at, step_id",
+            (proposal_id,),
+        ).fetchall()
+        found = []
+        for row in rows:
+            found.append({
+                "step_id": row["step_id"],
+                "step": row["step"],
+                "outcome": row["outcome"],
+                "intent": json.loads(row["intent_json"]),
+                "result": json.loads(row["result_json"]) if row["result_json"] else None,
+                "customer_id": row["customer_id"],
+                "contact_id": row["contact_id"],
+                "location_id": row["location_id"],
+            })
+        return found
 
     def audit_events(self, proposal_id: str | None = None) -> list[dict[str, Any]]:
         if proposal_id:

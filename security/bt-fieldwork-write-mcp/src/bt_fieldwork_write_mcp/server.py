@@ -21,10 +21,10 @@ PUBLIC_INSTRUCTIONS = (
     "Obtain explicit user approval of that before and after. Then execute only with approved=true and the exact digest "
     "from that proposal, and show the readback. Do not execute a draft, a stale proposal, a different proposal, "
     "or a change the user did not approve. "
-    "Customer create accepts Residential or Commercial, the documented billing fields and note, and service locations that send only name and same_as_billing_address. "
-    "Work-order create accepts one occurrence, repeat_type none, repeat_period as an integer, starts_at as YYYY-MM-DD, and line items with payable_id and payable_type when type is service or material. "
-    "Lead status, messaging, generic HTTP, recurring series, use_time_window, taxable line items, and arrival-window edits are rejected. "
-    "Create responses are not a verified live schema. "
+    "Customer and work-order creation are schema-ready and are not live-tested. "
+    "Customer create accepts Residential or Commercial, documented billing fields, one nested location with only name and same_as_billing_address, an explicit contact only when first name, last name, and email are supplied, and a distinct service address patched after create. "
+    "Duplicate search must be complete, and possible matches require confirmed_new or an existing customer id. "
+    "Work-order create fetches the current template and service catalog, sends one occurrence with repeat_type none and starts_at YYYY-MM-DD, and does not promise an arrival window. "
     "Writes stay off unless FIELDWORK_WRITES_ENABLED is set and the live API role is writer. "
     "Work-order note and schedule writes also require FIELDWORK_MAPPING_VERIFIED. GET /check_connection is not auth proof. "
     "MCP execution requires FW_WRITE_APPROVAL_MODE=chatgpt_confirmation. A separate approval string is not accepted."
@@ -35,9 +35,9 @@ PROPOSE_DESCRIPTION = (
     "Supported: update_service_location_notes(customer_id, location_id, notes); "
     "update_work_order_notes(work_order_id, service_appointment_id, instructions and/or private_notes); "
     "update_work_order_schedule(work_order_id, service_appointment_id, starts_at with a numeric offset, duration minutes, service_route_ids); "
-    "create_customer(customer_type Residential or Commercial, commercial name or residential last_name, service_locations with only name and same_as_billing_address, optional documented billing fields and note); "
-    "create_work_order(customer_id, service_location_id, repeat_type none, integer repeat_period, one occurrence with service_route_ids and starts_at YYYY-MM-DD, line items name/type/quantity/price, and payable_id plus payable_type when type is service or material). "
-    "Rejected: lead status, repeat_type other than none, repeat_type never, use_time_window, Zulu or offset starts_at, taxable line items, tax fields, messages, and arrival-window edits."
+    "create_customer is schema-ready and not live-tested: Residential or Commercial, nested location name and same_as_billing_address only, optional explicit contact with first_name, last_name, and email, confirmed_new or existing_customer_id when search finds a match; "
+    "create_work_order is schema-ready and not live-tested: one occurrence, repeat_type none, starts_at YYYY-MM-DD, template and service catalog fetched at propose, no use_time_window or promised arrival window. "
+    "Rejected: lead status, incomplete duplicate search, recurrence, taxable lines, portal or autopay fields, and caller fields started_at_time, finished_at_time, private_notes, status, or use_time_window."
 )
 
 EXECUTE_DESCRIPTION = (
@@ -45,9 +45,9 @@ EXECUTE_DESCRIPTION = (
     "execute that one proposal with approved=true and the exact digest. The result includes readback. "
     "Rejects missing approval, a missing or wrong digest, a stale before, an expired proposal, a tampered stored proposal, "
     "another proposal id, or another user's proposal. "
-    "Customer and work-order create each send one POST of the documented request and do not PATCH. "
-    "A create response without an integer id is create_response_unverified and is not retried. "
-    "A successful create readback only checks fields that were sent and echoed by the test double. It is not a verified live schema. "
+    "Customer create can POST the customer, PATCH a distinct service address, POST one caller-supplied extra location, and POST an explicit contact. Work-order create sends one POST. "
+    "A crashed or ambiguous POST is not replayed; partial ids stay recorded and recovery needs a new approved proposal. "
+    "Creation is schema-ready and not live-tested. Readback is the fake client's echoed records, not a verified live schema. "
     "Requires FW_WRITE_APPROVAL_MODE=chatgpt_confirmation."
 )
 

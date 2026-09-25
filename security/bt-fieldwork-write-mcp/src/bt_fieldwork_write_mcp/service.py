@@ -17,6 +17,7 @@ from .allowlist import (
     GATE_READONLY,
     GATE_RECURRING,
     GATE_OPERATOR,
+    GATE_PARTIAL,
     GATE_READBACK,
     GATE_REPLAY,
     GATE_STALE,
@@ -345,49 +346,76 @@ class WriteService:
 
     def _propose_create(self, payload: dict[str, Any], identity: dict[str, str]) -> dict[str, Any]:
         from .create_contract import work_order_request
+        from .creation_flow import apply_catalog, load_catalog, route_staff, schedule_view
 
-        body = work_order_request(payload)
+        caller = work_order_request(payload)
         self._require_active_location(payload)
+        catalog = load_catalog(self.client, caller.get("template_id"))
+        documented = apply_catalog(caller["service_appointment"], catalog)
+        occurrence = documented["service_appointment"]["appointment_occurrences_attributes"][0]
+        staff = route_staff(self.client, list(occurrence["service_route_ids"]))
+        schedule = schedule_view(self.client, str(occurrence["starts_at"]), list(occurrence["service_route_ids"]))
+        template = catalog["template"]
         after = {
             "exists": False,
-            "documented_request": body,
+            "caller_appointment": caller["service_appointment"],
+            "template_id": template.get("id"),
+            "documented_request": documented,
+            "association": {"customer_id": documented["service_appointment"]["customer_id"], "service_location_id": documented["service_appointment"]["service_location_id"]},
+            "catalog": {"template_id": template.get("id"), "template_name": template.get("name"), "repeat_type": template.get("repeat_type"), "repeat_period": template.get("repeat_period"), "line": catalog["line"], "service": catalog["service"]},
+            "route_staff": staff,
+            "schedule": schedule,
+            "duration": occurrence.get("duration"),
+            "instructions": occurrence.get("instructions"),
+            "service_pricing": {"name": catalog["line"].get("name"), "price": catalog["line"].get("price"), "payable_id": catalog["line"].get("payable_id"), "payable_type": catalog["line"].get("payable_type")},
+            "auto_generates_invoice": template.get("auto_generates_invoice"),
+            "invoice_generation_disclosed": template.get("auto_generates_invoice") is True,
             "starts_at_datetime_format_unverified": True,
-            "response_schema_verified": False,
             "use_time_window_sent": False,
+            "promised_window_enforced": False,
+            "response_schema_verified": False,
+            "schema_ready": True,
+            "live_tested": False,
         }
         result = self._persist_proposal(
             OP_CREATE_WORK_ORDER,
             payload,
             identity,
-            f"work_order:create:{sha256_hex(canonical(body))}",
+            f"work_order:{payload.get('customer_id')}:{payload.get('service_location_id')}:{occurrence.get('starts_at')}:{','.join(str(item) for item in occurrence.get('service_route_ids') or [])}",
             {"exists": False},
             after,
         )
         if result.get("ok"):
             result["starts_at_datetime_format_unverified"] = True
             result["response_schema_verified"] = False
+            result["schema_ready"] = True
+            result["live_tested"] = False
+            result["promised_window_enforced"] = False
         return result
 
     def _propose_customer(self, payload: dict[str, Any], identity: dict[str, str]) -> dict[str, Any]:
         from .create_contract import customer_request
+        from .creation_flow import duplicate_search, names_for, phones_for, resolve_duplicates
 
-        body = customer_request(payload)
+        plan = customer_request(payload)
+        search = duplicate_search(self.client, payload)
+        plan["duplicate_resolution"] = resolve_duplicates(search, confirmed_new=bool(plan.get("confirmed_new")), existing_customer_id=plan.get("existing_customer_id"))
         after = {
             "exists": False,
-            "documented_request": body,
+            "documented_request": plan,
+            "duplicate_search": {"complete": True, "candidate_ids": plan["duplicate_resolution"]["candidate_ids"]},
+            "contact_requested": plan.get("contact"),
             "nested_location_address_attributes": False,
             "response_schema_verified": False,
+            "schema_ready": True,
+            "live_tested": False,
         }
-        result = self._persist_proposal(
-            OP_CREATE_CUSTOMER,
-            payload,
-            identity,
-            f"customer:create:{sha256_hex(canonical(body))}",
-            {"exists": False},
-            after,
-        )
+        subject = "customer:" + "|".join(sorted(names_for(payload))) + ":" + "|".join(sorted(phones_for(payload)))
+        result = self._persist_proposal(OP_CREATE_CUSTOMER, payload, identity, subject, {"exists": False}, after)
         if result.get("ok"):
             result["response_schema_verified"] = False
+            result["schema_ready"] = True
+            result["live_tested"] = False
         return result
 
     def _persist_proposal(
@@ -493,7 +521,8 @@ class WriteService:
             self.store.set_status(proposal_id, "expired")
             return self._fail(GATE_EXPIRED, proposal_id=proposal_id)
         if proposal["status"] == "ambiguous":
-            return self._fail("ambiguous_remote_write_no_retry", proposal_id=proposal_id)
+            extra = self._creation_partial(proposal) if proposal["operation"] in {OP_CREATE_CUSTOMER, OP_CREATE_WORK_ORDER} else {}
+            return self._fail("ambiguous_remote_write_no_retry", proposal_id=proposal_id, retry=False, **extra)
         if proposal["status"] == "executed":
             return self._fail(GATE_REPLAY, proposal_id=proposal_id)
         if self.store.has_ambiguous(proposal["subject_key"]):
@@ -598,60 +627,53 @@ class WriteService:
             return self._fail(GATE_STALE, proposal_id=proposal["proposal_id"])
         return None
 
-    def _execute_create(self, proposal: dict[str, Any], clock: datetime) -> dict[str, Any]:
-        from .create_contract import response_id
+    def _creation_partial(self, proposal: dict[str, Any]) -> dict[str, Any]:
+        from .creation_flow import journal_partial
 
-        request = proposal["after"].get("documented_request")
+        partial = journal_partial(self.store.creation_journal(proposal["proposal_id"]))
+        return {"partial": partial, "failed_step": partial.get("failed_step"), "recovery": "new_exact_approved_proposal"}
+
+    def _execute_create(self, proposal: dict[str, Any], clock: datetime) -> dict[str, Any]:
+        from .creation_flow import post_customer_steps, post_work_order, stop_creation
+
+        if any(row["outcome"] in {"intended", "ambiguous"} for row in self.store.creation_journal(proposal["proposal_id"])):
+            self.store.set_status(proposal["proposal_id"], "ambiguous")
+            return self._fail("ambiguous_remote_write_no_retry", proposal_id=proposal["proposal_id"], retry=False, **self._creation_partial(proposal))
         try:
             attempt_id = self.store.begin_attempt(proposal["proposal_id"], proposal["subject_key"], _iso(clock))
         except GateError as exc:
             return self._fail(exc.gate, proposal_id=proposal["proposal_id"], **exc.detail)
-        if proposal["operation"] == OP_CREATE_WORK_ORDER:
-            try:
-                self._require_active_location(proposal["payload"])
-            except GateError as exc:
-                self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "failed_no_write")
-                return self._fail(exc.gate, proposal_id=proposal["proposal_id"], **exc.detail)
         try:
             if proposal["operation"] == OP_CREATE_CUSTOMER:
-                response = self.client.create_customer(request)
+                result = post_customer_steps(self, proposal, attempt_id)
             else:
-                response = self.client.create_work_order(request)
+                result = post_work_order(self, proposal, attempt_id)
         except AmbiguousWriteError:
-            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
-            return self._fail("ambiguous_remote_write_no_retry", proposal_id=proposal["proposal_id"], retry=False)
+            stopped = stop_creation(self.store, proposal, attempt_id)
+            return self._fail(stopped["gate"], proposal_id=proposal["proposal_id"], **{key: stopped[key] for key in ("partial", "failed_step", "retry", "recovery")})
         except GateError as exc:
+            if any(row["outcome"] == "succeeded" for row in self.store.creation_journal(proposal["proposal_id"])):
+                step_id = self.store.begin_creation_step(proposal["proposal_id"], "readback", {"gate": exc.gate})
+                self.store.finish_creation_step(step_id, "failed", {"gate": exc.gate})
+                stopped = stop_creation(self.store, proposal, attempt_id)
+                return self._fail(GATE_PARTIAL, proposal_id=proposal["proposal_id"], reason=exc.gate, **{key: stopped[key] for key in ("partial", "failed_step", "retry", "recovery")})
             self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "failed_no_write")
             return self._fail(exc.gate, proposal_id=proposal["proposal_id"], **exc.detail)
         except Exception:
-            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
-            return self._fail("ambiguous_remote_write_no_retry", proposal_id=proposal["proposal_id"], retry=False)
-        created = response_id(response)
-        if created is None:
-            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
-            return self._fail(
-                GATE_CREATE_RESPONSE,
-                proposal_id=proposal["proposal_id"],
-                retry=False,
-                response_schema_verified=False,
-            )
-        echo = response.get("echo") if isinstance(response, dict) else None
-        if echo != request:
-            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
-            return self._fail(GATE_READBACK, proposal_id=proposal["proposal_id"], retry=False, response_schema_verified=False)
+            stopped = stop_creation(self.store, proposal, attempt_id)
+            return self._fail(stopped["gate"], proposal_id=proposal["proposal_id"], retry=False, **{key: stopped[key] for key in ("partial", "failed_step", "recovery")})
+        if not result.get("ok"):
+            return self._fail(result.get("gate") or GATE_PARTIAL, proposal_id=proposal["proposal_id"], **{key: result.get(key) for key in ("partial", "failed_step", "retry", "recovery")})
         self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "success")
         return {
             "ok": True,
             "proposal_id": proposal["proposal_id"],
             "operation": proposal["operation"],
-            "created_id": created,
-            "readback": {
-                "id": created,
-                "test_double": True,
-                "response_schema": "fake_test_double_not_live_schema",
-                "response_schema_verified": False,
-                "matched_sent_fields": True,
-            },
+            "created_id": result.get("created_id"),
+            "reconciled": bool(result.get("reconciled")),
+            "readback": result.get("readback"),
+            "schema_ready": True,
+            "live_tested": False,
             "gates": self.gates(),
         }
 

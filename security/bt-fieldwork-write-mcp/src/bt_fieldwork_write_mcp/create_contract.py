@@ -7,16 +7,21 @@ from datetime import date
 from typing import Any
 
 from .allowlist import (
+    ADDITIONAL_LOCATION_FIELDS,
+    CONTACT_FIELDS,
     CREATE_FIELDS,
     CUSTOMER_CREATE_FIELDS,
     CUSTOMER_LOCATION_FIELDS,
-    GATE_ARRIVAL_WINDOW,
+    GATE_CONTACT,
     GATE_LEAD_STATUS,
     GATE_RECURRING,
     GATE_STARTS_AT_DATETIME,
     GATE_TAXABLE,
     LINE_ITEM_FIELDS,
     OCCURRENCE_FIELDS,
+    REJECTED_OCCURRENCE_FIELDS,
+    SERVICE_ADDRESS_FIELDS,
+    UnknownFieldError,
     assert_only,
     is_lead_status,
 )
@@ -24,7 +29,6 @@ from .errors import GateError
 
 CUSTOMER_TYPES = ("Residential", "Commercial")
 CUSTOMER_STATUSES = frozenset({"active", "inactive", "financial_hold", "sent_to_collections"})
-PHONE_KINDS = frozenset({"Home", "Office", "Mobile", "Fax", "Other"})
 REPEAT_TYPES = frozenset(
     {
         "none",
@@ -39,6 +43,7 @@ REPEAT_TYPES = frozenset(
         "yearly",
     }
 )
+PHONE_KINDS = frozenset({"Home", "Office", "Mobile", "Fax", "Other"})
 LINE_TYPES = frozenset({"service", "material", "other", "fee"})
 PAYABLE_TYPES = frozenset({"Service", "Material", "Fee"})
 PAYABLE_REQUIRED = frozenset({"service", "material"})
@@ -148,22 +153,101 @@ def customer_request(payload: dict[str, Any]) -> dict[str, Any]:
         customer["billing_phones_kinds"] = list(kinds)
     _optional_str(payload, "note", customer)
     locations = payload.get("service_locations")
-    if not isinstance(locations, list) or not locations:
+    if not isinstance(locations, list) or len(locations) != 1:
         _unknown("service_locations")
-    built: list[dict[str, Any]] = []
-    for loc in locations:
-        if not isinstance(loc, dict):
-            _unknown("service_locations")
-        assert_only(loc, CUSTOMER_LOCATION_FIELDS, label="service_location")
-        name = loc.get("name")
-        if not isinstance(name, str) or not name.strip():
-            _unknown("name")
-        same = loc.get("same_as_billing_address")
-        if not isinstance(same, bool):
-            _unknown("same_as_billing_address")
-        built.append({"name": name, "same_as_billing_address": same})
-    customer["service_locations_attributes"] = built
-    return {"customer": customer}
+    loc = locations[0]
+    if not isinstance(loc, dict):
+        _unknown("service_locations")
+    assert_only(loc, CUSTOMER_LOCATION_FIELDS, label="service_location")
+    name = loc.get("name")
+    if not isinstance(name, str) or not name.strip():
+        _unknown("name")
+    same = loc.get("same_as_billing_address")
+    if not isinstance(same, bool):
+        _unknown("same_as_billing_address")
+    customer["service_locations_attributes"] = [{"name": name, "same_as_billing_address": same}]
+    plan: dict[str, Any] = {"customer": customer, "contact": None, "location_patch": None, "additional_location": None}
+    if same:
+        if "service_address" in payload or "location_tax_rate_id" in payload:
+            _unknown("service_address" if "service_address" in payload else "location_tax_rate_id")
+    else:
+        address = _address(payload.get("service_address"))
+        if "location_tax_rate_id" not in payload:
+            _unknown("location_tax_rate_id")
+        plan["location_patch"] = {
+            "name": name,
+            "tax_rate_id": _int(payload.get("location_tax_rate_id"), "location_tax_rate_id", positive=True),
+            "address_attributes": address,
+        }
+    if "additional_location" in payload:
+        plan["additional_location"] = _additional_location(payload["additional_location"])
+    if "contact" in payload:
+        plan["contact"] = _contact(payload["contact"])
+    if "confirmed_new" in payload and payload["confirmed_new"] is not True:
+        _unknown("confirmed_new")
+    if "existing_customer_id" in payload:
+        plan["existing_customer_id"] = _int(payload.get("existing_customer_id"), "existing_customer_id", positive=True)
+    plan["confirmed_new"] = payload.get("confirmed_new") is True
+    return plan
+
+
+def _address(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or not value:
+        _unknown("service_address")
+    assert_only(value, SERVICE_ADDRESS_FIELDS, label="service_address")
+    address: dict[str, Any] = {}
+    for key, item in value.items():
+        if key == "phone_kind":
+            if item not in PHONE_KINDS:
+                _unknown("phone_kind")
+        elif not isinstance(item, str):
+            _unknown(key)
+        address[key] = item
+    if not any(str(address.get(key) or "").strip() for key in ("street", "city", "state", "zip")):
+        _unknown("service_address")
+    return address
+
+
+def _contact(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise GateError(GATE_CONTACT, reason="first_name_last_name_and_email_required")
+    assert_only(value, CONTACT_FIELDS, label="contact")
+    first_name = value.get("first_name")
+    last_name = value.get("last_name")
+    email = value.get("email")
+    if not isinstance(first_name, str) or not first_name.strip() or not isinstance(last_name, str) or not last_name.strip() or not isinstance(email, str) or not email.strip():
+        raise GateError(GATE_CONTACT, reason="first_name_last_name_and_email_required")
+    contact = {"first_name": first_name, "last_name": last_name, "email": email}
+    for key in ("phone", "phone_ext", "phone_note", "description"):
+        if key in value:
+            if not isinstance(value[key], str):
+                _unknown(key)
+            contact[key] = value[key]
+    if "title" in value:
+        if value["title"] not in {"Dr.", "Mr.", "Ms.", "Mrs."}:
+            _unknown("title")
+        contact["title"] = value["title"]
+    if "phone_kind" in value:
+        if value["phone_kind"] not in PHONE_KINDS:
+            _unknown("phone_kind")
+        contact["phone_kind"] = value["phone_kind"]
+    return contact
+
+
+def _additional_location(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        _unknown("additional_location")
+    assert_only(value, ADDITIONAL_LOCATION_FIELDS, label="additional_location")
+    name = value.get("name")
+    if not isinstance(name, str) or not name.strip():
+        _unknown("name")
+    body: dict[str, Any] = {
+        "name": name,
+        "tax_rate_id": _int(value.get("tax_rate_id"), "tax_rate_id", positive=True),
+    }
+    if "address" in value:
+        body["address_attributes"] = _address(value["address"])
+    return body
 
 
 def _line_item(item: Any) -> dict[str, Any]:
@@ -198,6 +282,10 @@ def _line_item(item: Any) -> dict[str, Any]:
 
 
 def _occurrence(item: dict[str, Any]) -> dict[str, Any]:
+    rejected = sorted(key for key in REJECTED_OCCURRENCE_FIELDS if key in item)
+    extra = sorted(key for key in item if key not in OCCURRENCE_FIELDS and key not in REJECTED_OCCURRENCE_FIELDS)
+    if rejected or extra:
+        raise UnknownFieldError(sorted(set(rejected + extra)))
     starts_at = item.get("starts_at")
     if not isinstance(starts_at, str):
         _unknown("starts_at")
@@ -220,6 +308,12 @@ def _occurrence(item: dict[str, Any]) -> dict[str, Any]:
     occurrence: dict[str, Any] = {"service_route_ids": list(routes), "starts_at": starts_at}
     if "duration" in item:
         occurrence["duration"] = _int(item["duration"], "duration")
+    if "instructions" in item:
+        if not isinstance(item["instructions"], str):
+            _unknown("instructions")
+        occurrence["instructions"] = item["instructions"]
+    if "production_value" in item:
+        occurrence["production_value"] = _int(item["production_value"], "production_value")
     return occurrence
 
 
@@ -233,18 +327,16 @@ def work_order_request(payload: dict[str, Any]) -> dict[str, Any]:
     for occ in occurrences:
         if not isinstance(occ, dict):
             _unknown("occurrences")
-        assert_only(occ, OCCURRENCE_FIELDS, label="occurrence")
-        if "use_time_window" in occ:
-            raise GateError(GATE_ARRIVAL_WINDOW)
+        _occurrence_fields(occ)
     repeat = payload.get("repeat_type")
     if not isinstance(repeat, str) or repeat not in REPEAT_TYPES:
         _unknown("repeat_type")
     if repeat != "none":
         raise GateError(GATE_RECURRING)
-    period = _int(payload.get("repeat_period"), "repeat_period")
+    period = _int(payload.get("repeat_period"), "repeat_period") if "repeat_period" in payload else None
     items = payload.get("line_items")
     missing: list[str] = []
-    if not isinstance(items, list) or not items:
+    if "line_items" in payload and (not isinstance(items, list) or not items):
         missing.append("line_items")
     if len(occurrences) == 0:
         missing.append("occurrences")
@@ -252,13 +344,24 @@ def work_order_request(payload: dict[str, Any]) -> dict[str, Any]:
         raise GateError("unknown_field", fields=missing)
     if len(occurrences) != 1:
         raise GateError(GATE_RECURRING)
-    return {
-        "service_appointment": {
-            "customer_id": _int(payload.get("customer_id"), "customer_id", positive=True),
-            "service_location_id": _int(payload.get("service_location_id"), "service_location_id", positive=True),
-            "repeat_type": "none",
-            "repeat_period": period,
-            "line_items_attributes": [_line_item(item) for item in items],
-            "appointment_occurrences_attributes": [_occurrence(occurrences[0])],
-        }
+    appointment: dict[str, Any] = {
+        "customer_id": _int(payload.get("customer_id"), "customer_id", positive=True),
+        "service_location_id": _int(payload.get("service_location_id"), "service_location_id", positive=True),
+        "repeat_type": "none",
+        "appointment_occurrences_attributes": [_occurrence(occurrences[0])],
     }
+    if period is not None:
+        appointment["repeat_period"] = period
+    if isinstance(items, list):
+        appointment["line_items_attributes"] = [_line_item(item) for item in items]
+    body: dict[str, Any] = {"service_appointment": appointment}
+    if "template_id" in payload:
+        body["template_id"] = _int(payload.get("template_id"), "template_id", positive=True)
+    return body
+
+
+def _occurrence_fields(item: dict[str, Any]) -> None:
+    rejected = sorted(key for key in REJECTED_OCCURRENCE_FIELDS if key in item)
+    extra = sorted(str(key) for key in item if key not in OCCURRENCE_FIELDS and key not in REJECTED_OCCURRENCE_FIELDS)
+    if rejected or extra:
+        raise UnknownFieldError(sorted(set(rejected + extra)))

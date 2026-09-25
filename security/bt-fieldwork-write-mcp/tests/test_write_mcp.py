@@ -294,7 +294,6 @@ class WriteMcpTests(unittest.TestCase):
             "service_location_id": 77,
             "repeat_type": "none",
             "repeat_period": 0,
-            "line_items": [{"name": "Service", "type": "service", "quantity": 1, "price": 99, "payable_id": 5, "payable_type": "Service"}],
             "occurrences": [{"service_route_ids": [1], "starts_at": "2026-10-01"}],
         }
         payload.update(overrides)
@@ -344,13 +343,13 @@ class WriteMcpTests(unittest.TestCase):
             self._work_order_payload(line_items=[{"name": "Trip", "type": "fee", "quantity": 1, "price": 15}]),
             IDENTITY,
         )
-        self.assertTrue(fee["ok"], fee)
-        self.assertNotIn("payable_id", fee["after"]["documented_request"]["service_appointment"]["line_items_attributes"][0])
+        self.assertEqual(fee["gate"], "catalog_disagreement")
         self.assertFalse(any(call["method"] == "POST" for call in self.h.transport.calls))
         self.h.transport.customers["41"]["customer_status"] = "Lead"
         lead_order = self.h.service.propose(OP_CREATE_WORK_ORDER, self._work_order_payload(), IDENTITY)
         self.assertEqual(lead_order["gate"], GATE_LEAD_STATUS)
         self.h.transport.customers["41"]["customer_status"] = "Active"
+        self.h.transport.users = [{"id": 10, "first_name": "Sam", "last_name": "Lee", "service_route_id": 1, "service_route_name": "North", "is_technician": True, "branches": []}]
         proposed = self.h.service.propose(OP_CREATE_WORK_ORDER, self._work_order_payload(), IDENTITY)
         self.assertTrue(proposed["ok"], proposed)
         self.assertTrue(proposed["starts_at_datetime_format_unverified"])
@@ -361,11 +360,17 @@ class WriteMcpTests(unittest.TestCase):
         self.assertEqual(request["appointment_occurrences_attributes"][0]["starts_at"], "2026-10-01")
         self.assertNotIn("use_time_window", request["appointment_occurrences_attributes"][0])
         self.assertEqual(request["line_items_attributes"][0]["payable_type"], "Service")
+        self.assertEqual(request["line_items_attributes"][0]["price"], proposed["after"]["service_pricing"]["price"])
+        self.assertIsNone(proposed["after"]["route_staff"][0]["assignee"])
+        self.assertFalse(proposed["promised_window_enforced"])
+        self.assertFalse(proposed["live_tested"])
         token = self.h.approve(proposed["proposal_id"])
         executed = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=token)
         self.assertTrue(executed["ok"], executed)
         self.assertEqual(executed["readback"]["response_schema"], "fake_test_double_not_live_schema")
         self.assertFalse(executed["readback"]["response_schema_verified"])
+        self.assertNotEqual(executed["readback"]["occurrence_id"], executed["readback"]["service_appointment_id"])
+        self.assertFalse(executed["live_tested"])
         posts = [call for call in self.h.transport.calls if call["method"] == "POST"]
         self.assertEqual(len(posts), 1)
         self.assertEqual(posts[0]["path"], "/work_orders")
@@ -402,7 +407,8 @@ class WriteMcpTests(unittest.TestCase):
             },
             IDENTITY,
         )
-        self.assertEqual(result["gate"], GATE_ARRIVAL_WINDOW)
+        self.assertEqual(result["gate"], GATE_UNKNOWN_FIELD)
+        self.assertEqual(result["fields"], ["use_time_window"])
         self.assertNotIn("proposal_id", result)
         self.assertFalse(any(call["method"] == "POST" for call in self.h.transport.calls))
 
@@ -429,7 +435,7 @@ class WriteMcpTests(unittest.TestCase):
         self.assertTrue(executed["ok"], executed)
         self.assertEqual(executed["readback"]["response_schema"], "fake_test_double_not_live_schema")
         posts = [call for call in self.h.transport.calls if call["method"] == "POST"]
-        self.assertEqual(posts, [{"method": "POST", "path": "/customers", "body": proposed["after"]["documented_request"], "query": None}])
+        self.assertEqual(posts, [{"method": "POST", "path": "/customers", "body": {"customer": proposed["after"]["documented_request"]["customer"]}, "query": None}])
         commercial = self.h.service.propose(OP_CREATE_CUSTOMER, {"customer_type": "Commercial", "service_locations": [{"name": "Shop", "same_as_billing_address": False}]}, IDENTITY)
         self.assertEqual(commercial["gate"], GATE_UNKNOWN_FIELD)
         self.assertEqual(commercial["fields"], ["name"])
@@ -452,9 +458,7 @@ class WriteMcpTests(unittest.TestCase):
         )
         self.assertEqual(first_only["gate"], GATE_UNKNOWN_FIELD)
         self.assertEqual(first_only["fields"], ["last_name"])
-        with self.assertRaises(GateError) as caught:
-            _assert_typed_path("POST", "/customers/41/service_locations")
-        self.assertEqual(caught.exception.gate, "unknown_operation")
+        self.assertIsNone(_assert_typed_path("POST", "/customers/41/service_locations"))
 
     def test_location_notes_success_path_offline(self) -> None:
         self.h.close()
@@ -508,6 +512,10 @@ class WriteMcpTests(unittest.TestCase):
         self.assertTrue(gates["customer_create"])
         self.assertTrue(gates["operations"]["create_work_order"]["propose"])
         self.assertTrue(gates["operations"]["create_customer"]["propose"])
+        self.assertTrue(gates["creation_schema_ready"])
+        self.assertFalse(gates["creation_live_tested"])
+        self.assertTrue(gates["operations"]["create_work_order"]["schema_ready"])
+        self.assertFalse(gates["operations"]["create_work_order"]["live_tested"])
         self.assertFalse(gates["operations"]["create_work_order"]["response_schema_verified"])
         self.assertTrue(gates["operations"]["create_work_order"]["starts_at_datetime_format_unverified"])
         self.assertFalse(gates["create_response_schema_verified"])
