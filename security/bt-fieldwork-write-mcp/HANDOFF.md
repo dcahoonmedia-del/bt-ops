@@ -30,7 +30,8 @@ This checkout is local only. Do not push. Retrieve the review archive from the b
 - GET auth is `api_key` query parameter. Do not log URLs or HTTP exception strings.
 - Identity mismatch, unknown fields, stale/expired/replayed approvals, concurrent duplicates, crash/ambiguous no-retry, failed readback, rejected OAuth.
 - Location notes and occurrence instructions/private_notes execute only when the API role is not readonly. Create-order execute stays `work_order_schema_unverified`. Arrival-window writes stay closed.
-- `list_schedule` / `list_work_orders` send the documented query, then keep a row only when its date, status, and `service_route_ids` match locally. `server_side_filtering` is false. A full page sets `truncated` and `next_page`. `list_service_routes` does not parse the body; that shape is still under investigation.
+- `list_schedule` / `list_work_orders` send the documented query, then keep a row only when its date, status, and `service_route_ids` match locally. `server_side_filtering` is false. A full page sets `truncated` and `next_page`. `GET /service_routes` HTTP 200 `[]` is an empty directory, not a schema error and not proof of no staff. Route id and name come from work-order `service_routes`. There is no `list_users` tool.
+- Auth0 Allow Offline Access is operator-saved. The bridge requests `offline_access` upstream and does not require it on the access token. Reuse the existing storage path, Fernet key, and JWT signing key. One new authorization is needed for a refresh token.
 - No customer create, Lead-status write, messaging, or HTTP passthrough tools.
 - Secret value never appears in repr, audit, or tool results.
 - Do not call live Fieldwork. Do not treat this package as live-ready.

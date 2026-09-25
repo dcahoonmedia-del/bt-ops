@@ -47,6 +47,20 @@ FW_WRITE_OPERATOR_KEY=   # independent HMAC key; not the Fieldwork secret
 - Attach the write MCP to the existing hosted read-only Fieldwork MCP URL
 - Restart or edit `bt-intake-receiver.service`
 
+## Auth0 offline access (reuse the existing store)
+
+Codex saved Allow Offline Access on the Auth0 API. Set `FW_WRITE_AUTH0_OFFLINE_ACCESS=1`. The bridge adds `offline_access` to the upstream authorize request and does not require that scope on the access token, so sessions issued before the upgrade keep working. A refresh token appears only after one new authorization.
+
+Keep the current values. Do not rotate them for this change:
+
+```
+FW_WRITE_AUTH0_STORAGE_PATH=/var/lib/bt-fieldwork-write-mcp/auth0
+FW_WRITE_AUTH0_STORAGE_KEY=<existing Fernet key>
+FW_WRITE_AUTH0_JWT_SIGNING_KEY=<existing signing key>
+```
+
+`report_gates` shows whether those three are configured, `offline_access_requested`, and `offline_access_required_on_access_token: false`. This process does not observe the Auth0 dashboard.
+
 ## Identity and hosting (not applied)
 
 The existing VM has only the receiver service account. A second Unix user is not cloud isolation. Do not grant that receiver identity the Fieldwork secret. Hosting and the public domain are not selected. Google social login in the local Auth0 proof used Auth0 development keys; production social credentials are a deployment gate. The Auth0 bridge is optional, off by default, and this checkout does not change Auth0, IAM, or cloud settings.

@@ -179,3 +179,5 @@ class Auth0BridgeTests(unittest.TestCase):
         self.assertEqual(provider._allowed_client_redirect_uris, ["https://chatgpt.com/connector/oauth/callback"])
         self.assertEqual(str(provider._token_validator.audience), "https://write.example.test/mcp")
         self.assertNotIn("bridge-client-secret", repr(provider))
+        self.assertIn("offline_access", str(provider._extra_authorize_params.get("scope") or "").split())
+        self.assertNotIn("offline_access", list(provider.required_scopes or []))

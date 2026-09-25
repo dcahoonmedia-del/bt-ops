@@ -51,7 +51,7 @@ class Settings:
     auth0_storage_key: str = ""
     auth0_storage_path: str = ""
     auth0_subject_map: tuple[str, ...] = ()
-    auth0_offline_access: bool = False
+    auth0_offline_access: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -82,7 +82,7 @@ class Settings:
             auth0_storage_key=os.environ.get("FW_WRITE_AUTH0_STORAGE_KEY", "").strip(),
             auth0_storage_path=os.environ.get("FW_WRITE_AUTH0_STORAGE_PATH", "").strip(),
             auth0_subject_map=_csv("FW_WRITE_AUTH0_SUBJECT_MAP"),
-            auth0_offline_access=_flag("FW_WRITE_AUTH0_OFFLINE_ACCESS", False),
+            auth0_offline_access=_flag("FW_WRITE_AUTH0_OFFLINE_ACCESS", True),
         )
 
     def oauth_ready(self) -> bool:

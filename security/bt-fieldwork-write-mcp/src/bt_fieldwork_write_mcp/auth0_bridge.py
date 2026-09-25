@@ -259,12 +259,21 @@ def build_auth0_provider(settings: Settings, fieldwork_key: str = "") -> Any:
         audience=settings.auth0_audience,
             base_url=settings.auth0_base_url,
             resource_base_url=settings.auth0_base_url,
-            required_scopes=["openid", "email", *(["offline_access"] if settings.auth0_offline_access else [])],
+            required_scopes=["openid", "email"],
         allowed_client_redirect_uris=list(settings.auth0_allowed_callbacks),
         client_storage=encrypted_store(settings),
         jwt_signing_key=settings.auth0_jwt_signing_key,
         require_authorization_consent=True,
     )
+    if settings.auth0_offline_access:
+        extra = dict(getattr(provider, "_extra_authorize_params", {}) or {})
+        scopes = [part for part in str(extra.get("scope") or "openid email").split() if part]
+        if "offline_access" not in scopes:
+            scopes.append("offline_access")
+        extra["scope"] = " ".join(scopes)
+        provider._extra_authorize_params = extra
+    if "offline_access" in list(getattr(provider, "required_scopes", []) or []):
+        raise ValueError("auth0_bridge_blocked:offline_access_required_on_access_token")
     if getattr(provider, "_forward_pkce", None) is not True:
         raise ValueError("auth0_bridge_blocked:pkce")
     if getattr(provider, "_require_authorization_consent", None) is not True:

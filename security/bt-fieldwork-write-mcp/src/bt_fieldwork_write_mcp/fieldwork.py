@@ -336,6 +336,7 @@ class FakeTransport:
         self.calls: list[dict[str, Any]] = []
         self.write_mode: str = "ok"  # ok | ambiguous | http_500 | drop
         self.readback_notes: str | None = None
+        self.skip_work_order_persist: bool = False
 
     def add_customer(self, customer: dict[str, Any], location: dict[str, Any]) -> None:
         cid = str(customer["id"])
@@ -363,7 +364,7 @@ class FakeTransport:
         if method == "GET" and path == "/customers/search":
             return 200, list(self.customers.values())
         if method == "GET" and path == "/service_routes":
-            return 200, getattr(self, "service_routes", [])
+            return 200, []
         if method == "GET" and _CUSTOMER.match(path):
             cid = path.rsplit("/", 1)[-1]
             customer = self.customers.get(cid)
@@ -403,7 +404,11 @@ class FakeTransport:
             return 200, {"service_location": location}
         if method == "GET" and (_WORK_ORDER.match(path) or _WORK_ORDER_PLAIN.match(path) or _WORK_ORDER_SEARCH.match(path)):
             if "/search" in path or path == "/work_orders":
-                return 200, list(self.work_orders.values())
+                rows = list(self.work_orders.values())
+                page = int((query or {}).get("page") or 1)
+                per_page = int((query or {}).get("per_page") or len(rows) or 1)
+                start = max(page - 1, 0) * per_page
+                return 200, rows[start : start + per_page]
             wid = path.split("/")[2]
             wo = self.work_orders.get(str(wid))
             if wo is None:
@@ -427,7 +432,8 @@ class FakeTransport:
                 match["instructions"] = occ["instructions"]
             if "private_notes" in occ:
                 match["private_notes"] = occ["private_notes"]
-            self.work_orders[match_key] = match
+            if not self.skip_work_order_persist:
+                self.work_orders[match_key] = match
             return 200, {"appointment_occurrence": match}
         if method == "POST" and path.startswith("/work_orders"):
             return 403, {"error": "schema_unverified"}
@@ -523,12 +529,21 @@ class TypedFieldworkClient:
         return self._pages("/customers/search", {"query": query})
 
     def list_service_routes(self) -> dict[str, Any]:
-        return {"ok": False, "gate": "service_routes_shape_under_investigation", "called_fieldwork": False}
+        status, body = self.transport.request("GET", "/service_routes", query={"page": 1, "per_page": 3})
+        if status != 200 or not isinstance(body, list):
+            raise GateError("read_rejected", status=status, path="/service_routes")
+        return {
+            "ok": True,
+            "items": [item for item in body if isinstance(item, dict)],
+            "complete": True,
+            "empty_directory_is_not_no_staff": True,
+            "route_names_on": "work_order.service_routes",
+        }
 
     def list_work_orders(self, **filters: Any) -> dict[str, Any]:
         query = _schedule_query(filters, include_route_status=True)
-        per_page = 100
-        max_pages = 20
+        per_page = int(filters.pop("per_page", 100) or 100)
+        max_pages = int(filters.pop("max_pages", 20) or 20)
         matched: list[dict[str, Any]] = []
         page = 1
         pages_read = 0

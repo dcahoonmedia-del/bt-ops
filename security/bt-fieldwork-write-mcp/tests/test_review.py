@@ -171,6 +171,14 @@ class ReviewTests(unittest.TestCase):
         self.assertIsNone(found["next_page"])
         self.assertFalse(found["truncated"])
 
+    def test_empty_service_routes_is_not_a_schema_error(self) -> None:
+        from bt_fieldwork_write_mcp.fieldwork import FakeTransport, TypedFieldworkClient
+
+        found = TypedFieldworkClient(FakeTransport()).list_service_routes()
+        self.assertEqual(found["items"], [])
+        self.assertTrue(found["empty_directory_is_not_no_staff"])
+        self.assertEqual(found["route_names_on"], "work_order.service_routes")
+
     def test_arrival_display_key(self) -> None:
         ids = occurrence_ids({"appointment_occurrence": {"id": 1, "service_appointment_id": 2, "arrival_time_window_str": "1-5"}})
         self.assertEqual(ids["arrival_time_window_str"], "1-5")

@@ -377,6 +377,7 @@ class WriteMcpTests(unittest.TestCase):
         verifier = JwtTokenVerifier(self.h.settings)
         server = build_mcp(self.h.service, self.h.settings, verifier)
         names = {tool.name for tool in server._tool_manager.list_tools()}
-        self.assertTrue({"report_gates", "propose_write", "execute_approved_write", "inspect_proposal", "search_customers", "get_customer", "get_service_location", "get_work_order", "list_work_orders", "list_schedule", "list_service_routes", "list_users"} <= names)
+        self.assertTrue({"report_gates", "propose_write", "execute_approved_write", "inspect_proposal", "search_customers", "get_customer", "get_service_location", "get_work_order", "list_work_orders", "list_schedule", "list_service_routes"} <= names)
+        self.assertNotIn("list_users", names)
         for forbidden in ("create_customer", "on_our_way", "http", "passthrough", "send_message"):
             self.assertNotIn(forbidden, names)

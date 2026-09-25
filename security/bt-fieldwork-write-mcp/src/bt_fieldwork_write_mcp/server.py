@@ -227,14 +227,6 @@ def _register_reads(server: Any, service: WriteService, identity_getter: Any = N
         except Exception as exc:
             return {"ok": False, "gate": getattr(exc, "gate", "read_rejected")}
 
-    @server.tool(name="list_users", description="No users endpoint is documented in this repository. Does not call Fieldwork.")
-    async def list_users() -> dict[str, Any]:
-        denied = _guard()
-        if denied:
-            return denied
-        return {"ok": False, "gate": "users_endpoint_not_in_repository_allowlist", "called_fieldwork": False}
-
-
 def report_gates_body(service: WriteService, settings: Settings) -> dict[str, Any]:
     return {
         "ok": True,
@@ -246,7 +238,14 @@ def report_gates_body(service: WriteService, settings: Settings) -> dict[str, An
         "active_auth_configured": (settings.auth_mode == "auth0_bridge" and not bridge_blockers(settings)) or (settings.auth_mode != "auth0_bridge" and settings.oauth_ready()),
         "live_auth0_login_observed_by_this_process": False,
         "offline_access_requested": settings.auth0_offline_access,
-        "offline_access_live_enabled": False,
+        "offline_access_required_on_access_token": False,
+        "offline_access_allow_saved_by_operator": True,
+        "offline_access_observed_by_this_process": False,
+        "existing_downstream_sessions_remain_usable": True,
+        "refresh_token_needs_one_new_authorization": True,
+        "reuse_storage_path_configured": bool(settings.auth0_storage_path),
+        "reuse_storage_key_configured": bool(settings.auth0_storage_key),
+        "reuse_signing_key_configured": bool(settings.auth0_jwt_signing_key),
         "live_patch_tested": False,
         "check_connection_is_not_auth_proof": True,
         "gates": service.gates(),

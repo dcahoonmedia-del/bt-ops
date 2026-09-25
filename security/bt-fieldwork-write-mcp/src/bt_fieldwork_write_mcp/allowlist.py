@@ -130,7 +130,7 @@ def current_gates(
             "update_work_order_notes": {"propose": True, "execute_blocked_by": [GATE_READONLY] if readonly else []},
             "create_work_order": {"propose": True, "execute_blocked_by": [GATE_SCHEMA_UNVERIFIED]},
             "schedule_or_arrival_window_write": {"propose": False, "execute_blocked_by": [GATE_ARRIVAL_WINDOW]},
-            "list_users": {"read": False, "reason": "users_endpoint_not_in_repository_allowlist"},
+            "list_users": {"read": False, "reason": "omitted_no_documented_users_endpoint"},
             "list_schedule_filtered": {"read": True, "server_side_filtering": False, "local_filter": ["date", "status", "service_route_ids"], "query_sent": ["start_date", "end_date", "current_technician", "sort_direction", "work_pool", "filter[status]", "filter[service_routes_ids][]"]},
         },
         "rollout_safeguard": "readonly_api_role" if readonly else "writer",
