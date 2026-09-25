@@ -10,7 +10,7 @@ Distinct service addresses are not nested on that POST. After the returned locat
 
 `POST /customers/{id}/contacts` runs only when the caller supplies `first_name`, `last_name`, and `email`. The proposal stores that contact. Portal, reminder, and autopay fields are not sent.
 
-Duplicate search runs before propose and again before the customer POST. Name and phone are normalized. Candidates include email, billing address, and locations. Incomplete, failed, or repeated pages use `duplicate_search_incomplete`. Matches require `confirmed_new` or `existing_customer_id` (`duplicate_unresolved`).
+Duplicate search runs before propose and again before the customer POST. Every normalized name is searched, not one arbitrary name. Candidates include email, billing address, and locations. Incomplete, failed, or repeated pages use `duplicate_search_incomplete`. Matches require `confirmed_new` or `existing_customer_id` (`duplicate_unresolved`). A match that appears after approval is `new_match_requires_approval` and is not covered by the earlier `confirmed_new` flag.
 
 ## Journal
 
