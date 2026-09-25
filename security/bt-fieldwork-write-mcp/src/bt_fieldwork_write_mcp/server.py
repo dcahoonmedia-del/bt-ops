@@ -9,6 +9,7 @@ from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import MCPServer
 
 from .allowlist import FORBIDDEN_OPS, GATE_AUTH, current_gates
+from .auth0_bridge import bridge_blockers
 from .config import Settings
 from .oauth_rs import JwtTokenVerifier, identity_from_claims
 from .redact import redact
@@ -94,6 +95,7 @@ def build_mcp(service: WriteService, settings: Settings, verifier: JwtTokenVerif
             return {"ok": False, "gate": GATE_AUTH, "gates": service.gates()}
         return redact(service.inspect(proposal_id, identity))
 
+    _register_reads(server, service)
     return server
 
 
@@ -138,7 +140,99 @@ def build_bridge_server(settings: Settings, service: WriteService, fieldwork_key
             return {"ok": False, "gate": GATE_AUTH, "gates": service.gates()}
         return redact(service.inspect(proposal_id, identity))
 
+    _register_reads(mcp, service, identity_getter=_identity)
     return mcp
+
+
+def _register_reads(server: Any, service: WriteService, identity_getter: Any = None) -> None:
+    from .fieldwork import work_order_view
+
+    def _who() -> dict[str, str] | None:
+        if identity_getter is not None:
+            return identity_getter()
+        return request_identity()
+
+    def _guard() -> dict[str, Any] | None:
+        if _who() is None:
+            return {"ok": False, "gate": GATE_AUTH}
+        return None
+
+    @server.tool(name="search_customers", description="Search customers by the documented query parameter. Pages until a short page or reports truncation.")
+    async def search_customers(query: str) -> dict[str, Any]:
+        denied = _guard()
+        if denied:
+            return denied
+        try:
+            return redact(service.client.search_customers(query))
+        except Exception as exc:
+            return {"ok": False, "gate": getattr(exc, "gate", "read_rejected")}
+
+    @server.tool(name="get_customer", description="GET one customer by id. Flat id-bearing body only.")
+    async def get_customer(customer_id: str) -> dict[str, Any]:
+        denied = _guard()
+        if denied:
+            return denied
+        try:
+            return redact(service.client.get_customer(customer_id))
+        except Exception as exc:
+            return {"ok": False, "gate": getattr(exc, "gate", "read_rejected")}
+
+    @server.tool(name="get_service_location", description="GET one service location wrapper for a customer.")
+    async def get_service_location(customer_id: str, location_id: str) -> dict[str, Any]:
+        denied = _guard()
+        if denied:
+            return denied
+        try:
+            return redact(service.client.get_location(customer_id, location_id))
+        except Exception as exc:
+            return {"ok": False, "gate": getattr(exc, "gate", "read_rejected")}
+
+    @server.tool(name="get_work_order", description="GET one work order. Occurrence id and service-appointment id stay distinct.")
+    async def get_work_order(work_order_id: str) -> dict[str, Any]:
+        denied = _guard()
+        if denied:
+            return denied
+        try:
+            return redact(work_order_view(service.client.get_work_order(work_order_id)))
+        except Exception as exc:
+            return {"ok": False, "gate": getattr(exc, "gate", "read_rejected")}
+
+    @server.tool(name="list_work_orders", description="GET /work_orders with documented date, route, technician, and pool filters. Pages until short or reports truncation.")
+    async def list_work_orders(start_date: str = "", end_date: str = "", current_technician: bool = False, sort_direction: str = "asc", work_pool: bool = False, status: str = "", service_route_ids: list[str] | None = None) -> dict[str, Any]:
+        denied = _guard()
+        if denied:
+            return denied
+        try:
+            return redact(service.client.list_work_orders(start_date=start_date, end_date=end_date, current_technician=current_technician, sort_direction=sort_direction, work_pool=work_pool, status=status, service_route_ids=service_route_ids or []))
+        except Exception as exc:
+            return {"ok": False, "gate": getattr(exc, "gate", "read_rejected")}
+
+    @server.tool(name="list_schedule", description="Same documented GET /work_orders filters as list_work_orders. Date bounds are sent, not dropped.")
+    async def list_schedule(start_date: str, end_date: str, current_technician: bool = False, sort_direction: str = "asc", work_pool: bool = False, status: str = "", service_route_ids: list[str] | None = None) -> dict[str, Any]:
+        denied = _guard()
+        if denied:
+            return denied
+        try:
+            return redact(service.client.list_work_orders(start_date=start_date, end_date=end_date, current_technician=current_technician, sort_direction=sort_direction, work_pool=work_pool, status=status, service_route_ids=service_route_ids or []))
+        except Exception as exc:
+            return {"ok": False, "gate": getattr(exc, "gate", "read_rejected")}
+
+    @server.tool(name="list_service_routes", description="GET /service_routes with page and per_page only.")
+    async def list_service_routes() -> dict[str, Any]:
+        denied = _guard()
+        if denied:
+            return denied
+        try:
+            return redact(service.client.list_service_routes())
+        except Exception as exc:
+            return {"ok": False, "gate": getattr(exc, "gate", "read_rejected")}
+
+    @server.tool(name="list_users", description="No users endpoint is documented in this repository. Does not call Fieldwork.")
+    async def list_users() -> dict[str, Any]:
+        denied = _guard()
+        if denied:
+            return denied
+        return {"ok": False, "gate": "users_endpoint_not_in_repository_allowlist", "called_fieldwork": False}
 
 
 def report_gates_body(service: WriteService, settings: Settings) -> dict[str, Any]:
@@ -147,9 +241,12 @@ def report_gates_body(service: WriteService, settings: Settings) -> dict[str, An
         "live_ready": False,
         "fieldwork_api_auth_verified": False,
         "credential_ready": service.gates().get("credential_ready"),
-        "oauth_ready": settings.oauth_ready(),
-        "auth0_bridge": settings.auth_mode == "auth0_bridge",
-        "live_auth0_verified": False,
+        "direct_jwt_configured": settings.oauth_ready(),
+        "auth0_bridge_configured": settings.auth_mode == "auth0_bridge" and not bridge_blockers(settings),
+        "active_auth_configured": (settings.auth_mode == "auth0_bridge" and not bridge_blockers(settings)) or (settings.auth_mode != "auth0_bridge" and settings.oauth_ready()),
+        "live_auth0_login_observed_by_this_process": False,
+        "offline_access_requested": settings.auth0_offline_access,
+        "offline_access_live_enabled": False,
         "live_patch_tested": False,
         "check_connection_is_not_auth_proof": True,
         "gates": service.gates(),

@@ -240,7 +240,7 @@ class BridgeAsgiTests(unittest.TestCase):
             report = self._call(client, access, "report_gates")
             self.assertIn('"ok":true', report.replace(" ", ""))
             self.assertIn('"writes_enabled":false', report.replace(" ", ""))
-            self.assertIn('"live_auth0_verified":false', report.replace(" ", ""))
+            self.assertIn('"live_auth0_login_observed_by_this_process":false', report.replace(" ", ""))
             proposed = self._call(client, access, "propose_write", {"operation": "update_service_location_notes", "payload": {"customer_id": 41, "location_id": 77, "notes": "standing note"}})
             self.assertIn("proposal_id", proposed)
             self.assertNotIn('"ok":false', proposed.replace(" ", "")[:80])

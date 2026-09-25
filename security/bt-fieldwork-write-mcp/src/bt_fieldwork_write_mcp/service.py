@@ -132,14 +132,25 @@ class WriteService:
         return self._persist_proposal(OP_LOCATION_NOTES, payload, identity, f"location:{customer_id}:{location_id}", before, after)
 
     def _propose_work_order_notes(self, payload: dict[str, Any], identity: dict[str, str]) -> dict[str, Any]:
-        del identity
         assert_only(payload, WORK_ORDER_NOTE_FIELDS, label="work_order")
-        return self._fail(
-            GATE_LIVE_PATCH_UNTESTED,
-            supported=False,
-            reason="typed_read_and_identity_not_validated",
-            proposal=False,
-        )
+        work_order_id = str(payload.get("work_order_id") or "")
+        appointment_id = str(payload.get("service_appointment_id") or "")
+        if not work_order_id.isdigit() or not appointment_id.isdigit():
+            return self._fail("identity_mismatch")
+        row = self.client.get_work_order(work_order_id)
+        if str(row.get("id")) != work_order_id or str(row.get("service_appointment_id")) != appointment_id:
+            return self._fail("identity_mismatch")
+        if "instructions" not in row or "private_notes" not in row:
+            return self._fail("typed_read_incomplete", proposal=False, reason="instructions_or_private_notes_absent")
+        before = {"work_order_id": row.get("id"), "service_appointment_id": row.get("service_appointment_id"), "instructions": row.get("instructions"), "private_notes": row.get("private_notes")}
+        after = dict(before)
+        if "instructions" in payload:
+            after["instructions"] = payload["instructions"]
+        if "private_notes" in payload:
+            after["private_notes"] = payload["private_notes"]
+        result = self._persist_proposal(OP_WORK_ORDER_NOTES, payload, identity, f"work_order:{work_order_id}", before, after)
+        result["execute_blocked_until_role"] = "writer"
+        return result
 
     def _propose_create(self, payload: dict[str, Any], identity: dict[str, str]) -> dict[str, Any]:
         assert_only(payload, CREATE_FIELDS, label="create")
@@ -243,8 +254,6 @@ class WriteService:
         if "ok" in ident and ident.get("ok") is False:
             return ident
         identity = ident  # type: ignore[assignment]
-        if not self.settings.writes_enabled:
-            return self._fail(GATE_WRITES_DISABLED, proposal_id=proposal_id)
         if str(self.settings.api_role or "readonly").lower() == "readonly":
             return self._fail(GATE_READONLY, proposal_id=proposal_id)
         proposal = self.store.get_proposal(proposal_id)
@@ -267,11 +276,12 @@ class WriteService:
             existing = self.store.get_approval(token_fingerprint(operator_approval))
             if existing and existing["used_at"]:
                 return self._fail(GATE_REPLAY, proposal_id=proposal_id)
-        if proposal["operation"] == OP_WORK_ORDER_NOTES:
-            return self._fail(GATE_LIVE_PATCH_UNTESTED, proposal_id=proposal_id)
         if proposal["operation"] == OP_CREATE_WORK_ORDER:
             return self._fail(GATE_SCHEMA_UNVERIFIED, proposal_id=proposal_id)
-        stale = self._location_stale(proposal) if proposal["operation"] == OP_LOCATION_NOTES else None
+        if proposal["operation"] == OP_WORK_ORDER_NOTES:
+            stale = self._work_order_stale(proposal)
+        else:
+            stale = self._location_stale(proposal) if proposal["operation"] == OP_LOCATION_NOTES else None
         if stale is not None:
             return stale
         if not self._accept_operator(proposal, operator_approval, clock):
@@ -280,7 +290,7 @@ class WriteService:
         if proposal["operation"] == OP_LOCATION_NOTES:
             return self._execute_location_notes(proposal, clock)
         if proposal["operation"] == OP_WORK_ORDER_NOTES:
-            return self._fail(GATE_LIVE_PATCH_UNTESTED, proposal_id=proposal_id)
+            return self._execute_work_order_notes(proposal, clock)
         if proposal["operation"] == OP_CREATE_WORK_ORDER:
             return self._fail(GATE_SCHEMA_UNVERIFIED, proposal_id=proposal_id)
         return self._fail(GATE_UNKNOWN_OP, proposal_id=proposal_id)
@@ -377,6 +387,61 @@ class WriteService:
             "readback": readback,
             "gates": self.gates(),
         }
+
+    def _work_order_stale(self, proposal: dict[str, Any]) -> dict[str, Any] | None:
+        before = proposal["before"]
+        try:
+            row = self.client.get_work_order(str(before["work_order_id"]))
+        except GateError as exc:
+            return self._fail(exc.gate, proposal_id=proposal["proposal_id"], **exc.detail)
+        current = {
+            "work_order_id": row.get("id"),
+            "service_appointment_id": row.get("service_appointment_id"),
+            "instructions": row.get("instructions"),
+            "private_notes": row.get("private_notes"),
+        }
+        if snapshot_hash(current) != snapshot_hash(before):
+            self.store.release_open_guard(proposal["subject_key"], proposal["proposal_id"])
+            self.store.set_status(proposal["proposal_id"], "stale")
+            return self._fail(GATE_STALE, proposal_id=proposal["proposal_id"])
+        return None
+
+    def _execute_work_order_notes(self, proposal: dict[str, Any], clock: datetime) -> dict[str, Any]:
+        try:
+            attempt_id = self.store.begin_attempt(proposal["proposal_id"], proposal["subject_key"], _iso(clock))
+        except GateError as exc:
+            return self._fail(exc.gate, proposal_id=proposal["proposal_id"], **exc.detail)
+        stale = self._work_order_stale(proposal)
+        if stale is not None:
+            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "failed_no_write")
+            return stale
+        try:
+            self.client.patch_work_order_notes(proposal["before"], proposal["after"])
+        except AmbiguousWriteError:
+            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
+            return self._fail("ambiguous_remote_write_no_retry", proposal_id=proposal["proposal_id"])
+        except GateError as exc:
+            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "failed_no_write")
+            return self._fail(exc.gate, proposal_id=proposal["proposal_id"], **exc.detail)
+        except Exception:
+            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
+            return self._fail("ambiguous_remote_write_no_retry", proposal_id=proposal["proposal_id"])
+        try:
+            row = self.client.get_work_order(str(proposal["before"]["work_order_id"]))
+            readback = {
+                "work_order_id": row.get("id"),
+                "service_appointment_id": row.get("service_appointment_id"),
+                "instructions": row.get("instructions"),
+                "private_notes": row.get("private_notes"),
+            }
+        except Exception:
+            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
+            return self._fail(GATE_READBACK, proposal_id=proposal["proposal_id"])
+        if snapshot_hash(readback) != snapshot_hash(proposal["after"]):
+            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
+            return self._fail(GATE_READBACK, proposal_id=proposal["proposal_id"])
+        self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "success")
+        return {"ok": True, "proposal_id": proposal["proposal_id"], "operation": OP_WORK_ORDER_NOTES, "readback": readback, "gates": self.gates()}
 
     def inspect(self, proposal_id: str, identity: dict[str, str] | None) -> dict[str, Any]:
         ident = self._identity_or_reject(identity)

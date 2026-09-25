@@ -134,14 +134,42 @@ class ReviewTests(unittest.TestCase):
             "POST",
             "/work_orders?api_key=nope&evil=1",
             {"service_route_ids": [1, 2]},
-            query={"per_page": 1, "api_key": "override", "drop": "x"},
+            query={"per_page": 1, "api_key": "override", "drop": "x", "start_date": "2026-09-25", "end_date": "2026-09-25", "filter[service_routes_ids][]": ["7", "8"], "current_technician": True},
         )
+        posted = seen["body"]
         parsed = parse_qs(urlparse(seen["url"]).query)
         self.assertEqual(parsed["api_key"], ["hidden-key"])
         self.assertEqual(parsed["per_page"], ["1"])
+        self.assertEqual(parsed["start_date"], ["2026-09-25"])
         self.assertNotIn("evil", parsed)
         self.assertNotIn("drop", parsed)
-        self.assertEqual(seen["body"].decode().count("service_route_ids"), 2)
+        listed = transport.request("GET", "/work_orders", query={"start_date": "2026-09-25", "end_date": "2026-09-25", "filter[service_routes_ids][]": ["7", "8"], "current_technician": False, "sort_direction": "asc"})
+        del listed
+        listed_query = parse_qs(urlparse(seen["url"]).query)
+        self.assertEqual(listed_query["start_date"], ["2026-09-25"])
+        self.assertEqual(listed_query["end_date"], ["2026-09-25"])
+        self.assertEqual(listed_query["filter[service_routes_ids][]"], ["7", "8"])
+        self.assertEqual(listed_query["current_technician"], ["false"])
+        transport.request("GET", "/work_orders/search", query={"start_date": "2026-09-25", "query": "gate", "filter[status]": "scheduled", "filter[service_routes_ids][]": ["7"]})
+        search_query = parse_qs(urlparse(seen["url"]).query)
+        self.assertEqual(search_query["start_date"], ["2026-09-25"])
+        self.assertEqual(search_query["query"], ["gate"])
+        self.assertNotIn("filter[status]", search_query)
+        self.assertNotIn("filter[service_routes_ids][]", search_query)
+        self.assertEqual(posted.decode().count("service_route_ids"), 2)
+
+    def test_local_filter_drops_upstream_ignored_route(self) -> None:
+        from bt_fieldwork_write_mcp.fieldwork import FakeTransport, TypedFieldworkClient
+
+        transport = FakeTransport()
+        transport.work_orders["1"] = {"id": 1, "service_appointment_id": 9, "service_route_ids": [4550], "starts_at": "2026-09-25T08:00:00-04:00", "status": "scheduled"}
+        transport.work_orders["2"] = {"id": 2, "service_appointment_id": 10, "service_route_ids": [135779], "starts_at": "2026-09-25T09:00:00-04:00", "status": "scheduled"}
+        found = TypedFieldworkClient(transport).list_work_orders(start_date="2026-09-25", end_date="2026-09-25", service_route_ids=["135779"], status="scheduled")
+        self.assertEqual([item["work_order_id"] for item in found["items"]], [2])
+        self.assertFalse(found["server_side_filtering"])
+        self.assertTrue(found["complete"])
+        self.assertIsNone(found["next_page"])
+        self.assertFalse(found["truncated"])
 
     def test_arrival_display_key(self) -> None:
         ids = occurrence_ids({"appointment_occurrence": {"id": 1, "service_appointment_id": 2, "arrival_time_window_str": "1-5"}})

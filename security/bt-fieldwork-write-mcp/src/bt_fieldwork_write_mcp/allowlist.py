@@ -125,11 +125,14 @@ def current_gates(
         "lead_status_accounts": False,
         "messaging_tools": False,
         "generic_http": False,
-        "closed": [
-            GATE_LIVE_PATCH_UNTESTED,
-            GATE_SCHEMA_UNVERIFIED,
-            GATE_ARRIVAL_WINDOW,
-            *( [GATE_READONLY] if readonly else [] ),
-            *( [] if writes_enabled else [GATE_WRITES_DISABLED] ),
-        ],
+        "operations": {
+            "update_service_location_notes": {"propose": True, "execute_blocked_by": [GATE_READONLY] if readonly else []},
+            "update_work_order_notes": {"propose": True, "execute_blocked_by": [GATE_READONLY] if readonly else []},
+            "create_work_order": {"propose": True, "execute_blocked_by": [GATE_SCHEMA_UNVERIFIED]},
+            "schedule_or_arrival_window_write": {"propose": False, "execute_blocked_by": [GATE_ARRIVAL_WINDOW]},
+            "list_users": {"read": False, "reason": "users_endpoint_not_in_repository_allowlist"},
+            "list_schedule_filtered": {"read": True, "server_side_filtering": False, "local_filter": ["date", "status", "service_route_ids"], "query_sent": ["start_date", "end_date", "current_technician", "sort_direction", "work_pool", "filter[status]", "filter[service_routes_ids][]"]},
+        },
+        "rollout_safeguard": "readonly_api_role" if readonly else "writer",
+        "closed_contracts": [GATE_SCHEMA_UNVERIFIED, GATE_ARRIVAL_WINDOW],
     }

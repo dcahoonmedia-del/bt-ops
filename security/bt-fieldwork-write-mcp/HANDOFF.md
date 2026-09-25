@@ -29,7 +29,8 @@ This checkout is local only. Do not push. Retrieve the review archive from the b
 - Default writes disabled; readonly role blocks execute; `approved=true` is not an approval.
 - GET auth is `api_key` query parameter. Do not log URLs or HTTP exception strings.
 - Identity mismatch, unknown fields, stale/expired/replayed approvals, concurrent duplicates, crash/ambiguous no-retry, failed readback, rejected OAuth.
-- Work-order notes propose returns `live_patch_untested` with no before/after. Create-order execute stays `work_order_schema_unverified`.
+- Location notes and occurrence instructions/private_notes execute only when the API role is not readonly. Create-order execute stays `work_order_schema_unverified`. Arrival-window writes stay closed.
+- `list_schedule` / `list_work_orders` send the documented query, then keep a row only when its date, status, and `service_route_ids` match locally. `server_side_filtering` is false. A full page sets `truncated` and `next_page`. `list_service_routes` does not parse the body; that shape is still under investigation.
 - No customer create, Lead-status write, messaging, or HTTP passthrough tools.
 - Secret value never appears in repr, audit, or tool results.
 - Do not call live Fieldwork. Do not treat this package as live-ready.

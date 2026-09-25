@@ -119,7 +119,7 @@ class WriteMcpTests(unittest.TestCase):
         token = self.h.approve(proposed["proposal_id"])
         result = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=token, approved=True)
         self.assertFalse(result["ok"])
-        self.assertEqual(result["gate"], GATE_WRITES_DISABLED)
+        self.assertEqual(result["gate"], GATE_READONLY)
         self.assertFalse(result["gates"]["writes_enabled"])
         self.assertEqual(self.h.transport.calls[-1]["method"], "GET")
 
@@ -257,18 +257,27 @@ class WriteMcpTests(unittest.TestCase):
     def test_work_order_notes_fail_closed_unverified_mapping(self) -> None:
         self.h.close()
         self.h = Harness(writes_enabled=True, api_role="writer")
+        missing = self.h.service.propose(
+            OP_WORK_ORDER_NOTES,
+            {"work_order_id": "10", "service_appointment_id": "20", "instructions": "gate code"},
+            IDENTITY,
+        )
+        self.assertFalse(missing["ok"])
+        self.assertNotIn("before", missing)
+        self.h.transport.work_orders["10"] = {"id": 10, "service_appointment_id": 20, "instructions": "old", "private_notes": "secret"}
         proposed = self.h.service.propose(
             OP_WORK_ORDER_NOTES,
             {"work_order_id": "10", "service_appointment_id": "20", "instructions": "gate code"},
             IDENTITY,
         )
-        self.assertFalse(proposed["ok"])
-        self.assertEqual(proposed["gate"], GATE_LIVE_PATCH_UNTESTED)
-        self.assertFalse(proposed.get("proposal", True))
-        self.assertNotIn("before", proposed)
-        self.assertNotIn("after", proposed)
-        self.assertEqual(proposed.get("reason"), "typed_read_and_identity_not_validated")
-        self.assertFalse(any(call["method"] == "PATCH" and "work_orders" in call["path"] for call in self.h.transport.calls))
+        self.assertTrue(proposed["ok"], proposed)
+        self.assertEqual(proposed["before"]["instructions"], "old")
+        self.assertEqual(proposed["after"]["instructions"], "gate code")
+        token = self.h.approve(proposed["proposal_id"])
+        executed = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=token)
+        self.assertTrue(executed["ok"], executed)
+        self.assertEqual(executed["readback"]["instructions"], "gate code")
+        self.assertTrue(any(call["method"] == "PATCH" and call["path"] == "/work_orders/20" for call in self.h.transport.calls))
 
     def test_create_work_order_fail_closed_unverified_schema(self) -> None:
         self.h.close()
@@ -356,15 +365,18 @@ class WriteMcpTests(unittest.TestCase):
         self.assertFalse(gates["live_patch_tested"])
         self.assertFalse(gates["arrival_window_write_verified"])
         self.assertTrue(gates["check_connection_is_not_auth_proof"])
-        self.assertIn("writes_disabled", gates["closed"])
-        self.assertIn("readonly_api_role", gates["closed"])
-        self.assertIn("live_patch_untested", gates["closed"])
-        self.assertIn("arrival_window_unverified", gates["closed"])
+        self.assertEqual(gates["rollout_safeguard"], "readonly_api_role")
+        self.assertEqual(gates["operations"]["update_service_location_notes"]["execute_blocked_by"], ["readonly_api_role"])
+        self.assertEqual(gates["operations"]["update_work_order_notes"]["execute_blocked_by"], ["readonly_api_role"])
+        self.assertIn("work_order_schema_unverified", gates["closed_contracts"])
+        self.assertIn("arrival_window_unverified", gates["closed_contracts"])
+        self.assertNotIn("live_patch_untested", gates["closed_contracts"])
+        self.assertIn("arrival_window_unverified", gates["closed_contracts"])
 
     def test_mcp_server_has_no_forbidden_tools(self) -> None:
         verifier = JwtTokenVerifier(self.h.settings)
         server = build_mcp(self.h.service, self.h.settings, verifier)
         names = {tool.name for tool in server._tool_manager.list_tools()}
-        self.assertEqual(names, {"report_gates", "propose_write", "execute_approved_write", "inspect_proposal"})
+        self.assertTrue({"report_gates", "propose_write", "execute_approved_write", "inspect_proposal", "search_customers", "get_customer", "get_service_location", "get_work_order", "list_work_orders", "list_schedule", "list_service_routes", "list_users"} <= names)
         for forbidden in ("create_customer", "on_our_way", "http", "passthrough", "send_message"):
             self.assertNotIn(forbidden, names)

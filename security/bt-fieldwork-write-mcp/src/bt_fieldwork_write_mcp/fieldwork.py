@@ -68,7 +68,41 @@ def occurrence_ids(record: dict[str, Any]) -> dict[str, Any]:
         "arrival_time_window_start": row.get("arrival_time_window_start"),
         "arrival_time_window_end": row.get("arrival_time_window_end"),
         "arrival_time_window_str": row.get("arrival_time_window_str"),
+        "starts_at": row.get("starts_at"),
+        "finished_at": row.get("finished_at") or row.get("ends_at"),
+        "timezone": "America/New_York",
+        "technician_id": row.get("technician_id"),
+        "technician_id_means_unassigned": False,
+        "service_route_ids": row.get("service_route_ids") if isinstance(row.get("service_route_ids"), list) else [],
+        "service_routes": [
+            {"id": route.get("id"), "name": route.get("name")}
+            for route in row.get("service_routes") or []
+            if isinstance(route, dict)
+        ],
+        "assignment": "service_routes and service_route_ids are the route metadata. A null technician_id was observed on routed work and is not treated as proof that nobody is assigned.",
+        "starts_at_date": row.get("starts_at_date"),
+        "starts_at_time": row.get("starts_at_time"),
+        "ends_at": row.get("ends_at"),
+        "duration": row.get("duration"),
+        "status": row.get("status"),
+        "specific": row.get("specific"),
+        "locked": row.get("locked"),
+        "confirmed": row.get("confirmed"),
+        "instructions": row.get("instructions") if "instructions" in row else None,
+        "private_notes": row.get("private_notes") if "private_notes" in row else None,
     }
+
+
+def work_order_view(record: dict[str, Any]) -> dict[str, Any]:
+    ids = occurrence_ids(record)
+    ids["promised_arrival_window"] = {
+        "arrival_time_window": ids.get("arrival_time_window"),
+        "arrival_time_window_start": ids.get("arrival_time_window_start"),
+        "arrival_time_window_end": ids.get("arrival_time_window_end"),
+        "arrival_time_window_str": ids.get("arrival_time_window_str"),
+    }
+    ids["start_finish"] = {"starts_at": ids.get("starts_at"), "finished_at": ids.get("finished_at")}
+    return ids
 
 
 def location_snapshot(customer: dict[str, Any], location: dict[str, Any]) -> dict[str, Any]:
@@ -116,6 +150,55 @@ def _positive_id(value: Any) -> str | None:
     return text
 
 
+def _local_schedule_match(row: dict[str, Any], filters: dict[str, Any]) -> bool:
+    start = str(filters.get("start_date") or "")
+    end = str(filters.get("end_date") or "")
+    if start or end:
+        raw = str(row.get("starts_at_date") or row.get("starts_at") or "")
+        day = raw[:10]
+        if len(day) != 10 or (start and day < start) or (end and day > end):
+            return False
+    status = str(filters.get("status") or "")
+    if status and str(row.get("status") or "") != status:
+        return False
+    requested = {str(item) for item in (filters.get("service_route_ids") or [])}
+    if requested:
+        found = {str(item) for item in (row.get("service_route_ids") or [])}
+        for route in row.get("service_routes") or []:
+            if isinstance(route, dict) and route.get("id") is not None:
+                found.add(str(route.get("id")))
+        if not requested & found:
+            return False
+    return True
+
+
+def _schedule_query(filters: dict[str, Any], *, include_route_status: bool) -> dict[str, Any]:
+    query: dict[str, Any] = {}
+    for key in ("start_date", "end_date"):
+        value = str(filters.get(key) or "")
+        if value and (len(value) != 10 or value[4] != "-" or value[7] != "-" or not value.replace("-", "").isdigit()):
+            raise GateError("unknown_field", fields=[key])
+        if value:
+            query[key] = value
+    direction = str(filters.get("sort_direction") or "")
+    if direction:
+        if direction not in {"asc", "desc"}:
+            raise GateError("unknown_field", fields=["sort_direction"])
+        query["sort_direction"] = direction
+    if "current_technician" in filters and filters["current_technician"] is not None:
+        query["current_technician"] = bool(filters["current_technician"])
+    if "work_pool" in filters and filters["work_pool"] is not None:
+        query["work_pool"] = bool(filters["work_pool"])
+    if include_route_status:
+        status = filters.get("status")
+        if status:
+            query["filter[status]"] = str(status)
+        routes = filters.get("service_route_ids") or []
+        if routes:
+            query["filter[service_routes_ids][]"] = [str(item) for item in routes]
+    return query
+
+
 def snapshot_hash(snapshot: dict[str, Any]) -> str:
     return sha256_hex(canonical(snapshot))
 
@@ -155,10 +238,15 @@ class HttpTransport:
             raise GateError(GATE_AUTH_UNRESOLVED, reason="fieldwork_api_key_absent")
         clean = path.split("?", 1)[0]
         params: list[tuple[str, str]] = [("api_key", self._key.get())]
+        allowed = SEARCH_QUERY if clean == "/work_orders/search" else WORK_ORDER_QUERY if clean == "/work_orders" else CUSTOMER_SEARCH_QUERY if clean == "/customers/search" else frozenset({"page", "per_page"})
         for key, value in (query or {}).items():
-            if key == "api_key" or key not in ALLOWED_QUERY or value is None:
+            if key == "api_key" or key not in allowed or value is None or value == "":
                 continue
-            params.append((key, str(value)))
+            if isinstance(value, (list, tuple)):
+                for item in value:
+                    params.append((key, "true" if item is True else "false" if item is False else str(item)))
+            else:
+                params.append((key, "true" if value is True else "false" if value is False else str(value)))
         url = f"{self.api_base}{clean}?{urllib.parse.urlencode(params)}"
         data = None if body is None else urllib.parse.urlencode(_flatten(body)).encode("utf-8")
         req = Request(url, data=data, method=method)
@@ -196,7 +284,29 @@ class HttpTransport:
             raise GateError("unreadable_response") from None
 
 
-ALLOWED_QUERY = frozenset({"per_page", "page"})
+WORK_ORDER_QUERY = frozenset({
+    "start_date",
+    "end_date",
+    "page",
+    "per_page",
+    "current_technician",
+    "sort_direction",
+    "work_pool",
+    "filter[status]",
+    "filter[service_routes_ids][]",
+})
+SEARCH_QUERY = frozenset({
+    "start_date",
+    "end_date",
+    "page",
+    "per_page",
+    "current_technician",
+    "sort_direction",
+    "work_pool",
+    "query",
+})
+CUSTOMER_SEARCH_QUERY = frozenset({"query", "page", "per_page"})
+ALLOWED_QUERY = WORK_ORDER_QUERY | SEARCH_QUERY | CUSTOMER_SEARCH_QUERY
 
 
 def _flatten(body: dict[str, Any], prefix: str = "") -> list[tuple[str, str]]:
@@ -250,6 +360,10 @@ class FakeTransport:
                 raise AmbiguousWriteError("fake_drop")
             if self.write_mode == "http_500":
                 raise AmbiguousWriteError("remote_500")
+        if method == "GET" and path == "/customers/search":
+            return 200, list(self.customers.values())
+        if method == "GET" and path == "/service_routes":
+            return 200, getattr(self, "service_routes", [])
         if method == "GET" and _CUSTOMER.match(path):
             cid = path.rsplit("/", 1)[-1]
             customer = self.customers.get(cid)
@@ -295,8 +409,28 @@ class FakeTransport:
             if wo is None:
                 return 404, None
             return 200, {"appointment_occurrence": wo}
-        if method in {"POST", "PATCH"} and path.startswith("/work_orders"):
-            return 403, {"error": "live_patch_untested"}
+        if method == "PATCH" and _WORK_ORDER.match(path):
+            appointment_id = path.split("/")[2]
+            match = None
+            match_key = None
+            for key, wo in self.work_orders.items():
+                if str(wo.get("service_appointment_id")) == appointment_id:
+                    match = dict(wo)
+                    match_key = key
+                    break
+            if match is None:
+                return 404, None
+            occ = (body or {}).get("appointment_occurrence") or {}
+            if str(occ.get("id")) != str(match.get("id")):
+                return 409, {"error": "identity_mismatch"}
+            if "instructions" in occ:
+                match["instructions"] = occ["instructions"]
+            if "private_notes" in occ:
+                match["private_notes"] = occ["private_notes"]
+            self.work_orders[match_key] = match
+            return 200, {"appointment_occurrence": match}
+        if method == "POST" and path.startswith("/work_orders"):
+            return 403, {"error": "schema_unverified"}
         return 404, None
 
 
@@ -312,7 +446,7 @@ def _assert_typed_path(method: str, path: str) -> None:
     if method == "PATCH" and _LOCATION.match(path):
         return
     if method == "PATCH" and _WORK_ORDER.match(path):
-        raise GateError(GATE_LIVE_PATCH_UNTESTED)
+        return
     if method == "POST" and path == "/work_orders":
         raise GateError(GATE_SCHEMA_UNVERIFIED)
     raise GateError("unknown_operation", method=method, path=path)
@@ -369,6 +503,76 @@ class TypedFieldworkClient:
             return []
         return _as_list(body)
 
+    def _pages(self, path: str, query: dict[str, Any] | None = None, *, per_page: int = 100, max_pages: int = 20) -> dict[str, Any]:
+        rows: list[dict[str, Any]] = []
+        page = 1
+        while page <= max_pages:
+            status, body = self.transport.request("GET", path, query={**(query or {}), "page": page, "per_page": per_page})
+            if status != 200:
+                raise GateError("read_rejected", status=status, path=path.split("?", 1)[0])
+            batch = _as_list(body)
+            rows.extend(batch)
+            if len(batch) < per_page:
+                return {"items": rows, "complete": True, "truncated": False, "pages_read": page, "per_page": per_page}
+            page += 1
+        return {"items": rows, "complete": False, "truncated": True, "pages_read": max_pages, "per_page": per_page}
+
+    def search_customers(self, query: str) -> dict[str, Any]:
+        if not str(query or "").strip():
+            raise GateError("unknown_field")
+        return self._pages("/customers/search", {"query": query})
+
+    def list_service_routes(self) -> dict[str, Any]:
+        return {"ok": False, "gate": "service_routes_shape_under_investigation", "called_fieldwork": False}
+
+    def list_work_orders(self, **filters: Any) -> dict[str, Any]:
+        query = _schedule_query(filters, include_route_status=True)
+        per_page = 100
+        max_pages = 20
+        matched: list[dict[str, Any]] = []
+        page = 1
+        pages_read = 0
+        complete = False
+        while page <= max_pages:
+            status, body = self.transport.request("GET", "/work_orders", query={**query, "page": page, "per_page": per_page})
+            if status != 200:
+                raise GateError("read_rejected", status=status, path="/work_orders")
+            batch = _as_list(body)
+            pages_read = page
+            matched.extend(item for item in batch if _local_schedule_match(item, filters))
+            if len(batch) < per_page:
+                complete = True
+                break
+            page += 1
+        return {
+            "items": [work_order_view(item) for item in matched],
+            "complete": complete,
+            "truncated": not complete,
+            "pages_read": pages_read,
+            "next_page": None if complete else pages_read + 1,
+            "per_page": per_page,
+            "server_side_filtering": False,
+            "local_filter": [name for name, present in (("date", filters.get("start_date") or filters.get("end_date")), ("status", filters.get("status")), ("service_route_ids", filters.get("service_route_ids"))) if present],
+            "upstream_route_filter_observed_ignored": True,
+            "timezone": "America/New_York",
+        }
+
+    def search_work_orders_filtered(self, **filters: Any) -> dict[str, Any]:
+        query = _schedule_query(filters, include_route_status=False)
+        if filters.get("text"):
+            query["query"] = str(filters["text"])
+        found = self._pages("/work_orders/search", query)
+        found["items"] = [work_order_view(item) for item in found["items"]]
+        found["filters_applied"] = sorted(query)
+        found["route_and_status_filters"] = "not_sent_on_search"
+        return found
+
+    def get_work_order(self, work_order_id: str) -> dict[str, Any]:
+        status, body = self.transport.request("GET", f"/work_orders/{work_order_id}")
+        if status != 200 or not isinstance(body, dict) or "appointment_occurrence" not in body:
+            raise GateError("work_order_shape_unverified", status=status)
+        return unwrap_occurrence(body)
+
     def reject_if_lead(self, customer: dict[str, Any]) -> None:
         if is_lead_status(customer):
             from .allowlist import GATE_LEAD_STATUS
@@ -397,8 +601,22 @@ class TypedFieldworkClient:
             raise GateError("location_patch_rejected", status=status)
         return payload if isinstance(payload, dict) else {}
 
-    def patch_work_order_notes(self, *_args: Any, **_kwargs: Any) -> None:
-        raise GateError(GATE_LIVE_PATCH_UNTESTED)
+    def patch_work_order_notes(self, before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+        path = f"/work_orders/{before['service_appointment_id']}"
+        _assert_typed_path("PATCH", path)
+        body = {
+            "appointment_occurrence": {
+                "id": before["work_order_id"],
+                "instructions": after.get("instructions"),
+                "private_notes": after.get("private_notes"),
+            }
+        }
+        status, payload = self.transport.request("PATCH", path, body)
+        if status >= 500:
+            raise AmbiguousWriteError(f"remote_{status}")
+        if status != 200:
+            raise GateError("work_order_patch_rejected", status=status)
+        return payload if isinstance(payload, dict) else {}
 
     def create_work_order(self, *_args: Any, **_kwargs: Any) -> None:
         raise GateError(GATE_SCHEMA_UNVERIFIED)
