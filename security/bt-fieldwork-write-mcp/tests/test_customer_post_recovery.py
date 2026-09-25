@@ -1,0 +1,254 @@
+"""Customer POST response and read recovery. Mock HTTP only. No live Fieldwork calls."""
+
+from __future__ import annotations
+
+import io
+import json
+import unittest
+from urllib.request import Request
+
+from bt_fieldwork_write_mcp.fieldwork import HttpTransport, TypedFieldworkClient
+from bt_fieldwork_write_mcp.secrets import InMemoryApiKey
+from bt_fieldwork_write_mcp.service import WriteService
+from tests.test_write_mcp import IDENTITY, Harness
+
+
+def _payload(**extra: object) -> dict:
+    body = {
+        "customer_type": "Residential",
+        "first_name": "Case",
+        "last_name": "Evidence",
+        "status": "active",
+        "billing_phone": "9103330000",
+        "billing_street": "105 Thorn Tree Ct",
+        "billing_city": "Jacksonville",
+        "billing_state": "NC",
+        "service_locations": {"name": "Main Location", "same_as_billing_address": True},
+        "contact": {"first_name": "Case", "last_name": "Evidence", "email": "case@example.test"},
+        "confirmed_new": True,
+    }
+    body.update(extra)
+    return body
+
+
+class _Response:
+    def __init__(self, status: int, body: bytes, content_type: str = "application/json") -> None:
+        self.status = status
+        self.headers = {"Content-Type": content_type}
+        self._body = body
+
+    def read(self) -> bytes:
+        return self._body
+
+    def __enter__(self) -> "_Response":
+        return self
+
+    def __exit__(self, *_args: object) -> bool:
+        return False
+
+
+class Script:
+    def __init__(self, post_status: int = 201, post_body: bytes = b'{"id": 88001}', contact_body: bytes = b'{"id": 88002}', *, customers: list | None = None, store_contact: bool = True, drop_post: bool = False) -> None:
+        self.requests: list[Request] = []
+        self.post_status = post_status
+        self.post_body = post_body
+        self.contact_body = contact_body
+        self.customers = list(customers or [])
+        self.store_contact = store_contact
+        self.drop_post = drop_post
+        self.contacts: list[dict] = []
+        self.posted = False
+
+    def open(self, req: Request, timeout: int = 30) -> _Response:
+        self.requests.append(req)
+        path = req.full_url.split("api3.fieldworkhq.com")[-1].split("?")[0]
+        if path.endswith("/v3.1"):
+            path = "/"
+        path = path.split("/v3.1", 1)[-1]
+        if req.method == "POST" and path == "/customers":
+            self.posted = True
+            if not self.customers:
+                self.customers = [_customer_row()]
+            if self.drop_post:
+                raise TimeoutError("drop")
+            return _Response(self.post_status, self.post_body)
+        if req.method == "POST" and path.endswith("/contacts"):
+            if self.store_contact:
+                self.contacts = [{"id": 88002, "first_name": "Case", "last_name": "Evidence", "email": "case@example.test"}]
+            return _Response(200, self.contact_body)
+        return _Response(200, json.dumps(self._get(path)).encode())
+
+    def _get(self, path: str):
+        if path == "/profile":
+            return {"roles": ["customers", "work_orders", "schedule"]}
+        if path == "/customers/search":
+            return self.customers if self.posted else []
+        if path == "/customers/search_by_phone":
+            return []
+        if path.startswith("/customers/") and path.count("/") == 2:
+            identity = path.rsplit("/", 1)[-1]
+            row = _customer_row()
+            if identity.isdigit():
+                row["id"] = int(identity)
+            return row
+        if path == "/customers/88001/service_locations":
+            return [_location_row()]
+        if path == "/customers/88001/service_locations/88011":
+            return {"service_location": _location_row()}
+        if path == "/customers/88001/contacts":
+            return self.contacts
+        return []
+
+    def posts(self, suffix: str) -> int:
+        return sum(1 for req in self.requests if req.method == "POST" and req.full_url.split("?")[0].endswith(suffix))
+
+
+def _customer_row() -> dict:
+    return {
+        "id": 88001,
+        "customer_type": "Residential",
+        "first_name": "Case",
+        "last_name": "Evidence",
+        "name": "Case Evidence",
+        "status": "active",
+        "billing_phone": "9103330000",
+        "billing_street": "105 Thorn Tree Ct",
+        "billing_city": "Jacksonville",
+        "billing_state": "NC",
+    }
+
+
+def _location_row() -> dict:
+    return {
+        "id": 88011,
+        "customer_id": 88001,
+        "name": "Main Location",
+        "same_as_billing_address": True,
+        "tax_rate_id": 3,
+        "address": {"id": 12, "street": "105 Thorn Tree Ct", "city": "Jacksonville", "state": "NC"},
+    }
+
+
+class CustomerPostRecoveryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.h = Harness(writes_enabled=True, api_role="writer")
+
+    def tearDown(self) -> None:
+        self.h.close()
+
+    def _use(self, script: Script) -> None:
+        self.script = script
+        self.h.service.client = TypedFieldworkClient(HttpTransport(InMemoryApiKey("hidden-key"), opener=script))
+
+    def _run(self, payload: dict | None = None) -> dict:
+        proposed = self.h.service.propose("create_customer", payload or _payload(), IDENTITY)
+        self.assertTrue(proposed["ok"], proposed)
+        token = self.h.approve(proposed["proposal_id"])
+        self.proposal = proposed
+        return self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=token)
+
+    def test_integer_id_success_posts_customer_once(self) -> None:
+        self._use(Script())
+        done = self._run()
+        self.assertTrue(done["ok"], done)
+        self.assertEqual(done["created_id"], 88001)
+        self.assertFalse(done["reconciled"])
+        self.assertEqual(done["readback"]["contact"]["email"], "case@example.test")
+        self.assertEqual(self.script.posts("/customers"), 1)
+        self.assertEqual(self.script.posts("/contacts"), 1)
+
+    def test_empty_success_recovers_one_new_account_and_continues_contact(self) -> None:
+        self._use(Script(post_status=200, post_body=b""))
+        done = self._run()
+        self.assertTrue(done["ok"], done)
+        self.assertTrue(done["reconciled"])
+        self.assertEqual(done["created_id"], 88001)
+        self.assertEqual(done["readback"]["location_id"], 88011)
+        self.assertEqual(self.script.posts("/customers"), 1)
+        self.assertEqual(self.script.posts("/contacts"), 1)
+        journal = self.h.store.creation_journal(self.proposal["proposal_id"])
+        customer_step = next(row for row in journal if row["step"] == "customer_post")
+        self.assertEqual(customer_step["outcome"], "succeeded")
+        self.assertEqual(customer_step["result"]["response"]["parser_stage"], "empty_body")
+        self.assertEqual(customer_step["result"]["response"]["status"], 200)
+        self.assertFalse(customer_step["result"]["response"]["response_body_retained"])
+
+    def test_unverified_wrapper_is_not_an_id_and_still_recovers(self) -> None:
+        self._use(Script(post_body=b'{"customer":{"id":88001}}'))
+        done = self._run()
+        self.assertTrue(done["reconciled"], done)
+        self.assertEqual(self.script.posts("/customers"), 1)
+        journal = self.h.store.creation_journal(self.proposal["proposal_id"])
+        response = next(row for row in journal if row["step"] == "customer_post")["result"]["response"]
+        self.assertEqual(response["top_level_keys"], ["customer"])
+        self.assertNotIn("88001", json.dumps(response))
+
+    def test_multiple_preexisting_and_incomplete_do_not_bind_or_repost(self) -> None:
+        self._use(Script(post_body=b"", customers=[{**_customer_row(), "id": 1}, {**_customer_row(), "id": 2}]))
+        many = self._run()
+        self.assertEqual(many["partial"]["reason"], "multiple_new_matches")
+        self.assertIsNone(many["partial"]["customer_id"])
+        self.assertEqual(self.script.posts("/customers"), 1)
+        self.h.service.execute(self.proposal["proposal_id"], IDENTITY, operator_approval="unused")
+        self.assertEqual(self.script.posts("/customers"), 1)
+
+    def test_preexisting_and_incomplete_search_do_not_bind(self) -> None:
+        self.h.close()
+        self.h = Harness(writes_enabled=True, api_role="writer")
+        prior = Script(post_body=b"", customers=[_customer_row()])
+        prior.posted = True
+        self._use(prior)
+        preexisting = self._run()
+        self.assertEqual(preexisting["partial"]["reason"], "preexisting_match")
+        self.assertEqual(self.script.posts("/customers"), 1)
+
+        self.h.close()
+        self.h = Harness(writes_enabled=True, api_role="writer")
+        incomplete = Script(post_body=b"")
+        incomplete.customers = [{"id": index, "name": "Case Evidence", "first_name": "Case", "last_name": "Evidence", "billing_phone": "9103330000"} for index in range(1, 101)]
+        self._use(incomplete)
+        failed = self._run()
+        self.assertEqual(failed["partial"]["reason"], "duplicate_search_incomplete")
+        self.assertEqual(self.script.posts("/customers"), 1)
+
+    def test_lost_contact_response_binds_readback_without_a_second_post(self) -> None:
+        self._use(Script(contact_body=b""))
+        done = self._run()
+        self.assertTrue(done["ok"], done)
+        self.assertEqual(done["readback"]["contact_id"], 88002)
+        self.assertEqual(self.script.posts("/contacts"), 1)
+        replay = self.h.service.execute(self.proposal["proposal_id"], IDENTITY, operator_approval="unused")
+        self.assertEqual(replay["gate"], "approval_replayed")
+        self.assertEqual(self.script.posts("/contacts"), 1)
+
+    def test_missing_contact_after_empty_response_stays_unresolved(self) -> None:
+        self._use(Script(contact_body=b"", store_contact=False))
+        failed = self._run()
+        self.assertEqual(failed["failed_step"], "contact_post")
+        self.assertEqual(failed["partial"]["customer_id"], "88001")
+        self.assertIsNone(failed["partial"]["contact_id"])
+        self.assertEqual(failed["partial"]["reason"], "contact_post_unresolved")
+        self.assertEqual(self.script.posts("/customers"), 1)
+        self.assertEqual(self.script.posts("/contacts"), 1)
+
+    def test_transport_drop_diagnostic_is_unknown_and_can_recover(self) -> None:
+        self._use(Script(drop_post=True))
+        done = self._run()
+        self.assertTrue(done["reconciled"], done)
+        journal = self.h.store.creation_journal(self.proposal["proposal_id"])
+        response = next(row for row in journal if row["step"] == "customer_post")["result"]["response"]
+        self.assertEqual(response["status"], "unknown")
+        self.assertEqual(response["parser_stage"], "transport_drop")
+        self.assertEqual(self.script.posts("/customers"), 1)
+
+    def test_wrong_digest_expiry_and_replay_do_not_post(self) -> None:
+        self._use(Script())
+        proposed = self.h.service.propose("create_customer", _payload(), IDENTITY)
+        token = self.h.approve(proposed["proposal_id"])
+        wrong = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval="not-the-token")
+        self.assertEqual(wrong["gate"], "operator_approval_required")
+        self.assertEqual(self.script.posts("/customers"), 0)
+        self.h.service._now = lambda: self.h.clock.replace(year=2027)
+        expired = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=token)
+        self.assertEqual(expired["gate"], "approval_or_proposal_expired")
+        self.assertEqual(self.script.posts("/customers"), 0)

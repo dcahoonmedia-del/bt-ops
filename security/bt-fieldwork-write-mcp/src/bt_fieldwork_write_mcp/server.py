@@ -46,7 +46,7 @@ EXECUTE_DESCRIPTION = (
     "Rejects missing approval, a missing or wrong digest, a stale before, an expired proposal, a tampered stored proposal, "
     "another proposal id, or another user's proposal. "
     "Customer create can POST the customer, PATCH a distinct service address, POST one caller-supplied extra location, and POST an explicit contact. Work-order create sends one POST. "
-    "A crashed or ambiguous POST is not replayed; partial ids stay recorded and recovery needs a new approved proposal. "
+    "A crashed or ambiguous POST is not replayed. An ambiguous customer POST is bound only when one new account matches the approved identity on a later GET. Remaining approved contact or location steps continue once in that same execution. A lost contact or location response is read back, not resent. "
     "Creation is schema-ready and not live-tested. Readback is the fake client's echoed records, not a verified live schema. "
     "Requires FW_WRITE_APPROVAL_MODE=chatgpt_confirmation."
 )

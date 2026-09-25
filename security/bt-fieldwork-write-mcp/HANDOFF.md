@@ -43,3 +43,9 @@ Direct JWT mode remains the default. The optional Auth0 bridge (`FW_WRITE_AUTH_M
 The existing VM has only the receiver service account. A second Unix user is not cloud isolation. Do not grant the receiver the Fieldwork secret. Hosting and domain are not selected. Production Google social credentials are still a deployment gate; the local sign-in used Auth0 development keys.
 
 OAuth authorization server is not configured for production. Current Fieldwork credential readiness is not live-verified (`check_connection` is not proof). Isolated SA and one-secret IAM are not applied. Live PATCH, create schema, and arrival-window writes are unverified. Writes stay disabled. `credential_ready` is not live readiness.
+
+## Next priorities (not implemented)
+
+1. Work-order caller contract. `create_work_order` rejects `starts_at`, `duration`, routes, and instructions when they are not inside the required `occurrences` wrapper, and a minimal customer/location payload returns `unknown_field` on `occurrences`. Trace that the same way as the customer location wrapper: a missing required wrapper is not an injected unknown field. Then verify a true timed single-occurrence create. Do not silently downgrade a clock time to a date-only job.
+2. PestGuard setup is only the $150 initial treatment. Do not add a $45 monthly price, an agreement, recurrence, future visits, or ongoing billing. Known customer 3674514 and location 4490911, Daniel route 2557. The Sep 25 2PM slot must be rechecked later and is not reserved.
+3. Josh (`Joshua1740@icloud.com`) needs intentional read-only access alongside Daniel's read and approved writes. Preserve signature, issuer, audience, and the allowlist. Inspect the actual Auth0 identity mapping. Do not authorize an unverified caller email. No auth change belongs in the customer-response phase.

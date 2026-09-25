@@ -19,3 +19,14 @@ class GateError(RuntimeError):
 
 class AmbiguousWriteError(RuntimeError):
     """Remote write was sent; outcome is not confirmed. Do not retry."""
+
+    def __init__(self, reason: str = "ambiguous", diagnostic: dict[str, Any] | None = None) -> None:
+        self.reason = reason
+        self.diagnostic = diagnostic or {
+            "status": "unknown",
+            "content_type": "unknown",
+            "top_level_keys": [],
+            "parser_stage": "unspecified",
+            "response_body_retained": False,
+        }
+        super().__init__(reason)

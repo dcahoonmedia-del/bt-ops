@@ -303,30 +303,54 @@ class HttpTransport:
             with self._opener.open(req, timeout=30) as resp:
                 raw = resp.read()
                 status = int(resp.status)
+                content_type = resp.headers.get("Content-Type", "") if getattr(resp, "headers", None) else ""
         except urllib.error.HTTPError as exc:
             status = int(exc.code)
+            content_type = exc.headers.get("Content-Type", "") if exc.headers else ""
             raw = exc.read() if status < 500 else b""
             if sent and status >= 500:
-                raise AmbiguousWriteError(f"remote_{status}") from None
+                self._note_write(status=status, content_type=content_type, parser_stage="http_5xx", body=None)
+                raise AmbiguousWriteError(f"remote_{status}", diagnostic=self.last_write_diagnostic) from None
             if status in {301, 302, 303, 307, 308}:
                 raise GateError("redirect_rejected", status=status) from None
-            try:
-                parsed = json.loads(raw.decode("utf-8")) if raw else None
-            except (json.JSONDecodeError, UnicodeError):
-                parsed = None
+            parsed = self._parse_body(raw, status=status, content_type=content_type, sent=sent)
             return status, parsed
+        except AmbiguousWriteError:
+            raise
         except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
             if sent:
-                raise AmbiguousWriteError("transport_drop_after_send") from None
+                self._note_write(status="unknown", content_type="unknown", parser_stage="transport_drop", body=None)
+                raise AmbiguousWriteError("transport_drop_after_send", diagnostic=self.last_write_diagnostic) from None
             raise GateError("transport_error") from None
         if not raw:
+            self._note_write(status=status, content_type=content_type, parser_stage="empty_body", body=None)
             return status, None
+        parsed = self._parse_body(raw, status=status, content_type=content_type, sent=sent)
+        return status, parsed
+
+    def _note_write(self, *, status: Any, content_type: str, parser_stage: str, body: Any) -> None:
+        keys: list[str] = []
+        if isinstance(body, dict):
+            keys = sorted(str(key) for key in body)[:40]
+        self.last_write_diagnostic = {
+            "status": status,
+            "content_type": (content_type or "unknown").split(";")[0].strip() or "unknown",
+            "top_level_keys": keys,
+            "parser_stage": parser_stage,
+            "response_body_retained": False,
+        }
+
+    def _parse_body(self, raw: bytes, *, status: int, content_type: str, sent: bool) -> Any:
         try:
-            return status, json.loads(raw.decode("utf-8"))
+            parsed = json.loads(raw.decode("utf-8")) if raw else None
         except (json.JSONDecodeError, UnicodeError):
             if sent:
-                raise AmbiguousWriteError("unreadable_write_response") from None
+                self._note_write(status=status, content_type=content_type, parser_stage="unreadable_json", body=None)
+                raise AmbiguousWriteError("unreadable_write_response", diagnostic=self.last_write_diagnostic) from None
             raise GateError("unreadable_response") from None
+        stage = "json_object" if isinstance(parsed, dict) else "json_non_object" if parsed is not None else "empty_body"
+        self._note_write(status=status, content_type=content_type, parser_stage=stage, body=parsed)
+        return parsed
 
 
 WORK_ORDER_QUERY = frozenset({
@@ -1327,31 +1351,41 @@ class TypedFieldworkClient:
         found["customer_id"] = customer_id
         return found
 
+    def _capture_write(self, status: int, payload: Any) -> dict[str, Any]:
+        diagnostic = dict(getattr(self.transport, "last_write_diagnostic", {}) or {})
+        diagnostic.setdefault("status", status)
+        diagnostic.setdefault("response_body_retained", False)
+        self.last_write_diagnostic = diagnostic
+        return payload if isinstance(payload, dict) else {}
+
     def create_contact(self, customer_id: str, body: dict[str, Any]) -> dict[str, Any]:
         path = f"/customers/{_required_id(customer_id)}/contacts"
         _assert_typed_path("POST", path)
         status, payload = self.transport.request("POST", path, body)
+        captured = self._capture_write(status, payload)
         if status >= 500:
-            raise AmbiguousWriteError(f"remote_{status}")
-        return payload if isinstance(payload, dict) else {}
+            raise AmbiguousWriteError(f"remote_{status}", diagnostic=self.last_write_diagnostic)
+        return captured
 
     def create_service_location(self, customer_id: str, body: dict[str, Any]) -> dict[str, Any]:
         path = f"/customers/{_required_id(customer_id)}/service_locations"
         _assert_typed_path("POST", path)
         status, payload = self.transport.request("POST", path, body)
+        captured = self._capture_write(status, payload)
         if status >= 500:
-            raise AmbiguousWriteError(f"remote_{status}")
-        return payload if isinstance(payload, dict) else {}
+            raise AmbiguousWriteError(f"remote_{status}", diagnostic=self.last_write_diagnostic)
+        return captured
 
     def patch_service_location(self, customer_id: str, location_id: str, body: dict[str, Any]) -> dict[str, Any]:
         path = f"/customers/{_required_id(customer_id)}/service_locations/{_required_id(location_id)}"
         _assert_typed_path("PATCH", path)
         status, payload = self.transport.request("PATCH", path, body)
+        captured = self._capture_write(status, payload)
         if status >= 500:
-            raise AmbiguousWriteError(f"remote_{status}")
+            raise AmbiguousWriteError(f"remote_{status}", diagnostic=self.last_write_diagnostic)
         if status != 200:
             raise GateError("location_patch_rejected", status=status)
-        return payload if isinstance(payload, dict) else {}
+        return captured
 
     def list_work_order_templates(self) -> dict[str, Any]:
         return self._pages("/work_order_templates")
@@ -1370,11 +1404,10 @@ class TypedFieldworkClient:
         path = "/customers"
         _assert_typed_path("POST", path)
         status, payload = self.transport.request("POST", path, body)
+        captured = self._capture_write(status, payload)
         if status >= 500:
-            raise AmbiguousWriteError(f"remote_{status}")
-        if not isinstance(payload, dict):
-            return {}
-        return payload
+            raise AmbiguousWriteError(f"remote_{status}", diagnostic=self.last_write_diagnostic)
+        return captured
 
     def create_work_order(self, body: dict[str, Any]) -> dict[str, Any]:
         path = "/work_orders"

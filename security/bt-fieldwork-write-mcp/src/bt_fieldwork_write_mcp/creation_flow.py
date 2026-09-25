@@ -388,6 +388,11 @@ def journal_partial(rows: list[dict[str, Any]]) -> dict[str, Any]:
             partial["succeeded_steps"].append(row.get("step"))
         if row.get("outcome") in {"ambiguous", "failed"}:
             partial["failed_step"] = row.get("step")
+            result = row.get("result") if isinstance(row.get("result"), dict) else {}
+            if result.get("reason"):
+                partial["reason"] = result["reason"]
+            if result.get("response"):
+                partial["response"] = result["response"]
     partial["recovery"] = "new_exact_approved_proposal"
     partial["retry"] = False
     return partial
@@ -504,22 +509,34 @@ def post_customer_steps(service: Any, proposal: dict[str, Any], attempt_id: str)
         approved_candidate_ids=(plan.get("duplicate_resolution") or {}).get("candidate_ids"),
     )
     customer_id = str(plan["existing_customer_id"]) if plan.get("existing_customer_id") else None
+    recovered_customer = False
     if customer_id is None:
         step_id = _step(store, proposal["proposal_id"], "customer_post", plan["customer"])
-        try:
-            response = client.create_customer({"customer": plan["customer"]})
-        except AmbiguousWriteError:
-            _ambiguous(store, step_id)
-            found = _reconcile_customer(client, search, proposal["payload"])
-            if found:
-                store.finish_creation_step(step_id, "ambiguous", {"reconciled_customer_id": found}, customer_id=found)
-            return stop_creation(store, proposal, attempt_id)
+        response, diagnostic = _sent_write(lambda: client.create_customer({"customer": plan["customer"]}), client)
         created = response_id(response)
-        if created is None:
-            _ambiguous(store, step_id)
-            return stop_creation(store, proposal, attempt_id)
-        customer_id = str(created)
-        _succeed(store, step_id, {"id": created}, customer_id=customer_id)
+        if created is not None and _id_status_accepted(diagnostic):
+            customer_id = str(created)
+            _succeed(store, step_id, {"id": created, "response": _public_diagnostic(diagnostic)}, customer_id=customer_id)
+        else:
+            proved = _prove_new_customer(client, search, proposal["payload"], plan["customer"]) if _mutation_may_have_landed(diagnostic) else {"ok": False, "reason": "response_not_success"}
+            if proved.get("ok"):
+                customer_id = proved["customer_id"]
+                recovered_customer = True
+                _succeed(
+                    store,
+                    step_id,
+                    {"id": int(customer_id), "reconciled": True, "location_id": proved["location_id"], "response": _public_diagnostic(diagnostic), "reason": "authoritative_get"},
+                    customer_id=customer_id,
+                    location_id=proved["location_id"],
+                )
+            else:
+                _ambiguous(store, step_id)
+                store.finish_creation_step(
+                    step_id,
+                    "ambiguous",
+                    {"retry": False, "reason": proved.get("reason"), "response": _public_diagnostic(diagnostic)},
+                )
+                return stop_creation(store, proposal, attempt_id)
     locations = client.list_service_locations(customer_id)
     if not locations.get("complete"):
         raise GateError(GATE_DUPLICATE_SEARCH, path="/service_locations")
@@ -533,8 +550,13 @@ def post_customer_steps(service: Any, proposal: dict[str, Any], attempt_id: str)
         if len(created_locations) != 1:
             raise GateError(GATE_READBACK, reason="nested_location_not_unique")
         location_id = str(created_locations[0]["id"])
-        store.finish_creation_step(store.creation_journal(proposal["proposal_id"])[-1]["step_id"], "succeeded", {"location_id": location_id}, customer_id=customer_id, location_id=location_id)
+        last = store.creation_journal(proposal["proposal_id"])[-1]
+        result = dict(last.get("result") or {})
+        result["location_id"] = location_id
+        store.finish_creation_step(last["step_id"], "succeeded", result, customer_id=customer_id, location_id=location_id)
     nested_location_id = location_id
+    if not _proposal_current(service, proposal):
+        return stop_creation(store, proposal, attempt_id)
     if plan.get("location_patch"):
         location = client.get_location(customer_id, location_id)
         address_id = (location.get("address") or {}).get("id")
@@ -548,41 +570,59 @@ def post_customer_steps(service: Any, proposal: dict[str, Any], attempt_id: str)
             }
         }
         step_id = _step(store, proposal["proposal_id"], "location_patch", patch, customer_id=customer_id, location_id=location_id)
-        try:
-            client.patch_service_location(customer_id, location_id, patch)
-        except AmbiguousWriteError:
-            _ambiguous(store, step_id, customer_id=customer_id, location_id=location_id)
-            return stop_creation(store, proposal, attempt_id)
-        _succeed(store, step_id, {"location_id": location_id}, customer_id=customer_id, location_id=location_id)
+        response, diagnostic = _sent_write(lambda: client.patch_service_location(customer_id, location_id, patch), client)
+        if response is None or _public_diagnostic(diagnostic).get("status") not in {200, "unknown"}:
+            matched = _location_matches(client, customer_id, location_id, plan["location_patch"])
+            if not matched:
+                _ambiguous(store, step_id, customer_id=customer_id, location_id=location_id)
+                store.finish_creation_step(step_id, "ambiguous", {"retry": False, "reason": "location_patch_unresolved", "response": _public_diagnostic(diagnostic)}, customer_id=customer_id, location_id=location_id)
+                return stop_creation(store, proposal, attempt_id)
+        _succeed(store, step_id, {"location_id": location_id, "response": _public_diagnostic(diagnostic)}, customer_id=customer_id, location_id=location_id)
     if plan.get("additional_location"):
+        if not _proposal_current(service, proposal):
+            return stop_creation(store, proposal, attempt_id)
         body = {"service_location": plan["additional_location"]}
-        step_id = _step(store, proposal["proposal_id"], "location_post", body, customer_id=customer_id)
-        try:
-            response = client.create_service_location(customer_id, body)
-        except AmbiguousWriteError:
-            _ambiguous(store, step_id, customer_id=customer_id, location_id=location_id)
+        existing_extra = _one_extra_location(client, customer_id, nested_location_id, plan["additional_location"])
+        if existing_extra == "ambiguous":
             return stop_creation(store, proposal, attempt_id)
-        new_id = response_id(response)
-        if new_id is None:
-            _ambiguous(store, step_id, customer_id=customer_id, location_id=location_id)
-            return stop_creation(store, proposal, attempt_id)
-        location_id = str(new_id)
-        _succeed(store, step_id, {"id": new_id}, customer_id=customer_id, location_id=location_id)
+        if existing_extra:
+            location_id = existing_extra
+        else:
+            step_id = _step(store, proposal["proposal_id"], "location_post", body, customer_id=customer_id)
+            response, diagnostic = _sent_write(lambda: client.create_service_location(customer_id, body), client)
+            new_id = response_id(response) if _id_status_accepted(diagnostic) else None
+            if new_id is None:
+                found = _one_extra_location(client, customer_id, nested_location_id, plan["additional_location"])
+                if not found or found == "ambiguous":
+                    _ambiguous(store, step_id, customer_id=customer_id, location_id=location_id)
+                    store.finish_creation_step(step_id, "ambiguous", {"retry": False, "reason": "location_post_unresolved", "response": _public_diagnostic(diagnostic)}, customer_id=customer_id, location_id=location_id)
+                    return stop_creation(store, proposal, attempt_id)
+                new_id = int(found)
+            location_id = str(new_id)
+            _succeed(store, step_id, {"id": int(location_id), "response": _public_diagnostic(diagnostic)}, customer_id=customer_id, location_id=location_id)
     contact = plan.get("contact")
     contact_id = None
     if contact:
-        body = {"contact": contact}
-        step_id = _step(store, proposal["proposal_id"], "contact_post", body, customer_id=customer_id, location_id=location_id)
-        try:
-            response = client.create_contact(customer_id, body)
-        except AmbiguousWriteError:
-            _ambiguous(store, step_id, customer_id=customer_id, location_id=location_id)
+        if not _proposal_current(service, proposal):
             return stop_creation(store, proposal, attempt_id)
-        contact_id = response_id(response)
-        if contact_id is None:
-            _ambiguous(store, step_id, customer_id=customer_id, location_id=location_id)
+        already = _one_contact(client, customer_id, contact)
+        if already == "ambiguous":
             return stop_creation(store, proposal, attempt_id)
-        _succeed(store, step_id, {"id": contact_id}, customer_id=customer_id, contact_id=str(contact_id), location_id=location_id)
+        if already:
+            contact_id = int(already)
+        else:
+            body = {"contact": contact}
+            step_id = _step(store, proposal["proposal_id"], "contact_post", body, customer_id=customer_id, location_id=location_id)
+            response, diagnostic = _sent_write(lambda: client.create_contact(customer_id, body), client)
+            contact_id = response_id(response) if _id_status_accepted(diagnostic) else None
+            if contact_id is None:
+                found = _one_contact(client, customer_id, contact)
+                if not found or found == "ambiguous":
+                    _ambiguous(store, step_id, customer_id=customer_id, location_id=location_id)
+                    store.finish_creation_step(step_id, "ambiguous", {"retry": False, "reason": "contact_post_unresolved", "response": _public_diagnostic(diagnostic)}, customer_id=customer_id, location_id=location_id)
+                    return stop_creation(store, proposal, attempt_id)
+                contact_id = int(found)
+            _succeed(store, step_id, {"id": contact_id, "response": _public_diagnostic(diagnostic)}, customer_id=customer_id, contact_id=str(contact_id), location_id=location_id)
     address = None if not plan.get("location_patch") else plan["location_patch"]["address_attributes"]
     readback = customer_readback(
         client,
@@ -602,7 +642,166 @@ def post_customer_steps(service: Any, proposal: dict[str, Any], attempt_id: str)
         readback["additional_location_id"] = extra.get("id")
     if contact_id is not None:
         readback["contact_id"] = contact_id
-    return {"ok": True, "readback": readback, "created_id": int(customer_id)}
+    return {"ok": True, "readback": readback, "created_id": int(customer_id), "reconciled": recovered_customer}
+
+
+def _public_diagnostic(diagnostic: dict[str, Any] | None) -> dict[str, Any]:
+    diagnostic = diagnostic or {}
+    status = diagnostic.get("status", "unknown")
+    if status is None:
+        status = "unknown"
+    keys = diagnostic.get("top_level_keys") if isinstance(diagnostic.get("top_level_keys"), list) else []
+    return {
+        "status": status,
+        "content_type": str(diagnostic.get("content_type") or "unknown").split(";")[0][:80],
+        "top_level_keys": [str(key) for key in keys][:40],
+        "parser_stage": str(diagnostic.get("parser_stage") or "unknown"),
+        "response_body_retained": False,
+    }
+
+
+def _sent_write(call: Any, client: Any) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    try:
+        response = call()
+    except AmbiguousWriteError as exc:
+        return None, _public_diagnostic(exc.diagnostic)
+    return response if isinstance(response, dict) else {}, _public_diagnostic(getattr(client, "last_write_diagnostic", None))
+
+
+def _id_status_accepted(diagnostic: dict[str, Any]) -> bool:
+    return diagnostic.get("status") in {200, 201, "unknown"}
+
+
+def _mutation_may_have_landed(diagnostic: dict[str, Any]) -> bool:
+    status = diagnostic.get("status")
+    if status in {200, 201, 204, "unknown"}:
+        return True
+    return isinstance(status, int) and status >= 500
+
+
+def _proposal_current(service: Any, proposal: dict[str, Any]) -> bool:
+    from datetime import datetime, timezone
+
+    expires = datetime.fromisoformat(str(proposal["expires_at"]).replace("Z", "+00:00"))
+    now = service._now()
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    return expires > now
+
+
+def _customer_matches(customer: dict[str, Any], sent: dict[str, Any]) -> bool:
+    if customer.get("customer_type") != sent.get("customer_type"):
+        return False
+    status = str(customer.get("status") or customer.get("customer_status") or "").strip().lower()
+    if status != "active":
+        return False
+    for key in ("first_name", "last_name", "name"):
+        if key in sent and customer.get(key) != sent.get(key):
+            return False
+    if "billing_phone" in sent and normalize_phone(customer.get("billing_phone")) != normalize_phone(sent.get("billing_phone")):
+        return False
+    address = customer.get("billing_address") if isinstance(customer.get("billing_address"), dict) else {}
+    for key, short in (("billing_street", "street"), ("billing_city", "city"), ("billing_state", "state"), ("billing_zip", "zip")):
+        if key not in sent:
+            continue
+        got = customer.get(key)
+        if got in (None, ""):
+            got = address.get(short)
+        if got != sent[key]:
+            return False
+    return True
+
+
+def _primary_location_matches(location: dict[str, Any], sent: dict[str, Any]) -> bool:
+    nested = (sent.get("service_locations_attributes") or [{}])[0]
+    return location.get("name") == nested.get("name") and location.get("same_as_billing_address") is nested.get("same_as_billing_address")
+
+
+def _prove_new_customer(client: Any, before: dict[str, Any], payload: dict[str, Any], sent: dict[str, Any]) -> dict[str, Any]:
+    try:
+        after = duplicate_search(client, payload)
+    except GateError:
+        return {"ok": False, "reason": "duplicate_search_incomplete"}
+    previous = {str(item.get("id")) for item in before.get("candidates") or []}
+    fresh = [item for item in after["candidates"] if str(item.get("id")) not in previous]
+    if len(fresh) != 1:
+        if len(fresh) > 1:
+            return {"ok": False, "reason": "multiple_new_matches"}
+        if any(str(item.get("id")) in previous for item in after["candidates"]):
+            return {"ok": False, "reason": "preexisting_match"}
+        return {"ok": False, "reason": "no_new_match"}
+    customer_id = str(fresh[0]["id"])
+    try:
+        customer = client.get_customer(customer_id)
+        locations = client.list_service_locations(customer_id)
+    except GateError:
+        return {"ok": False, "reason": "authoritative_read_failed"}
+    if not locations.get("complete") or locations.get("truncated") or locations.get("repeated_page"):
+        return {"ok": False, "reason": "duplicate_search_incomplete"}
+    rows = locations.get("items") or []
+    if len(rows) != 1 or response_id({"id": rows[0].get("id")}) is None or not _customer_matches(customer, sent):
+        return {"ok": False, "reason": "identity_not_proved"}
+    try:
+        location = client.get_location(customer_id, str(rows[0]["id"]))
+    except GateError:
+        return {"ok": False, "reason": "authoritative_read_failed"}
+    if not _primary_location_matches(location, sent):
+        return {"ok": False, "reason": "identity_not_proved"}
+    return {"ok": True, "customer_id": customer_id, "location_id": str(rows[0]["id"])}
+
+
+def _one_contact(client: Any, customer_id: str, contact: dict[str, Any]) -> str | None:
+    try:
+        listed = client.list_contacts(customer_id)
+    except GateError:
+        return "ambiguous"
+    if not listed.get("complete") or listed.get("truncated") or listed.get("repeated_page"):
+        return "ambiguous"
+    matches = [
+        item
+        for item in listed.get("items") or []
+        if str(item.get("email") or "").casefold() == str(contact.get("email") or "").casefold()
+        and item.get("first_name") == contact.get("first_name")
+        and item.get("last_name") == contact.get("last_name")
+    ]
+    if len(matches) > 1 or (len(matches) == 1 and response_id({"id": matches[0].get("id")}) is None):
+        return "ambiguous"
+    if len(matches) == 1:
+        return str(matches[0]["id"])
+    return None
+
+
+def _one_extra_location(client: Any, customer_id: str, nested_location_id: str, wanted: dict[str, Any]) -> str | None:
+    try:
+        listed = client.list_service_locations(customer_id)
+    except GateError:
+        return "ambiguous"
+    if not listed.get("complete") or listed.get("truncated") or listed.get("repeated_page"):
+        return "ambiguous"
+    matches = [
+        item
+        for item in listed.get("items") or []
+        if str(item.get("id")) != str(nested_location_id) and item.get("name") == wanted.get("name") and item.get("tax_rate_id") == wanted.get("tax_rate_id")
+    ]
+    if len(matches) != 1 or response_id({"id": matches[0].get("id")}) is None:
+        return None if len(matches) == 0 else "ambiguous"
+    return str(matches[0]["id"])
+
+
+def _location_matches(client: Any, customer_id: str, location_id: str, patch: dict[str, Any]) -> bool:
+    try:
+        location = client.get_location(customer_id, location_id)
+    except GateError:
+        return False
+    if location.get("name") != patch.get("name"):
+        return False
+    address = location.get("address") if isinstance(location.get("address"), dict) else {}
+    for key, value in (patch.get("address_attributes") or {}).items():
+        if key == "id":
+            continue
+        if address.get(key) != value:
+            return False
+    return True
 
 
 def _reconcile_customer(client: Any, before: dict[str, Any], payload: dict[str, Any]) -> str | None:

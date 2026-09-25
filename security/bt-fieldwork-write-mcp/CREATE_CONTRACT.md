@@ -2,7 +2,7 @@
 
 Offline only. Nothing in this pass was deployed. Tests use `FakeTransport`. No live Fieldwork, GCP, or Auth0 call is made.
 
-Swagger create responses are null. A successful readback is a test double that echoed the documented request and included an integer `id`. It is not a verified live schema. Execute sends one POST and does not PATCH.
+Swagger create responses are null. A successful readback is a test double that echoed the documented request and included an integer `id`. It is not a verified live schema. The live customer POST that created the known account did not retain its HTTP status or body, so that response stays unknown. Diagnostics recorded after this change are status, content type, top-level key names, and parser stage only. A top-level positive integer `id` on HTTP 200 or 201 is the only create id taken from the response. Any other body, including an unverified wrapper, is not an id. The customer POST is not repeated. One new account is bound only when search and GET prove it was absent from the approved duplicate preflight and matches the approved type, active status, billing address, and primary location.
 
 ## Customer `POST /v3.1/customers`
 
