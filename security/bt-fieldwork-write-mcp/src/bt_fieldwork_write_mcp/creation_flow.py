@@ -397,16 +397,19 @@ def schedule_view(client: Any, starts_at: str, route_ids: list[int]) -> dict[str
 
 
 def journal_partial(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    partial: dict[str, Any] = {"customer_id": None, "contact_id": None, "location_id": None, "succeeded_steps": [], "failed_step": None}
+    partial: dict[str, Any] = {"customer_id": None, "contact_id": None, "location_id": None, "occurrence_id": None, "service_appointment_id": None, "succeeded_steps": [], "failed_step": None}
     for row in rows:
         for key in ("customer_id", "contact_id", "location_id"):
             if row.get(key):
                 partial[key] = row[key]
+        result = row.get("result") if isinstance(row.get("result"), dict) else {}
+        for key in ("occurrence_id", "service_appointment_id"):
+            if result.get(key) is not None:
+                partial[key] = result[key]
         if row.get("outcome") == "succeeded":
             partial["succeeded_steps"].append(row.get("step"))
         if row.get("outcome") in {"ambiguous", "failed"}:
             partial["failed_step"] = row.get("step")
-            result = row.get("result") if isinstance(row.get("result"), dict) else {}
             if result.get("reason"):
                 partial["reason"] = result["reason"]
             if result.get("response"):
@@ -1042,9 +1045,10 @@ def post_work_order(service: Any, proposal: dict[str, Any], attempt_id: str) -> 
         appointment_id = row.get("service_appointment_id")
         if response_id({"id": appointment_id}) is None or str(reconciled) == str(appointment_id):
             return stop_creation(store, proposal, attempt_id)
-        sent = _finish_schedule_patch(service, proposal, attempt_id, sent, reconciled, appointment_id)
-        if not isinstance(sent, dict):
-            return sent
+        finished = _finish_schedule_patch(service, proposal, attempt_id, sent, reconciled, appointment_id)
+        if not finished["ok"]:
+            return finished["stopped"]
+        sent = finished["sent"]
         readback = work_order_readback(client, sent, reconciled)
         return {"ok": True, "readback": readback, "created_id": readback["occurrence_id"], "reconciled": True}
     created = response_id(response)
@@ -1058,39 +1062,77 @@ def post_work_order(service: Any, proposal: dict[str, Any], attempt_id: str) -> 
             stopped["gate"] = GATE_DISTINCT_IDS
         return stopped
     _succeed(store, step_id, {"occurrence_id": created, "service_appointment_id": appointment_id}, customer_id=str(sent["customer_id"]), location_id=str(sent["service_location_id"]))
-    sent = _finish_schedule_patch(service, proposal, attempt_id, sent, str(created), appointment_id)
-    if not isinstance(sent, dict):
-        return sent
+    finished = _finish_schedule_patch(service, proposal, attempt_id, sent, str(created), appointment_id)
+    if not finished["ok"]:
+        return finished["stopped"]
+    sent = finished["sent"]
     readback = work_order_readback(client, sent, str(created))
     return {"ok": True, "readback": readback, "created_id": created}
 
 
 def _finish_schedule_patch(service: Any, proposal: dict[str, Any], attempt_id: str, sent: dict[str, Any], occurrence_id: str, appointment_id: Any) -> dict[str, Any]:
+    """Return {ok, sent} or {ok: False, stopped}. Never return the stop dict as the request."""
     patch = proposal["after"].get("schedule_patch")
     if not patch:
-        return sent
+        return {"ok": True, "sent": sent}
+    ids = {"customer_id": str(sent["customer_id"]), "location_id": str(sent["service_location_id"])}
+    after = {"starts_at": patch["starts_at"], "duration": patch["duration"], "service_route_ids": list(patch["service_route_ids"])}
     if not _proposal_current(service, proposal):
-        return stop_creation(service.store, proposal, attempt_id)
+        _stop_unsent(service.store, proposal, "work_order_schedule_patch", after, "proposal_expired", **ids)
+        return {"ok": False, "stopped": stop_creation(service.store, proposal, attempt_id)}
     client = service.client
+    try:
+        row = client.get_work_order(str(occurrence_id))
+    except GateError:
+        _stop_unsent(service.store, proposal, "work_order_schedule_patch", after, "created_read_failed", **ids)
+        return {"ok": False, "stopped": stop_creation(service.store, proposal, attempt_id)}
+    if not _created_state_matches(row, sent, occurrence_id, appointment_id):
+        _stop_unsent(service.store, proposal, "work_order_schedule_patch", after, "created_state_mismatch", **ids)
+        return {"ok": False, "stopped": stop_creation(service.store, proposal, attempt_id)}
     store = service.store
     before = {"work_order_id": occurrence_id, "service_appointment_id": appointment_id}
-    after = {"starts_at": patch["starts_at"], "duration": patch["duration"], "service_route_ids": list(patch["service_route_ids"])}
-    step_id = _step(store, proposal["proposal_id"], "work_order_schedule_patch", after, customer_id=str(sent["customer_id"]), location_id=str(sent["service_location_id"]))
+    step_id = _step(store, proposal["proposal_id"], "work_order_schedule_patch", after, **ids)
     try:
         client.patch_work_order_fields(before, after, ["starts_at", "duration", "service_route_ids"])
     except AmbiguousWriteError:
         if not _schedule_patch_landed(client, occurrence_id, appointment_id, patch):
-            _ambiguous(store, step_id, customer_id=str(sent["customer_id"]), location_id=str(sent["service_location_id"]))
-            store.finish_creation_step(step_id, "ambiguous", {"retry": False, "reason": "schedule_patch_unresolved"}, customer_id=str(sent["customer_id"]), location_id=str(sent["service_location_id"]))
-            return stop_creation(store, proposal, attempt_id)
-    _succeed(store, step_id, {"occurrence_id": int(occurrence_id), "service_appointment_id": int(appointment_id)}, customer_id=str(sent["customer_id"]), location_id=str(sent["service_location_id"]))
+            store.finish_creation_step(step_id, "ambiguous", {"retry": False, "reason": "schedule_patch_unresolved", "occurrence_id": int(occurrence_id), "service_appointment_id": int(appointment_id)}, **ids)
+            return {"ok": False, "stopped": stop_creation(store, proposal, attempt_id)}
+    _succeed(store, step_id, {"occurrence_id": int(occurrence_id), "service_appointment_id": int(appointment_id)}, **ids)
     timed = dict(sent)
     occurrence = dict(sent["appointment_occurrences_attributes"][0])
     occurrence["starts_at"] = patch["starts_at"]
     occurrence["duration"] = patch["duration"]
     occurrence["service_route_ids"] = list(patch["service_route_ids"])
     timed["appointment_occurrences_attributes"] = [occurrence]
-    return timed
+    return {"ok": True, "sent": timed}
+
+
+def _created_state_matches(row: dict[str, Any], sent: dict[str, Any], occurrence_id: str, appointment_id: Any) -> bool:
+    """The GET must be the approved date-only create, not the POST ids alone."""
+    if str(row.get("id")) != str(occurrence_id) or str(row.get("service_appointment_id")) != str(appointment_id):
+        return False
+    if str(row.get("customer_id")) != str(sent.get("customer_id")) or str(row.get("service_location_id")) != str(sent.get("service_location_id")):
+        return False
+    occurrence = sent["appointment_occurrences_attributes"][0]
+    if not _same_instant(str(occurrence["starts_at"]), row.get("starts_at")) and str(row.get("starts_at_date") or "") != str(occurrence["starts_at"]):
+        return False
+    if row.get("duration") != occurrence.get("duration"):
+        return False
+    if list(row.get("service_route_ids") or []) != list(occurrence.get("service_route_ids")):
+        return False
+    if row.get("instructions") != occurrence.get("instructions"):
+        return False
+    if not money_equal(occurrence.get("production_value"), row.get("production_value")):
+        return False
+    sent_lines = sent.get("line_items_attributes") or []
+    got_lines = row.get("line_items") or []
+    if len(sent_lines) != len(got_lines):
+        return False
+    for left, right in zip(sent_lines, got_lines):
+        if not money_equal(left.get("price"), right.get("price")) or not money_equal(left.get("quantity"), right.get("quantity")):
+            return False
+    return True
 
 
 def _schedule_patch_landed(client: Any, occurrence_id: str, appointment_id: Any, patch: dict[str, Any]) -> bool:

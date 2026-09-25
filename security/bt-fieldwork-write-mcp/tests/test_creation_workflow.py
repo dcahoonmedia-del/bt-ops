@@ -257,6 +257,91 @@ class CreationWorkflowTests(unittest.TestCase):
         zulu = self.h.service.propose("create_work_order", {**_order(), "occurrences": [{"service_route_ids": [1], "starts_at": "2026-10-02T10:00:00Z"}]}, IDENTITY)
         self.assertEqual(zulu["gate"], "starts_at_datetime_unverified")
 
+    def _timed(self, starts_at: str = "2026-10-02T10:00:00-04:00") -> dict:
+        return {**_order(), "occurrences": [{"service_route_ids": [1], "starts_at": starts_at, "duration": 60}]}
+
+    def _patches(self) -> list:
+        return [call for call in self.h.transport.calls if call["method"] == "PATCH" and call["path"].startswith("/work_orders/")]
+
+    def test_expiry_after_post_does_not_patch(self) -> None:
+        proposed = self.h.service.propose("create_work_order", self._timed(), IDENTITY)
+        original = self.h.client.create_work_order
+
+        def expire_after(body):
+            response = original(body)
+            self.h.clock = self.h.clock + timedelta(hours=3)
+            return response
+
+        self.h.client.create_work_order = expire_after
+        stopped = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=self.h.approve(proposed["proposal_id"]))
+        self.assertEqual(stopped["gate"], GATE_PARTIAL)
+        self.assertEqual(stopped["failed_step"], "work_order_schedule_patch")
+        self.assertEqual(stopped["partial"]["reason"], "proposal_expired")
+        self.assertEqual(stopped["retry"], False)
+        self.assertIsNotNone(stopped["partial"]["occurrence_id"])
+        self.assertIsNotNone(stopped["partial"]["service_appointment_id"])
+        self.assertEqual(self._patches(), [])
+        again = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval="unused")
+        self.assertFalse(again["ok"])
+        self.assertEqual(self._patches(), [])
+
+    def test_ambiguous_patch_not_landed_keeps_partial_ids(self) -> None:
+        proposed = self.h.service.propose("create_work_order", self._timed("2026-10-06T10:00:00-04:00"), IDENTITY)
+        original = self.h.transport.request
+
+        def fail_patch(method, path, body=None, query=None):
+            if method == "PATCH" and str(path).startswith("/work_orders/"):
+                self.h.transport.fail_write_exact.add(path)
+            return original(method, path, body, query)
+
+        self.h.transport.request = fail_patch
+        stopped = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=self.h.approve(proposed["proposal_id"]))
+        self.assertEqual(stopped["gate"], GATE_PARTIAL)
+        self.assertEqual(stopped["partial"]["reason"], "schedule_patch_unresolved")
+        self.assertEqual(stopped["retry"], False)
+        self.assertIsNotNone(stopped["partial"]["occurrence_id"])
+        self.assertNotEqual(stopped["partial"]["occurrence_id"], stopped["partial"]["service_appointment_id"])
+        self.assertEqual(len(self._patches()), 1)
+        again = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval="unused")
+        self.assertEqual(again["gate"], "ambiguous_remote_write_no_retry")
+        self.assertEqual(len(self._patches()), 1)
+
+    def test_ambiguous_patch_that_landed_is_verified_success(self) -> None:
+        proposed = self.h.service.propose("create_work_order", self._timed("2026-10-07T10:00:00-04:00"), IDENTITY)
+        self.h.transport.write_mode = "timeout_after_apply"
+        done = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=self.h.approve(proposed["proposal_id"]))
+        self.assertTrue(done["ok"], done)
+        self.assertEqual(done["readback"]["starts_at"], "2026-10-07T10:00:00-04:00")
+        self.assertEqual(len(self._patches()), 1)
+
+    def test_created_get_must_match_before_patch(self) -> None:
+        cases = ("appointment", "customer", "location", "duration")
+        for index, case in enumerate(cases):
+            proposed = self.h.service.propose("create_work_order", self._timed(f"2026-10-{8 + index:02d}T11:00:00-04:00"), IDENTITY)
+            original = self.h.transport._fake_work_order
+
+            def mismatch(body, case=case, original=original):
+                status, response = original(body)
+                stored = self.h.transport.work_orders[str(response["id"])]
+                if case == "appointment":
+                    response["service_appointment_id"] = 1
+                elif case == "customer":
+                    stored["customer_id"] = 999
+                elif case == "location":
+                    stored["service_location_id"] = 999
+                else:
+                    stored["duration"] = 15
+                return status, response
+
+            self.h.transport._fake_work_order = mismatch
+            stopped = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=self.h.approve(proposed["proposal_id"]))
+            self.assertEqual(stopped["gate"], GATE_PARTIAL, case)
+            self.assertEqual(stopped["partial"]["reason"], "created_state_mismatch", case)
+            self.assertEqual(stopped["retry"], False)
+            self.assertIsNotNone(stopped["partial"]["occurrence_id"])
+            self.assertFalse(any(call["method"] == "PATCH" and call["path"].startswith("/work_orders/") for call in self.h.transport.calls), case)
+            self.h.transport._fake_work_order = original
+
     def test_schedule_recheck_and_new_duplicate_need_approval(self) -> None:
         proposed = self.h.service.propose("create_work_order", _order(), IDENTITY)
         self.h.transport.work_orders["80"] = {
