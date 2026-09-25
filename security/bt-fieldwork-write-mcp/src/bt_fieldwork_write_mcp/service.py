@@ -390,7 +390,7 @@ class WriteService:
             "template_id": template.get("id"),
             "documented_request": documented,
             "association": {"customer_id": documented["service_appointment"]["customer_id"], "service_location_id": documented["service_appointment"]["service_location_id"]},
-            "catalog": {"template_id": template.get("id"), "template_name": template.get("name"), "repeat_type": template.get("repeat_type"), "repeat_period": template.get("repeat_period"), "line": catalog["line"], "observed_line": catalog["observed_line"], "service": catalog["service"], "work_order_defaults": catalog["defaults"]},
+            "catalog": {"template_id": template.get("id"), "template_name": template.get("name"), "repeat_type": template.get("repeat_type"), "repeat_period": template.get("repeat_period"), "line": catalog["line"], "observed_line": catalog["observed_line"], "service": catalog["service"], "work_order_defaults": catalog["defaults"], "service_list_complete": catalog.get("service_list_complete"), "service_list_caveat": catalog.get("service_list_caveat")},
             "route_staff": staff,
             "schedule": schedule,
             "duration": occurrence.get("duration"),

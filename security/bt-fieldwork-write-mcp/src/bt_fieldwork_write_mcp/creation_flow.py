@@ -234,12 +234,7 @@ def load_catalog(client: Any, template_id: int | None, *, configured_template_id
     if line.get("taxable") is True:
         raise GateError(GATE_TAXABLE)
     services = client.list_services()
-    if not services.get("complete") or services.get("repeated_page") or services.get("partial_error"):
-        raise GateError(GATE_CATALOG, reason="service_list_incomplete")
-    matches = [row for row in services.get("items") or [] if str(row.get("id")) == str(line.get("payable_id"))]
-    if len(matches) != 1:
-        raise GateError(GATE_CATALOG, reason="payable_not_in_services")
-    service = matches[0]
+    service, service_list_complete = _configured_service(services, line.get("payable_id"))
     if "description" not in service:
         raise GateError(GATE_CATALOG, reason="service_label_is_description")
     if service.get("description") != line.get("name") or not money_equal(service.get("price"), line.get("price")):
@@ -263,12 +258,29 @@ def load_catalog(client: Any, template_id: int | None, *, configured_template_id
         "defaults": defaults,
         "line": normalized,
         "observed_line": line,
-        "service": {"id": service.get("id"), "description": service.get("description"), "price": service.get("price")},
+        "service": {"id": service.get("id"), "description": service.get("description"), "price": service.get("price"), "category": service.get("category"), "account_id": service.get("account_id")},
+        "service_list_complete": service_list_complete,
+        "service_list_caveat": None if service_list_complete else "exact_service_id_only_list_not_complete",
         "billing_frequency": money_number(template.get("billing_frequency")),
         "invoice_generation_disclosed": True,
         "invoice_generation_reason": "billing_frequency_0_normal_invoice_generation" if auto is None else "auto_generates_invoice" if auto is True else "billing_frequency_0_normal_invoice_generation",
         "auto_generates_invoice": auto,
     }
+
+
+def _configured_service(services: dict[str, Any], payable_id: Any) -> tuple[dict[str, Any], bool]:
+    """One observed service id. A repeated full page is not a complete catalog."""
+    if not isinstance(services, dict) or services.get("partial_error"):
+        raise GateError(GATE_CATALOG, reason="service_list_incomplete")
+    matches = [row for row in services.get("items") or [] if isinstance(row, dict) and str(row.get("id")) == str(payable_id)]
+    if len(matches) > 1:
+        raise GateError(GATE_CATALOG, reason="service_id_conflict")
+    complete = bool(services.get("complete")) and not services.get("repeated_page") and not services.get("truncated")
+    if len(matches) == 1:
+        return matches[0], complete
+    if not complete:
+        raise GateError(GATE_CATALOG, reason="service_list_incomplete")
+    raise GateError(GATE_CATALOG, reason="payable_not_in_services")
 
 
 def apply_catalog(appointment: dict[str, Any], catalog: dict[str, Any]) -> dict[str, Any]:
