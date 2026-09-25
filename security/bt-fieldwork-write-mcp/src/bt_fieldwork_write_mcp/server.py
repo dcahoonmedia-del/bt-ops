@@ -47,20 +47,25 @@ def build_mcp(service: WriteService, settings: Settings, verifier: JwtTokenVerif
         title="B&T Fieldwork write MCP",
         instructions=(
             "Narrow Fieldwork writes only. No customer create, no Lead-status accounts, "
-            "no messaging, no generic HTTP. Writes disabled by default. "
-            "Work-order ID mapping and create schema are unverified. "
-            "GET /check_connection is not auth proof. "
-            "Operator HMAC approval is required; approved=true is ignored."
+            "no messaging, no generic HTTP. Writes stay off unless FIELDWORK_WRITES_ENABLED is set "
+            "and the live API role is writer. Work-order writes also require FIELDWORK_MAPPING_VERIFIED. "
+            "create_work_order is unsupported. GET /check_connection is not auth proof. "
+            + (
+                "ChatGPT execution requires approved=true and the exact proposal digest. "
+                "A separate approval string is not accepted."
+                if settings.approval_mode == "chatgpt_confirmation"
+                else "Model-supplied approved=true is not proof. Operator HMAC is internal and is not a tool parameter."
+            )
         ),
         token_verifier=verifier if auth is not None else None,
         auth=auth,
     )
 
-    @server.tool(name="report_gates", description="Report current authentication, live API role, supported reads and write readiness.", annotations={"readOnlyHint": True, "destructiveHint": False})
+    @server.tool(name="report_gates", description="Report auth configuration, the live Fieldwork API role, write and mapping flags, and which operations can propose or execute. Does not change Fieldwork.", annotations={"readOnlyHint": True, "destructiveHint": False})
     async def report_gates() -> dict[str, Any]:
         return report_gates_body(service, settings)
 
-    @server.tool(name="propose_write", description="Prepare an exact before/after proposal without changing Fieldwork. Operations: update_service_location_notes(customer_id,location_id,notes); update_work_order_notes(work_order_id,service_appointment_id,instructions and/or private_notes); update_work_order_schedule(work_order_id,service_appointment_id,starts_at ISO timestamp with offset,duration minutes,service_route_ids integer array). Show the proposal to the user before execution. Customer creation, messages, series-wide edits, arrival-window edits and work-order creation are unsupported.")
+    @server.tool(name="propose_write", description="Prepare one exact before/after proposal and do not change Fieldwork. Supported: update_service_location_notes(customer_id, location_id, notes); update_work_order_notes(work_order_id, service_appointment_id, instructions and/or private_notes); update_work_order_schedule(work_order_id, service_appointment_id, starts_at with a numeric offset, duration minutes, service_route_ids). create_work_order, customer create, messages, series edits, and arrival-window edits are rejected.")
     async def propose_write(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         identity = request_identity()
         if identity is None:
@@ -69,12 +74,11 @@ def build_mcp(service: WriteService, settings: Settings, verifier: JwtTokenVerif
 
     @server.tool(
         name="execute_approved_write",
-        description="Apply exactly one proposed Fieldwork change ONLY after the user has approved its before/after values. Supply approved=true and the exact digest from inspect_proposal. Requires ChatGPT write confirmation; never call for a draft, ambiguous approval, or a different change.",
+        description="Execute one stored proposal on the fake or live client only when approved is true and expected_digest equals that proposal digest. The digest binds proposal_id, payload, before, after, identity, and target. Do not send an approval string. Rejects a missing, stale, tampered, or cross-proposal digest. create_work_order cannot execute.",
         annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True},
     )
     async def execute_approved_write(
         proposal_id: str,
-        operator_approval: str = "",
         approved: bool | None = None,
         expected_digest: str = "",
     ) -> dict[str, Any]:
@@ -85,13 +89,12 @@ def build_mcp(service: WriteService, settings: Settings, verifier: JwtTokenVerif
             service.execute(
                 proposal_id,
                 identity,
-                operator_approval=operator_approval,
                 approved=approved,
                 expected_digest=expected_digest,
             )
         )
 
-    @server.tool(name="inspect_proposal", description="Inspect a stored proposal. No secrets.", annotations={"readOnlyHint": True, "destructiveHint": False})
+    @server.tool(name="inspect_proposal", description="Return one stored proposal, including its digest, before, after, and expiry. Does not write. No secrets.", annotations={"readOnlyHint": True, "destructiveHint": False})
     async def inspect_proposal(proposal_id: str) -> dict[str, Any]:
         identity = request_identity()
         if identity is None:
@@ -109,7 +112,7 @@ def build_bridge_server(settings: Settings, service: WriteService, fieldwork_key
     from .auth0_bridge import bridge_identity_from_token, build_auth0_provider
 
     provider = build_auth0_provider(settings, fieldwork_key=fieldwork_key)
-    mcp = FastMCP(name="bt-fieldwork-write-mcp", auth=provider, instructions="Read schedules, customers, locations, and work orders. For writes, propose the exact change, show before/after, obtain explicit user approval, then execute with the proposal digest. Never create customers, send messages, change an entire recurring series, or use generic HTTP. Arrival-window editing and work-order creation are unsupported. Fieldwork live read-only role controls write availability.")
+    mcp = FastMCP(name="bt-fieldwork-write-mcp", auth=provider, instructions="Read schedules, customers, locations, and work orders. Propose an exact before/after change, then execute only with approved=true and that proposal's digest. No approval string. Never create customers or work orders, send messages, change a recurring series, or use generic HTTP. Arrival-window edits are unsupported. Writes require the writes flag, a live writer role, and mapping verification for work orders.")
 
     def _identity() -> dict[str, str] | None:
         from fastmcp.server.dependencies import get_access_token
@@ -121,27 +124,27 @@ def build_bridge_server(settings: Settings, service: WriteService, fieldwork_key
             service.offline_access_observed = "offline_access" in (getattr(token, "scopes", None) or [])
         return identity
 
-    @mcp.tool(name="report_gates", description="Report current authentication, live API role, supported reads and write readiness.", annotations={"readOnlyHint": True, "destructiveHint": False})
+    @mcp.tool(name="report_gates", description="Report auth configuration, the live Fieldwork API role, write and mapping flags, and which operations can propose or execute. Does not change Fieldwork.", annotations={"readOnlyHint": True, "destructiveHint": False})
     async def report_gates() -> dict[str, Any]:
         if _identity() is None:
             return {"ok": False, "gate": GATE_AUTH}
         return report_gates_body(service, settings)
 
-    @mcp.tool(name="propose_write", description="Prepare an exact before/after proposal without changing Fieldwork. Operations: update_service_location_notes(customer_id,location_id,notes); update_work_order_notes(work_order_id,service_appointment_id,instructions and/or private_notes); update_work_order_schedule(work_order_id,service_appointment_id,starts_at ISO timestamp with offset,duration minutes,service_route_ids integer array). Show the proposal to the user before execution. Customer creation, messages, series-wide edits, arrival-window edits and work-order creation are unsupported.")
+    @mcp.tool(name="propose_write", description="Prepare one exact before/after proposal and do not change Fieldwork. Supported: update_service_location_notes(customer_id, location_id, notes); update_work_order_notes(work_order_id, service_appointment_id, instructions and/or private_notes); update_work_order_schedule(work_order_id, service_appointment_id, starts_at with a numeric offset, duration minutes, service_route_ids). create_work_order, customer create, messages, series edits, and arrival-window edits are rejected.")
     async def propose_write(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         identity = _identity()
         if identity is None:
             return {"ok": False, "gate": GATE_AUTH, "gates": service.gates()}
         return redact(service.propose(operation, payload, identity))
 
-    @mcp.tool(name="execute_approved_write", description="Apply exactly one proposed Fieldwork change ONLY after explicit user approval of its before/after values. Supply approved=true and the exact digest from inspect_proposal. Never call for a draft or ambiguous approval.", annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True})
-    async def execute_approved_write(proposal_id: str, operator_approval: str = "", approved: bool | None = None, expected_digest: str = "") -> dict[str, Any]:
+    @mcp.tool(name="execute_approved_write", description="Execute one stored proposal only when approved is true and expected_digest equals that proposal digest. The digest binds proposal_id, payload, before, after, identity, and target. Do not send an approval string. Rejects a missing, stale, tampered, or cross-proposal digest. create_work_order cannot execute.", annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True})
+    async def execute_approved_write(proposal_id: str, approved: bool | None = None, expected_digest: str = "") -> dict[str, Any]:
         identity = _identity()
         if identity is None:
             return {"ok": False, "gate": GATE_AUTH, "gates": service.gates()}
-        return redact(service.execute(proposal_id, identity, operator_approval=operator_approval, approved=approved, expected_digest=expected_digest))
+        return redact(service.execute(proposal_id, identity, approved=approved, expected_digest=expected_digest))
 
-    @mcp.tool(name="inspect_proposal", description="Inspect a stored proposal. No secrets.", annotations={"readOnlyHint": True, "destructiveHint": False})
+    @mcp.tool(name="inspect_proposal", description="Return one stored proposal, including its digest, before, after, and expiry. Does not write. No secrets.", annotations={"readOnlyHint": True, "destructiveHint": False})
     async def inspect_proposal(proposal_id: str) -> dict[str, Any]:
         identity = _identity()
         if identity is None:
@@ -165,7 +168,7 @@ def _register_reads(server: Any, service: WriteService, identity_getter: Any = N
             return {"ok": False, "gate": GATE_AUTH}
         return None
 
-    @server.tool(name="search_customers", description="Search customers by the documented query parameter. Pages until a short page or reports truncation.", annotations={"readOnlyHint": True, "destructiveHint": False})
+    @server.tool(name="search_customers", description="Search customers with the documented query parameter. Reads pages until a short page, or returns truncation and next_page. Does not write.", annotations={"readOnlyHint": True, "destructiveHint": False})
     async def search_customers(query: str) -> dict[str, Any]:
         denied = _guard()
         if denied:
@@ -175,7 +178,7 @@ def _register_reads(server: Any, service: WriteService, identity_getter: Any = N
         except Exception as exc:
             return {"ok": False, "gate": getattr(exc, "gate", "read_rejected")}
 
-    @server.tool(name="get_customer", description="GET one customer by id. Flat id-bearing body only.", annotations={"readOnlyHint": True, "destructiveHint": False})
+    @server.tool(name="get_customer", description="Read one customer by numeric id. Does not write.", annotations={"readOnlyHint": True, "destructiveHint": False})
     async def get_customer(customer_id: str) -> dict[str, Any]:
         denied = _guard()
         if denied:
@@ -185,7 +188,7 @@ def _register_reads(server: Any, service: WriteService, identity_getter: Any = N
         except Exception as exc:
             return {"ok": False, "gate": getattr(exc, "gate", "read_rejected")}
 
-    @server.tool(name="get_service_location", description="GET one service location wrapper for a customer.", annotations={"readOnlyHint": True, "destructiveHint": False})
+    @server.tool(name="get_service_location", description="Read one service location for a customer id and location id. Does not write.", annotations={"readOnlyHint": True, "destructiveHint": False})
     async def get_service_location(customer_id: str, location_id: str) -> dict[str, Any]:
         denied = _guard()
         if denied:
@@ -195,7 +198,7 @@ def _register_reads(server: Any, service: WriteService, identity_getter: Any = N
         except Exception as exc:
             return {"ok": False, "gate": getattr(exc, "gate", "read_rejected")}
 
-    @server.tool(name="get_work_order", description="GET one work order. Occurrence id and service-appointment id stay distinct.", annotations={"readOnlyHint": True, "destructiveHint": False})
+    @server.tool(name="get_work_order", description="Read one work order. The occurrence id and service_appointment_id stay distinct. Does not write.", annotations={"readOnlyHint": True, "destructiveHint": False})
     async def get_work_order(work_order_id: str) -> dict[str, Any]:
         denied = _guard()
         if denied:
@@ -205,7 +208,7 @@ def _register_reads(server: Any, service: WriteService, identity_getter: Any = N
         except Exception as exc:
             return {"ok": False, "gate": getattr(exc, "gate", "read_rejected")}
 
-    @server.tool(name="list_work_orders", description="GET /work_orders with documented date, route, technician, and pool filters. Pages until short or reports truncation.", annotations={"readOnlyHint": True, "destructiveHint": False})
+    @server.tool(name="list_work_orders", description="Read work orders for start_date and end_date, with optional status, route, current_technician, sort_direction, and work_pool. Route and status are checked locally because the API ignores the route filter. A full page sets truncated and next_page. Does not write.", annotations={"readOnlyHint": True, "destructiveHint": False})
     async def list_work_orders(start_date: str = "", end_date: str = "", current_technician: bool = False, sort_direction: str = "asc", work_pool: bool = False, status: str = "", service_route_ids: list[str] | None = None, page: int = 1) -> dict[str, Any]:
         denied = _guard()
         if denied:
@@ -215,7 +218,7 @@ def _register_reads(server: Any, service: WriteService, identity_getter: Any = N
         except Exception as exc:
             return {"ok": False, "gate": getattr(exc, "gate", "read_rejected")}
 
-    @server.tool(name="list_schedule", description="Read the live schedule for ISO dates in America/New_York, optionally by technician full name or route IDs. Includes customer names, addresses, times, arrival windows and distinct occurrence/appointment IDs. A configured route-to-technician snapshot is labeled; null technician_id does not mean unassigned. Follow next_page if truncated.", annotations={"readOnlyHint": True, "destructiveHint": False})
+    @server.tool(name="list_schedule", description="Read the schedule for ISO dates in America/New_York, optionally by technician name or route ids. Includes customer, address, times, arrival window, and distinct occurrence and appointment ids. A configured route directory is labeled as a snapshot. null technician_id is not unassigned. Follow next_page when truncated. Does not write.", annotations={"readOnlyHint": True, "destructiveHint": False})
     async def list_schedule(start_date: str, end_date: str, current_technician: bool = False, sort_direction: str = "asc", work_pool: bool = False, status: str = "", service_route_ids: list[str] | None = None, technician: str = "", page: int = 1) -> dict[str, Any]:
         denied = _guard()
         if denied:
@@ -225,7 +228,7 @@ def _register_reads(server: Any, service: WriteService, identity_getter: Any = N
         except Exception as exc:
             return {"ok": False, "gate": getattr(exc, "gate", "read_rejected")}
 
-    @server.tool(name="list_service_routes", description="GET /service_routes with page and per_page only.", annotations={"readOnlyHint": True, "destructiveHint": False})
+    @server.tool(name="list_service_routes", description="Read service routes. An empty array is a valid directory, not proof of no staff. Route names on work orders remain usable. Does not write. list_users is not available.", annotations={"readOnlyHint": True, "destructiveHint": False})
     async def list_service_routes() -> dict[str, Any]:
         denied = _guard()
         if denied:
@@ -241,16 +244,28 @@ def report_gates_body(service: WriteService, settings: Settings) -> dict[str, An
         role = service.client.get_api_role()
     except Exception as exc:
         role, role_error = "unknown", getattr(exc, "gate", "read_rejected")
+    normalized = str(role or "unknown").strip().lower().replace("-", "_").replace(" ", "_")
+    writer = role_error is None and normalized == "writer"
+    writes_on = bool(settings.writes_enabled) and writer
+    if settings.auth_mode == "auth0_bridge":
+        oauth_ready = not bridge_blockers(settings)
+    else:
+        oauth_ready = settings.oauth_ready()
     gates = service.gates()
-    gates.update(api_role=role, fieldwork_api_auth_verified=role_error is None,
-                 fieldwork_get_auth_verified=role_error is None,
-                 writes_enabled=role == "writer",
-                 rollout_safeguard="Fieldwork API user's live read-only role",
-                 oauth_ready=settings.auth_mode == "auth0_bridge" and not bridge_blockers(settings) or settings.oauth_ready())
+    gates.update(
+        api_role=normalized,
+        fieldwork_api_auth_verified=role_error is None,
+        fieldwork_get_auth_verified=role_error is None,
+        writes_enabled=writes_on,
+        work_order_id_mapping_verified=bool(settings.mapping_verified),
+        live_ready=writes_on,
+        rollout_safeguard="FIELDWORK_WRITES_ENABLED and live writer role; work orders also need FIELDWORK_MAPPING_VERIFIED",
+        oauth_ready=oauth_ready,
+    )
     return {
         "ok": True,
         "reads_ready": role_error is None,
-        "live_ready": role_error is None and role == "writer",
+        "live_ready": writes_on,
         "fieldwork_api_auth_verified": role_error is None,
         "role_check_error": role_error,
         "credential_ready": service.client.api_key_present(),

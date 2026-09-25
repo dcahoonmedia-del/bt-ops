@@ -117,12 +117,13 @@ class WriteMcpTests(unittest.TestCase):
 
     def test_disabled_writes(self) -> None:
         proposed = self.h.propose_notes()
+        self.assertTrue(proposed["ok"], proposed)
         token = self.h.approve(proposed["proposal_id"])
         result = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=token, approved=True)
         self.assertFalse(result["ok"])
-        self.assertEqual(result["gate"], GATE_READONLY)
+        self.assertEqual(result["gate"], GATE_WRITES_DISABLED)
         self.assertFalse(result["gates"]["writes_enabled"])
-        self.assertEqual(self.h.transport.calls[-1]["method"], "GET")
+        self.assertFalse(any(call["method"] == "PATCH" for call in self.h.transport.calls))
 
     def test_approved_true_from_model_is_ignored(self) -> None:
         self.h.close()
@@ -200,6 +201,8 @@ class WriteMcpTests(unittest.TestCase):
         self.assertEqual(again["gate"], GATE_REPLAY)
 
     def test_concurrent_duplicates(self) -> None:
+        self.h.close()
+        self.h = Harness(writes_enabled=True, api_role="writer")
         results: list[dict] = []
 
         def worker() -> None:
@@ -257,7 +260,7 @@ class WriteMcpTests(unittest.TestCase):
 
     def test_work_order_notes_fail_closed_unverified_mapping(self) -> None:
         self.h.close()
-        self.h = Harness(writes_enabled=True, api_role="writer")
+        self.h = Harness(writes_enabled=True, api_role="writer", mapping_verified=True)
         missing = self.h.service.propose(
             OP_WORK_ORDER_NOTES,
             {"work_order_id": "10", "service_appointment_id": "20", "instructions": "gate code"},
@@ -295,12 +298,13 @@ class WriteMcpTests(unittest.TestCase):
             },
             IDENTITY,
         )
-        self.assertTrue(proposed["ok"], proposed)
-        token = self.h.approve(proposed["proposal_id"])
-        result = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=token)
-        self.assertEqual(result["gate"], GATE_SCHEMA_UNVERIFIED)
+        self.assertFalse(proposed["ok"])
+        self.assertEqual(proposed["gate"], GATE_SCHEMA_UNVERIFIED)
+        self.assertNotIn("proposal_id", proposed)
 
     def test_arrival_window_rejected(self) -> None:
+        self.h.close()
+        self.h = Harness(writes_enabled=True, api_role="writer")
         result = self.h.service.propose(
             OP_CREATE_WORK_ORDER,
             {
@@ -367,8 +371,10 @@ class WriteMcpTests(unittest.TestCase):
         self.assertFalse(gates["arrival_window_write_verified"])
         self.assertTrue(gates["check_connection_is_not_auth_proof"])
         self.assertEqual(gates["rollout_safeguard"], "readonly_api_role")
-        self.assertEqual(gates["operations"]["update_service_location_notes"]["execute_blocked_by"], ["readonly_api_role"])
-        self.assertEqual(gates["operations"]["update_work_order_notes"]["execute_blocked_by"], ["readonly_api_role"])
+        self.assertIn("writes_disabled", gates["operations"]["update_service_location_notes"]["execute_blocked_by"])
+        self.assertIn("readonly_api_role", gates["operations"]["update_service_location_notes"]["execute_blocked_by"])
+        self.assertFalse(gates["work_order_id_mapping_verified"])
+        self.assertFalse(gates["operations"]["create_work_order"]["propose"])
         self.assertIn("work_order_schema_unverified", gates["closed_contracts"])
         self.assertIn("arrival_window_unverified", gates["closed_contracts"])
         self.assertNotIn("live_patch_untested", gates["closed_contracts"])

@@ -49,7 +49,7 @@ class ChatGPTApprovalTests(unittest.TestCase):
     def setUp(self):
         from tests.test_write_mcp import Harness
         from dataclasses import replace
-        self.h=Harness(api_role='writer')
+        self.h=Harness(api_role='writer', writes_enabled=True, mapping_verified=True)
         self.h.service.settings=replace(self.h.settings,approval_mode='chatgpt_confirmation')
     def tearDown(self): self.h.close()
     def test_exact_confirmed_proposal_executes_once(self):
@@ -72,3 +72,53 @@ class ChatGPTApprovalTests(unittest.TestCase):
         r=self.h.service.execute(p['proposal_id'],IDENTITY,approved=True,expected_digest=p['digest'])
         self.assertEqual(r['gate'],'readonly_api_role')
         self.assertFalse(any(c['method']=='PATCH' for c in self.h.transport.calls))
+
+    def test_nonempty_operator_approval_does_not_skip_chatgpt_confirmation(self):
+        from tests.test_write_mcp import IDENTITY
+        p=self.h.propose_notes('approved standing note')
+        junk=self.h.service.execute(p['proposal_id'], IDENTITY, operator_approval='not-a-token', approved=True, expected_digest=p['digest'])
+        self.assertTrue(junk['ok'], junk)
+        self.assertTrue(any(c['method']=='PATCH' for c in self.h.transport.calls))
+
+    def test_junk_string_without_exact_digest_is_not_proof(self):
+        from tests.test_write_mcp import IDENTITY
+        p=self.h.propose_notes('approved standing note')
+        self.h.transport.work_orders['10']={'id':10,'service_appointment_id':20,'customer_id':41,'service_location_id':77,'instructions':'old','private_notes':'secret','starts_at':'2026-09-25T08:00:00-04:00','duration':60,'service_route_ids':[2557]}
+        other=self.h.service.propose('update_work_order_notes', {'work_order_id':'10','service_appointment_id':'20','instructions':'other'}, IDENTITY)
+        self.assertTrue(other.get('ok'), other)
+        for kwargs in (
+            {'operator_approval':'please', 'approved':True, 'expected_digest':'tampered'},
+            {'operator_approval':'please', 'approved':None, 'expected_digest':p['digest']},
+            {'operator_approval':'please', 'approved':True, 'expected_digest':other['digest']},
+        ):
+            result=self.h.service.execute(p['proposal_id'], IDENTITY, **kwargs)
+            self.assertEqual(result['gate'], 'operator_approval_required', result)
+        self.assertFalse(any(c['method']=='PATCH' for c in self.h.transport.calls))
+
+    def test_stored_digest_tamper_rejected(self):
+        from tests.test_write_mcp import IDENTITY
+        p=self.h.propose_notes('approved standing note')
+        self.h.store._conn.execute("UPDATE proposals SET digest=? WHERE proposal_id=?", ('0'*64, p['proposal_id']))
+        result=self.h.service.execute(p['proposal_id'], IDENTITY, approved=True, expected_digest=p['digest'])
+        self.assertEqual(result['gate'], 'operator_approval_required')
+        self.assertEqual(result['reason'], 'stored_proposal_digest_mismatch')
+        self.assertFalse(any(c['method']=='PATCH' for c in self.h.transport.calls))
+
+    def test_chatgpt_tool_has_no_operator_approval_parameter(self):
+        import asyncio
+        from bt_fieldwork_write_mcp.oauth_rs import JwtTokenVerifier
+        from bt_fieldwork_write_mcp.server import build_mcp, request_identity
+        from tests.test_write_mcp import IDENTITY
+        server=build_mcp(self.h.service, self.h.settings, JwtTokenVerifier(self.h.settings))
+        tool=next(item for item in server._tool_manager.list_tools() if item.name=='execute_approved_write')
+        self.assertNotIn('operator_approval', tool.parameters['properties'])
+        names={item.name for item in server._tool_manager.list_tools()}
+        self.assertEqual(len(names), 11)
+        proposed=self.h.propose_notes('wrapper note')
+        import bt_fieldwork_write_mcp.server as server_mod
+        server_mod.request_identity = lambda: dict(IDENTITY)
+        try:
+            result=asyncio.run(tool.fn(proposed['proposal_id'], approved=True, expected_digest=proposed['digest']))
+        finally:
+            server_mod.request_identity = request_identity
+        self.assertTrue(result['ok'], result)

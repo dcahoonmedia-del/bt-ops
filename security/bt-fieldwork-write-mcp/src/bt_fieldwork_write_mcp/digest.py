@@ -17,9 +17,10 @@ def sha256_hex(value: str) -> str:
 
 def proposal_digest(
     *,
+    proposal_id: str,
     operation: str,
     identity: dict[str, str],
-    subject_key: str,
+    target: str,
     before: dict[str, Any],
     after: dict[str, Any],
     payload: dict[str, Any],
@@ -27,9 +28,10 @@ def proposal_digest(
     return sha256_hex(
         canonical(
             {
+                "proposal_id": proposal_id,
                 "operation": operation,
                 "identity": {"sub": identity.get("sub", ""), "email": identity.get("email", "")},
-                "subject_key": subject_key,
+                "target": target,
                 "before": before,
                 "after": after,
                 "payload": payload,

@@ -107,10 +107,19 @@ def current_gates(
     credential_ready: bool = False,
     oauth_ready: bool = False,
 ) -> dict[str, Any]:
-    readonly = str(api_role or "readonly").strip().lower() == "readonly"
+    normalized = str(api_role or "readonly").strip().lower().replace("-", "_").replace(" ", "_")
+    readonly = normalized != "writer"
+    write_blocks = []
+    if not writes_enabled:
+        write_blocks.append(GATE_WRITES_DISABLED)
+    if readonly:
+        write_blocks.append(GATE_READONLY)
+    work_order_blocks = list(write_blocks)
+    if not mapping_verified:
+        work_order_blocks.append(GATE_MAPPING_UNVERIFIED)
     return {
         "writes_enabled": bool(writes_enabled) and not readonly,
-        "api_role": "readonly" if readonly else "not_readonly",
+        "api_role": normalized,
         "auth_query_parameter": "api_key",
         "authorization_header_auth": False,
         "fieldwork_get_protocol_historically_verified": True,
@@ -121,7 +130,7 @@ def current_gates(
         "live_ready": False,
         "check_connection_is_not_auth_proof": True,
         "work_order_get_id_pairs_verified": True,
-        "work_order_id_mapping_verified": True,
+        "work_order_id_mapping_verified": bool(mapping_verified),
         "live_patch_tested": False,
         "work_order_schema_verified": False,
         "arrival_window_read_known": True,
@@ -132,10 +141,10 @@ def current_gates(
         "messaging_tools": False,
         "generic_http": False,
         "operations": {
-            "update_service_location_notes": {"propose": True, "execute_blocked_by": [GATE_READONLY] if readonly else []},
-            "update_work_order_notes": {"propose": True, "execute_role": "client.get_api_role", "execute_blocked_by": [GATE_READONLY] if readonly else [], "fields": ["instructions", "private_notes"]},
-            "update_work_order_schedule": {"propose": True, "single_occurrence": True, "execute_role": "client.get_api_role", "execute_blocked_by": [GATE_READONLY] if readonly else [], "fields": ["starts_at", "duration", "service_route_ids"], "arrival_window_preserved": True},
-            "create_work_order": {"propose": True, "execute_blocked_by": [GATE_SCHEMA_UNVERIFIED]},
+            "update_service_location_notes": {"propose": True, "execute_blocked_by": list(write_blocks)},
+            "update_work_order_notes": {"propose": bool(writes_enabled) and bool(mapping_verified), "execute_role": "client.get_api_role", "execute_blocked_by": list(work_order_blocks), "fields": ["instructions", "private_notes"]},
+            "update_work_order_schedule": {"propose": bool(writes_enabled) and bool(mapping_verified), "single_occurrence": True, "execute_role": "client.get_api_role", "execute_blocked_by": list(work_order_blocks), "fields": ["starts_at", "duration", "service_route_ids"], "arrival_window_preserved": True},
+            "create_work_order": {"propose": False, "execute_blocked_by": [GATE_SCHEMA_UNVERIFIED]},
             "schedule_or_arrival_window_write": {"propose": False, "execute_blocked_by": [GATE_ARRIVAL_WINDOW]},
             "list_users": {"read": False, "reason": "omitted_no_documented_users_endpoint"},
             "list_schedule_filtered": {"read": True, "server_side_filtering": False, "local_filter": ["date", "status", "service_route_ids"], "query_sent": ["start_date", "end_date", "current_technician", "sort_direction", "work_pool", "filter[status]", "filter[service_routes_ids][]"]},

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
@@ -12,7 +13,7 @@ from .allowlist import (
     GATE_AUTH,
     GATE_EXPIRED,
     GATE_IDENTITY,
-    GATE_LIVE_PATCH_UNTESTED,
+    GATE_MAPPING_UNVERIFIED,
     GATE_READONLY,
     GATE_RECURRING,
     GATE_OPERATOR,
@@ -109,9 +110,9 @@ class WriteService:
         if callable(key):
             key_ready = bool(key())
         return current_gates(
-            writes_enabled=True,
+            writes_enabled=self.settings.writes_enabled,
             mapping_verified=self.settings.mapping_verified,
-            api_role=getattr(self.client, "observed_api_role", "readonly") if getattr(self.client, "observed_api_role", "unknown") != "unknown" else "readonly",
+            api_role=self._live_api_role(),
             credential_ready=key_ready,
             oauth_ready=self.settings.oauth_ready() or self.settings.auth_mode == "auth0_bridge",
         )
@@ -139,8 +140,12 @@ class WriteService:
             if operation == OP_LOCATION_NOTES:
                 return self._propose_location_notes(payload, identity)
             if operation == OP_WORK_ORDER_NOTES:
+                if not self.settings.mapping_verified:
+                    return self._fail(GATE_MAPPING_UNVERIFIED, operation=operation)
                 return self._propose_work_order_notes(payload, identity)
             if operation == OP_WORK_ORDER_SCHEDULE:
+                if not self.settings.mapping_verified:
+                    return self._fail(GATE_MAPPING_UNVERIFIED, operation=operation)
                 return self._propose_work_order_schedule(payload, identity)
             if operation == OP_CREATE_WORK_ORDER:
                 return self._propose_create(payload, identity)
@@ -282,18 +287,8 @@ class WriteService:
             assert_only(occ, OCCURRENCE_FIELDS, label="occurrence")
             if "use_time_window" in occ:
                 return self._fail(GATE_ARRIVAL_WINDOW)
-        required = ("customer_id", "service_location_id", "repeat_type", "repeat_period")
-        missing = [key for key in required if payload.get(key) in (None, "")]
-        if missing:
-            return self._fail("unknown_field", fields=missing)
-        duplicates = self.client.search_work_orders()
-        subject = f"create:{payload['customer_id']}:{payload['service_location_id']}:{payload.get('occurrences')}"
-        before = {"existing_work_orders": [item.get("id") for item in duplicates], "schema": "unverified"}
-        after = {"created": "not_executed", "payload": payload}
-        result = self._persist_proposal(OP_CREATE_WORK_ORDER, payload, identity, subject, before, after)
-        result["gates"] = self.gates()
-        result["execute_blocked"] = [GATE_SCHEMA_UNVERIFIED, GATE_ARRIVAL_WINDOW, GATE_LIVE_PATCH_UNTESTED]
-        return result
+        del identity
+        return self._fail(GATE_SCHEMA_UNVERIFIED, operation=OP_CREATE_WORK_ORDER)
 
     def _persist_proposal(
         self,
@@ -307,9 +302,10 @@ class WriteService:
         clock = _utc(self._now())
         proposal_id = str(uuid.uuid4())
         digest = proposal_digest(
+            proposal_id=proposal_id,
             operation=operation,
             identity=identity,
-            subject_key=subject_key,
+            target=subject_key,
             before=before,
             after=after,
             payload=payload,
@@ -372,6 +368,8 @@ class WriteService:
         if "ok" in ident and ident.get("ok") is False:
             return ident
         identity = ident  # type: ignore[assignment]
+        if not self.settings.writes_enabled:
+            return self._fail(GATE_WRITES_DISABLED, proposal_id=proposal_id)
         if self._live_api_role() != "writer":
             return self._fail(GATE_READONLY, proposal_id=proposal_id)
         proposal = self.store.get_proposal(proposal_id)
@@ -390,10 +388,8 @@ class WriteService:
             return self._fail(GATE_REPLAY, proposal_id=proposal_id)
         if self.store.has_ambiguous(proposal["subject_key"]):
             return self._fail("ambiguous_remote_write_no_retry", proposal_id=proposal_id)
-        if operator_approval:
-            existing = self.store.get_approval(token_fingerprint(operator_approval))
-            if existing and existing["used_at"]:
-                return self._fail(GATE_REPLAY, proposal_id=proposal_id)
+        if proposal["operation"] in {OP_WORK_ORDER_NOTES, OP_WORK_ORDER_SCHEDULE} and not self.settings.mapping_verified:
+            return self._fail(GATE_MAPPING_UNVERIFIED, proposal_id=proposal_id)
         if proposal["operation"] == OP_CREATE_WORK_ORDER:
             return self._fail(GATE_SCHEMA_UNVERIFIED, proposal_id=proposal_id)
         if proposal["operation"] in {OP_WORK_ORDER_NOTES, OP_WORK_ORDER_SCHEDULE}:
@@ -402,14 +398,16 @@ class WriteService:
             stale = self._location_stale(proposal) if proposal["operation"] == OP_LOCATION_NOTES else None
         if stale is not None:
             return stale
-        if self.settings.approval_mode == "chatgpt_confirmation" and not operator_approval:
-            if approved is not True or expected_digest != proposal["digest"]:
+        rebound = self._bound_digest(proposal)
+        if not hmac.compare_digest(rebound, str(proposal["digest"])):
+            return self._fail(GATE_OPERATOR, proposal_id=proposal_id, reason="stored_proposal_digest_mismatch")
+        if self.settings.approval_mode == "chatgpt_confirmation":
+            # A caller-supplied operator_approval string is not proof in this mode.
+            del operator_approval
+            if approved is not True or not expected_digest or not hmac.compare_digest(str(expected_digest), rebound):
                 return self._fail(GATE_OPERATOR, proposal_id=proposal_id, reason="explicit_confirmation_and_exact_digest_required")
-            minted = self.mint_approval(proposal_id)
-            if not minted.get("ok"):
-                return minted
-            operator_approval = minted["operator_approval"]
-        if not self._accept_operator(proposal, operator_approval, clock):
+            self._record_chatgpt_confirmation(proposal, rebound, clock)
+        elif not self._accept_operator(proposal, operator_approval, clock):
             return self._fail(self._operator_gate(operator_approval, proposal, clock), proposal_id=proposal_id)
 
         if proposal["operation"] == OP_LOCATION_NOTES:
@@ -421,6 +419,24 @@ class WriteService:
         if proposal["operation"] == OP_CREATE_WORK_ORDER:
             return self._fail(GATE_SCHEMA_UNVERIFIED, proposal_id=proposal_id)
         return self._fail(GATE_UNKNOWN_OP, proposal_id=proposal_id)
+
+    def _bound_digest(self, proposal: dict[str, Any]) -> str:
+        return proposal_digest(
+            proposal_id=proposal["proposal_id"],
+            operation=proposal["operation"],
+            identity=proposal["identity"],
+            target=proposal["subject_key"],
+            before=proposal["before"],
+            after=proposal["after"],
+            payload=proposal["payload"],
+        )
+
+    def _record_chatgpt_confirmation(self, proposal: dict[str, Any], digest: str, clock: datetime) -> None:
+        fingerprint = token_fingerprint(f"chatgpt:{proposal['proposal_id']}:{digest}")
+        existing = self.store.get_approval(fingerprint)
+        if existing is None:
+            self.store.record_approval(fingerprint, proposal["proposal_id"], digest, _iso(clock), proposal["expires_at"])
+        self.store.mark_approval_used(fingerprint, _iso(clock))
 
     def _operator_gate(self, token: str, proposal: dict[str, Any], clock: datetime) -> str:
         if not token:

@@ -44,7 +44,7 @@ class _RoleClient:
 
 class ContractV7Tests(unittest.TestCase):
     def setUp(self) -> None:
-        self.h = Harness(writes_enabled=False, api_role="readonly")
+        self.h = Harness(writes_enabled=True, api_role="writer", mapping_verified=True)
         self.role = _RoleClient(self.h.client, "writer")
         self.h.service.client = self.role
         self.h.transport.work_orders["10"] = {
@@ -157,10 +157,9 @@ class ContractV7Tests(unittest.TestCase):
             {"customer_id": 41, "service_location_id": 77, "repeat_type": "none", "repeat_period": 0, "line_items": [], "occurrences": []},
             IDENTITY,
         )
-        self.assertTrue(proposed["ok"], proposed)
-        token = self.h.approve(proposed["proposal_id"])
-        result = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=token)
-        self.assertEqual(result["gate"], GATE_SCHEMA_UNVERIFIED)
+        self.assertFalse(proposed["ok"])
+        self.assertEqual(proposed["gate"], GATE_SCHEMA_UNVERIFIED)
+        self.assertNotIn("proposal_id", proposed)
         self.assertEqual(self.role.patches, [])
 
     def test_arrival_constant_is_still_closed(self) -> None:
