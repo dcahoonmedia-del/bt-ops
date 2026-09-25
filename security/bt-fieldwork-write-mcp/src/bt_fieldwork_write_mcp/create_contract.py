@@ -180,6 +180,29 @@ def customer_request(payload: dict[str, Any]) -> dict[str, Any]:
         plan["additional_location"] = _additional_location(payload["additional_location"])
     if "contact" in payload:
         plan["contact"] = _contact(payload["contact"])
+    if "primary_email" in payload:
+        email = payload["primary_email"]
+        if not isinstance(email, str) or not email.strip():
+            _unknown("primary_email")
+        plan["primary_email"] = email.strip()
+        plan["invoice_email"] = {
+            "caller_field": "primary_email",
+            "api_field": "invoice_email",
+            "value": email.strip(),
+            "write_supported": False,
+            "candidate_body": {"customer": {"invoice_email": email.strip()}},
+            "reason": "customer_write_spec_has_no_invoice_email",
+        }
+    if "location_email" in payload:
+        location_email = payload["location_email"]
+        if not isinstance(location_email, str) or not location_email.strip():
+            _unknown("location_email")
+        plan["location_email"] = location_email.strip()
+    if "location_type_id" in payload:
+        plan["location_type_id"] = _int(payload.get("location_type_id"), "location_type_id", positive=True)
+    plan["billing_phone_kind"] = customer.get("billing_phone_kind")
+    plan["phone_kind_supplied"] = "billing_phone_kind" in payload
+    plan["contact_count"] = 1 if plan.get("contact") else 0
     if "confirmed_new" in payload and payload["confirmed_new"] is not True:
         _unknown("confirmed_new")
     if "existing_customer_id" in payload:
@@ -209,12 +232,15 @@ def _caller_location(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _customer_api_steps(plan: dict[str, Any]) -> list[dict[str, Any]]:
     steps = [{"method": "POST", "path": "/customers", "body": {"customer": plan["customer"]}}]
-    if plan.get("location_patch"):
+    if plan.get("main_location") or plan.get("location_patch"):
+        service_location = dict(plan.get("main_location") or {})
+        if plan.get("location_patch"):
+            service_location.update(plan["location_patch"])
         steps.append(
             {
                 "method": "PATCH",
                 "path": "/customers/{customer_id}/service_locations/{location_id}",
-                "body": {"service_location": plan["location_patch"]},
+                "body": {"service_location": service_location},
             }
         )
     if plan.get("additional_location"):

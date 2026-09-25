@@ -116,10 +116,49 @@ def _search_pages(client: Any, path: str, query: dict[str, Any]) -> dict[str, An
     return found
 
 
+def emails_for(payload: dict[str, Any]) -> set[str]:
+    found = set()
+    for key in ("primary_email", "location_email"):
+        text = str(payload.get(key) or "").strip().casefold()
+        if text:
+            found.add(text)
+    contact = payload.get("contact") if isinstance(payload.get("contact"), dict) else {}
+    contact_email = str(contact.get("email") or "").strip().casefold()
+    if contact_email:
+        found.add(contact_email)
+    return found
+
+
+def _street(value: Any) -> str:
+    if isinstance(value, dict):
+        return normalize_name(value.get("street") or value.get("billing_street"))
+    return normalize_name(value)
+
+
+def addresses_for(payload: dict[str, Any]) -> set[str]:
+    found = set()
+    for key in ("billing_street",):
+        street = _street(payload.get(key))
+        if street:
+            found.add(street)
+    service = payload.get("service_address") if isinstance(payload.get("service_address"), dict) else {}
+    street = _street(service.get("street"))
+    if street:
+        found.add(street)
+    extra = payload.get("additional_location") if isinstance(payload.get("additional_location"), dict) else {}
+    extra_address = extra.get("address") if isinstance(extra.get("address"), dict) else {}
+    extra_street = _street(extra_address.get("street"))
+    if extra_street:
+        found.add(extra_street)
+    return found
+
+
 def duplicate_search(client: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    """Complete name and phone scans. An incomplete page is not proof of no duplicate."""
+    """Name and phone scans are the documented queries. Email has no documented query."""
     wanted_names = names_for(payload)
     wanted_phones = phones_for(payload)
+    wanted_emails = emails_for(payload)
+    wanted_addresses = addresses_for(payload)
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
     for name in sorted(wanted_names):
@@ -146,9 +185,27 @@ def duplicate_search(client: Any, payload: dict[str, Any]) -> dict[str, Any]:
         names.add(normalize_name(" ".join(str(candidate.get(key) or "") for key in ("first_name", "last_name"))))
         phones = {normalize_phone(candidate.get("billing_phone"))}
         phones.update(normalize_phone(item) for item in candidate.get("phones") or [])
-        if (wanted_names & {item for item in names if item}) or (wanted_phones & {item for item in phones if item}):
+        emails = {str(candidate.get("email") or "").strip().casefold(), str(candidate.get("invoice_email") or "").strip().casefold()}
+        emails.update(str(item.get("email") or "").strip().casefold() for item in candidate.get("contacts") or [])
+        emails.update(str(item.get("email") or "").strip().casefold() for item in candidate.get("locations") or [])
+        streets = {_street(candidate.get("billing_address"))}
+        streets.update(_street(item.get("address")) for item in candidate.get("locations") or [])
+        if (wanted_names & {item for item in names if item}) or (wanted_phones & {item for item in phones if item}) or (wanted_emails & {item for item in emails if item}) or (wanted_addresses & {item for item in streets if item}):
             candidates.append(candidate)
-    return {"complete": True, "candidates": candidates, "normalized_names": sorted(wanted_names), "normalized_phones": sorted(wanted_phones)}
+    gap = []
+    if wanted_emails:
+        gap.append("email")
+    if wanted_addresses:
+        gap.append("address")
+    return {
+        "complete": not gap,
+        "coverage_gap": gap,
+        "candidates": candidates,
+        "normalized_names": sorted(wanted_names),
+        "normalized_phones": sorted(wanted_phones),
+        "normalized_emails": sorted(wanted_emails),
+        "normalized_addresses": sorted(wanted_addresses),
+    }
 
 
 def _inspect_candidate(client: Any, row: dict[str, Any]) -> dict[str, Any]:
@@ -163,7 +220,9 @@ def _inspect_candidate(client: Any, row: dict[str, Any]) -> dict[str, Any]:
         "first_name": customer.get("first_name"),
         "last_name": customer.get("last_name"),
         "billing_name": customer.get("billing_name"),
-        "email": customer.get("email"),
+        "email": customer.get("email") or customer.get("invoice_email"),
+        "invoice_email": customer.get("invoice_email"),
+        "contacts": _contact_rows(client, customer_id),
         "billing_phone": customer.get("billing_phone"),
         "phones": list(customer.get("billing_phones") or []),
         "billing_address": customer.get("billing_address"),
@@ -175,6 +234,49 @@ def _inspect_candidate(client: Any, row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _contact_rows(client: Any, customer_id: str) -> list[dict[str, Any]]:
+    listed = client.list_contacts(customer_id)
+    if not listed.get("complete") or listed.get("truncated") or listed.get("repeated_page") or listed.get("partial_error"):
+        raise GateError(GATE_DUPLICATE_SEARCH, path="/contacts", customer_id=customer_id, reason="contact_list_incomplete")
+    return [{"id": item.get("id"), "email": item.get("email"), "first_name": item.get("first_name"), "last_name": item.get("last_name")} for item in listed.get("items") or [] if isinstance(item, dict)]
+
+
+def bind_residential_location(plan: dict[str, Any], client: Any, configured_type_id: str) -> None:
+    customer_type = plan["customer"]["customer_type"]
+    chosen = plan.get("location_type_id")
+    if customer_type == "Residential":
+        chosen = chosen or configured_type_id
+        if not str(chosen or "").strip():
+            raise GateError("location_type_unconfigured")
+    elif chosen is None:
+        raise GateError("location_type_required")
+    listed = client.list_location_types()
+    if not listed.get("complete") or listed.get("repeated_page") or listed.get("partial_error"):
+        raise GateError("location_type_unverified", reason="location_type_list_incomplete")
+    matches = [row for row in listed.get("items") or [] if str(row.get("id")) == str(chosen)]
+    if len(matches) != 1:
+        raise GateError("location_type_unverified", reason="location_type_id_not_listed")
+    if customer_type == "Residential" and matches[0].get("name") != "Residential":
+        raise GateError("location_type_unverified", reason="configured_type_is_not_residential")
+    plan["location_type_id"] = int(matches[0]["id"])
+    plan["property_type"] = matches[0].get("name")
+    fields = {"location_type_id": plan["location_type_id"], "reminders_type": 0}
+    if plan.get("location_email"):
+        fields["email"] = plan["location_email"]
+    plan["main_location"] = fields
+    plan["reminders_type"] = 0
+    plan["notification_effects"] = {
+        "reminders_type_sent": 0,
+        "appointment_reminders": "inactive_does_not_disable_every_notice",
+        "send_report_email": "not_sent",
+        "completion_report": "inherited_send_report_email_true_may_send_once_location_email_is_added",
+        "customer_creation_notice": "unknown",
+    }
+    from .create_contract import _customer_api_steps
+
+    plan["api_steps"] = _customer_api_steps(plan)
+
+
 def resolve_duplicates(
     search: dict[str, Any],
     *,
@@ -182,6 +284,8 @@ def resolve_duplicates(
     existing_customer_id: int | None,
     approved_candidate_ids: list[Any] | None = None,
 ) -> dict[str, Any]:
+    if search.get("coverage_gap"):
+        raise GateError(GATE_DUPLICATE_SEARCH, reason="email_or_address_coverage_gap", coverage_gap=list(search["coverage_gap"]))
     candidates = search["candidates"]
     current_ids = {str(item.get("id")) for item in candidates}
     if approved_candidate_ids is not None:
@@ -464,7 +568,15 @@ def _require_equal(field: str, sent: Any, got: Any) -> Any:
     return got
 
 
-def customer_readback(client: Any, customer_id: str, *, sent_customer: dict[str, Any], contact: dict[str, Any] | None, location_id: str, address: dict[str, Any] | None, wrote_customer: bool = True) -> dict[str, Any]:
+def _reminder_readback(location: dict[str, Any]) -> dict[str, Any]:
+    if "reminders_type" not in location:
+        return {"status": "unverified", "reason": "get_omits_reminders_type", "manual_check": True}
+    if location.get("reminders_type") != 0:
+        _mismatch("reminders_type", 0, location.get("reminders_type"))
+    return {"status": "verified", "value": location.get("reminders_type")}
+
+
+def customer_readback(client: Any, customer_id: str, *, sent_customer: dict[str, Any], contact: dict[str, Any] | None, location_id: str, address: dict[str, Any] | None, wrote_customer: bool = True, main_location: dict[str, Any] | None = None) -> dict[str, Any]:
     customer = client.get_customer(customer_id)
     status = str(customer.get("status") or customer.get("customer_status") or "").strip().lower()
     if status != "active":
@@ -490,6 +602,11 @@ def customer_readback(client: Any, customer_id: str, *, sent_customer: dict[str,
         sent_location = (sent_customer.get("service_locations_attributes") or [{}])[0]
         _require_equal("location_name", sent_location.get("name"), location.get("name"))
         _require_equal("same_as_billing_address", sent_location.get("same_as_billing_address"), location.get("same_as_billing_address"))
+    if main_location:
+        if "email" in main_location:
+            _require_equal("location_email", main_location["email"], location.get("email"))
+        if "location_type_id" in main_location:
+            _require_equal("location_type_id", main_location["location_type_id"], location.get("location_type_id"))
     got_address = location.get("address") if isinstance(location.get("address"), dict) else {}
     compared_address = {}
     if address:
@@ -526,12 +643,18 @@ def customer_readback(client: Any, customer_id: str, *, sent_customer: dict[str,
         "status": status,
         "discoverable": True,
         "matched_sent_fields": True,
+        "billing_phone_kind": {"status": "verified" if "billing_phone_kind" in fields else "not_sent", "value": customer.get("billing_phone_kind")},
+        "reminders_type": _reminder_readback(location),
+        "location_email": location.get("email"),
+        "location_type_id": location.get("location_type_id"),
         **labels,
     }
 
 
 def post_customer_steps(service: Any, proposal: dict[str, Any], attempt_id: str) -> dict[str, Any]:
     plan = proposal["after"]["documented_request"]
+    if plan.get("primary_email"):
+        raise GateError("invoice_email_write_unverified", retry=False)
     client = service.client
     store = service.store
     search = duplicate_search(client, proposal["payload"])
@@ -590,22 +713,20 @@ def post_customer_steps(service: Any, proposal: dict[str, Any], attempt_id: str)
     nested_location_id = location_id
     if not _proposal_current(service, proposal):
         return stop_creation(store, proposal, attempt_id)
-    if plan.get("location_patch"):
+    if plan.get("location_patch") or plan.get("main_location"):
         location = client.get_location(customer_id, location_id)
-        address_id = (location.get("address") or {}).get("id")
-        if not isinstance(address_id, int) or isinstance(address_id, bool):
-            raise GateError(GATE_ADDRESS)
-        patch = {
-            "service_location": {
-                "name": plan["location_patch"]["name"],
-                "tax_rate_id": plan["location_patch"]["tax_rate_id"],
-                "address_attributes": {"id": address_id, **plan["location_patch"]["address_attributes"]},
-            }
-        }
+        service_location = dict(plan.get("main_location") or {})
+        if plan.get("location_patch"):
+            address_id = (location.get("address") or {}).get("id")
+            if not isinstance(address_id, int) or isinstance(address_id, bool):
+                raise GateError(GATE_ADDRESS)
+            service_location.update(plan["location_patch"])
+            service_location["address_attributes"] = {"id": address_id, **plan["location_patch"]["address_attributes"]}
+        patch = {"service_location": service_location}
         step_id = _step(store, proposal["proposal_id"], "location_patch", patch, customer_id=customer_id, location_id=location_id)
         response, diagnostic = _sent_write(lambda: client.patch_service_location(customer_id, location_id, patch), client)
         if response is None or _public_diagnostic(diagnostic).get("status") not in {200, "unknown"}:
-            matched = _location_matches(client, customer_id, location_id, plan["location_patch"])
+            matched = bool(plan.get("location_patch")) and _location_matches(client, customer_id, location_id, plan["location_patch"])
             if not matched:
                 _ambiguous(store, step_id, customer_id=customer_id, location_id=location_id)
                 store.finish_creation_step(step_id, "ambiguous", {"retry": False, "reason": "location_patch_unresolved", "response": _public_diagnostic(diagnostic)}, customer_id=customer_id, location_id=location_id)
@@ -671,6 +792,7 @@ def post_customer_steps(service: Any, proposal: dict[str, Any], attempt_id: str)
         location_id=nested_location_id,
         address=address,
         wrote_customer=not plan.get("existing_customer_id"),
+        main_location=plan.get("main_location"),
     )
     if plan.get("additional_location"):
         extra = client.get_location(customer_id, location_id)

@@ -68,6 +68,9 @@ CUSTOMER_CREATE_FIELDS = frozenset(
         "location_tax_rate_id",
         "additional_location",
         "contact",
+        "primary_email",
+        "location_email",
+        "location_type_id",
         "confirmed_new",
         "existing_customer_id",
     }

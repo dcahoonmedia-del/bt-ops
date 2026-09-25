@@ -479,6 +479,8 @@ class FakeTransport:
             return 404, None
         if method == "GET" and path == "/services":
             return 200, list(self.services)
+        if method == "GET" and path == "/location_types":
+            return 200, [{"id": 8736, "name": "Residential"}]
         if method == "GET" and path == "/customers/search_by_phone":
             phone = str((query or {}).get("phone") or "")
             found = [row for row in self.customers.values() if phone and phone in json.dumps(row)]
@@ -525,6 +527,10 @@ class FakeTransport:
                 location["name"] = sl["name"]
             if sl.get("tax_rate_id") is not None:
                 location["tax_rate_id"] = sl["tax_rate_id"]
+            if sl.get("email") is not None:
+                location["email"] = sl["email"]
+            if sl.get("location_type_id") is not None:
+                location["location_type_id"] = sl["location_type_id"]
             address = dict(location.get("address") or {})
             if addr.get("id") is not None:
                 address["id"] = addr["id"]
@@ -728,7 +734,7 @@ class FakeTransport:
         return self._next_id
 
 def _assert_typed_path(method: str, path: str) -> None:
-    if method == "GET" and path in {"/profile", "/service_routes", "/customers/search", "/customers/search_by_phone", "/customers", "/users", "/work_order_templates", "/services"}:
+    if method == "GET" and path in {"/profile", "/service_routes", "/customers/search", "/customers/search_by_phone", "/customers", "/users", "/work_order_templates", "/services", "/location_types"}:
         return
     if method == "GET" and (
         _CUSTOMER.match(path)
@@ -1402,6 +1408,9 @@ class TypedFieldworkClient:
 
     def list_services(self) -> dict[str, Any]:
         return self._pages("/services")
+
+    def list_location_types(self) -> dict[str, Any]:
+        return self._pages("/location_types")
 
     def create_customer(self, body: dict[str, Any]) -> dict[str, Any]:
         path = "/customers"

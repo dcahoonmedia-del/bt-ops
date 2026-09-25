@@ -56,6 +56,7 @@ class Settings:
     approval_mode: str = "operator"
     pestguard_initial_template_id: str = ""
     pestguard_initial_service_id: str = ""
+    residential_location_type_id: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -91,6 +92,7 @@ class Settings:
             approval_mode=os.environ.get("FW_WRITE_APPROVAL_MODE", "operator").strip(),
             pestguard_initial_template_id=os.environ.get("FW_PESTGUARD_INITIAL_TEMPLATE_ID", "").strip(),
             pestguard_initial_service_id=os.environ.get("FW_PESTGUARD_INITIAL_SERVICE_ID", "").strip(),
+            residential_location_type_id=os.environ.get("FW_RESIDENTIAL_LOCATION_TYPE_ID", "").strip(),
         )
 
     def oauth_ready(self) -> bool:

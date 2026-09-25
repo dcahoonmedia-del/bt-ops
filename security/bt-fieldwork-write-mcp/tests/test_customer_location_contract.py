@@ -125,9 +125,10 @@ class CustomerLocationContractTests(unittest.TestCase):
     def test_john_doe_proposal_shows_steps_and_does_not_mutate(self) -> None:
         before = len(self.h.transport.calls)
         proposed = self._mcp(_john())
-        self.assertTrue(proposed["ok"], proposed)
+        self.assertEqual(proposed["reason"], "email_or_address_coverage_gap")
+        self.assertEqual(proposed["coverage_gap"], ["email", "address"])
         self.assertFalse(any(call["method"] in {"POST", "PATCH"} for call in self.h.transport.calls[before:]))
-        plan = proposed["after"]["documented_request"]
+        plan = customer_request(_john())
         customer = plan["customer"]
         self.assertEqual(customer["customer_type"], "Residential")
         self.assertEqual(customer["status"], "active")
@@ -145,7 +146,7 @@ class CustomerLocationContractTests(unittest.TestCase):
         )
         self.assertEqual(plan["contact"]["email"], "dcahoonmedia@gmail.com")  # pragma: allowlist secret
         self.assertTrue(plan["confirmed_new"])
-        self.assertEqual(plan["duplicate_resolution"]["candidate_ids"], [])
+        self.assertIsNone(plan.get("duplicate_resolution"))
         steps = plan["api_steps"]
         self.assertEqual(steps[0]["method"], "POST")
         self.assertEqual(steps[0]["path"], "/customers")
@@ -157,11 +158,12 @@ class CustomerLocationContractTests(unittest.TestCase):
     def test_same_billing_distinct_address_and_extra_location(self) -> None:
         same_payload = _john()
         same_payload.pop("contact")
-        same = self._mcp(same_payload)
-        self.assertTrue(same["ok"], same)
-        self.assertIsNone(same["after"]["documented_request"]["location_patch"])
-        self.assertIsNone(same["after"]["documented_request"]["contact"])
-        distinct = self._mcp(
+        same = customer_request(same_payload)
+        self.assertIsNone(same["location_patch"])
+        self.assertIsNone(same["contact"])
+        blocked = self._mcp(same_payload)
+        self.assertEqual(blocked["reason"], "email_or_address_coverage_gap")
+        distinct = customer_request(
             _john(
                 last_name="Distinct",
                 service_locations=[{"name": "Main Location", "same_as_billing_address": False}],
@@ -170,8 +172,7 @@ class CustomerLocationContractTests(unittest.TestCase):
                 additional_location={"name": "Shop", "tax_rate_id": 7704, "address": {"street": "2 Side", "city": "Jacksonville", "state": "NC"}},
             )
         )
-        self.assertTrue(distinct["ok"], distinct)
-        plan = distinct["after"]["documented_request"]
+        plan = distinct
         methods = [(step["method"], step["path"]) for step in plan["api_steps"]]
         self.assertEqual(
             methods,
@@ -217,7 +218,7 @@ class CustomerLocationContractTests(unittest.TestCase):
         self.assertNotIn("zip", sent.data.decode())
 
     def test_approval_and_payload_still_guard_execute(self) -> None:
-        proposed = self._mcp(_john())
+        proposed = self._mcp(_identity_only() | {"service_locations": {"name": "Main Location", "same_as_billing_address": True}})
         self.assertTrue(proposed["ok"], proposed)
         bare = self.h.service.execute(proposed["proposal_id"], IDENTITY, approved=True, expected_digest="0" * 64)
         self.assertEqual(bare["gate"], "operator_approval_required")

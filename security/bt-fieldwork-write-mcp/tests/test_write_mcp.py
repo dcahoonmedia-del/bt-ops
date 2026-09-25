@@ -62,6 +62,7 @@ def _settings(path: Path, **overrides: object) -> Settings:
         approval_ttl_seconds=900,
         pestguard_initial_template_id="8835901",
         pestguard_initial_service_id="38814",
+        residential_location_type_id="8736",
     )
     values.update(overrides)
     return Settings(**values)  # type: ignore[arg-type]

@@ -89,6 +89,8 @@ class CreationWorkflowTests(unittest.TestCase):
         self.assertEqual([call for call in self.h.transport.calls if call["method"] == "POST" and call["path"] == "/customers"], before)
 
     def test_distinct_address_and_explicit_contact(self) -> None:
+        from bt_fieldwork_write_mcp.create_contract import customer_request
+
         payload = _customer(
             billing_street="9 Billing",
             service_locations=[{"name": "Home", "same_as_billing_address": False}],
@@ -97,24 +99,18 @@ class CreationWorkflowTests(unittest.TestCase):
             contact={"first_name": "Ada", "last_name": "Ng", "email": "ada@example.test"},
             additional_location={"name": "Shop", "tax_rate_id": 3},
         )
-        proposed = self.h.service.propose("create_customer", payload, IDENTITY)
-        self.assertTrue(proposed["ok"], proposed)
-        posted = proposed["after"]["documented_request"]["customer"]["service_locations_attributes"][0]
+        plan = customer_request(payload)
+        posted = plan["customer"]["service_locations_attributes"][0]
         self.assertEqual(set(posted), {"name", "same_as_billing_address"})
-        self.assertEqual(proposed["after"]["contact_requested"]["email"], "ada@example.test")
-        self.assertNotIn("allow_login_to_portal", proposed["after"]["contact_requested"])
-        executed = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=self.h.approve(proposed["proposal_id"]))
-        self.assertTrue(executed["ok"], executed)
-        self.assertEqual(executed["readback"]["contact_id"] is not None, True)
-        bodies = [call["body"] for call in self.h.transport.calls if call["method"] == "POST" and call["path"].endswith("/contacts")]
-        self.assertEqual(bodies[0]["contact"]["email"], "ada@example.test")
-        self.assertNotIn("allow_login_to_portal", bodies[0]["contact"])
-        self.assertNotIn("email_appointment_reminders", bodies[0]["contact"])
-        location_posts = [call for call in self.h.transport.calls if call["method"] == "POST" and call["path"].endswith("/service_locations")]
-        self.assertEqual(set(location_posts[0]["body"]["service_location"]), {"name", "tax_rate_id"})
-        patches = [call for call in self.h.transport.calls if call["method"] == "PATCH" and "service_locations" in call["path"]]
-        self.assertEqual(patches[0]["body"]["service_location"]["address_attributes"]["street"], "4 Service")
-        missing = self.h.service.propose("create_customer", _customer(contact={"first_name": "Ada", "last_name": "Ng"}), IDENTITY)
+        self.assertEqual(plan["contact"]["email"], "ada@example.test")
+        self.assertNotIn("allow_login_to_portal", plan["contact"])
+        self.assertEqual(plan["location_patch"]["address_attributes"]["street"], "4 Service")
+        self.assertEqual(set(plan["additional_location"]), {"name", "tax_rate_id"})
+        proposed = self.h.service.propose("create_customer", payload, IDENTITY)
+        self.assertEqual(proposed["reason"], "email_or_address_coverage_gap")
+        self.assertEqual(proposed["coverage_gap"], ["email", "address"])
+        self.assertFalse(any(call["method"] == "POST" for call in self.h.transport.calls))
+        missing = self.h.service.propose("create_customer", _customer(last_name="Bare", contact={"first_name": "Ada", "last_name": "Ng"}), IDENTITY)
         self.assertEqual(missing["gate"], "contact_incomplete")
 
     def test_approval_digest_identity_and_stale_catalog(self) -> None:
@@ -188,14 +184,24 @@ class CreationWorkflowTests(unittest.TestCase):
         self.assertIn("started_at_time", self.h.service.propose("create_work_order", {**_order(), "occurrences": [{"service_route_ids": [1], "starts_at": "2026-10-06", "started_at_time": "1:00 PM", "finished_at_time": "2:00 PM"}]}, IDENTITY)["fields"])
 
     def test_timeout_crash_and_partial_recovery_do_not_repost(self) -> None:
-        proposed = self.h.service.propose("create_customer", _customer(contact={"first_name": "Ada", "last_name": "Ng", "email": "ada@example.test"}), IDENTITY)
+        proposed = self.h.service.propose("create_customer", _customer(last_name="Partial"), IDENTITY)
         token = self.h.approve(proposed["proposal_id"])
-        self.h.transport.fail_write_suffixes.add("/contacts")
+        original = self.h.transport.request
+
+        def request(method, path, body=None, query=None):
+            if method == "PATCH" and "service_locations" in path:
+                from bt_fieldwork_write_mcp.errors import AmbiguousWriteError
+
+                self.h.transport.calls.append({"method": method, "path": path, "body": body, "query": query})
+                raise AmbiguousWriteError("fake_ambiguous")
+            return original(method, path, body, query)
+
+        self.h.transport.request = request
         partial = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=token)
+        self.h.transport.request = original
         self.assertEqual(partial["gate"], GATE_PARTIAL)
-        self.assertEqual(partial["failed_step"], "contact_post")
+        self.assertEqual(partial["failed_step"], "location_patch")
         self.assertIsNotNone(partial["partial"]["customer_id"])
-        self.assertIsNone(partial["partial"]["contact_id"])
         posts = [call for call in self.h.transport.calls if call["method"] == "POST"]
         self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=token)
         self.assertEqual([call for call in self.h.transport.calls if call["method"] == "POST"], posts)
@@ -370,33 +376,29 @@ class CreationWorkflowTests(unittest.TestCase):
         from bt_fieldwork_write_mcp.errors import GateError
 
         payload = _customer(
-            billing_street="9 Billing",
-            billing_city="Buffalo",
-            service_locations=[{"name": "Home", "same_as_billing_address": False}],
-            service_address={"street": "4 Service", "city": "Buffalo", "state": "NY", "zip": "14201"},
-            location_tax_rate_id=3,
-            contact={"first_name": "Ada", "last_name": "Ng", "email": "ada@example.test", "phone": "7165550100"},
+            last_name="Read",
+            billing_phone="7165550199",
+            billing_phone_kind="Home",
         )
         proposed = self.h.service.propose("create_customer", payload, IDENTITY)
         executed = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=self.h.approve(proposed["proposal_id"]))
         self.assertTrue(executed["ok"], executed)
         self.assertTrue(executed["readback"]["matched_sent_fields"])
         self.assertTrue(executed["readback"]["test_double"])
-        self.assertEqual(executed["readback"]["customer"]["billing_street"], "9 Billing")
-        self.assertEqual(executed["readback"]["compared_address"]["street"], "4 Service")
-        self.assertEqual(executed["readback"]["contact"]["phone"], "7165550100")
-        self.assertEqual(executed["readback"]["contact"]["email"], "ada@example.test")
-        self.h.transport.customers[str(executed["created_id"])].pop("billing_city")
+        self.assertEqual(executed["readback"]["customer"]["billing_phone_kind"], "Home")
+        self.assertEqual(executed["readback"]["reminders_type"]["status"], "unverified")
+        self.h.transport.customers[str(executed["created_id"])]["billing_phone_kind"] = "Office"
         with self.assertRaises(GateError) as caught:
             customer_readback(
                 self.h.client,
                 str(executed["created_id"]),
                 sent_customer=proposed["after"]["documented_request"]["customer"],
-                contact=payload["contact"],
+                contact=None,
                 location_id=str(executed["readback"]["location_id"]),
-                address=payload["service_address"],
+                address=None,
+                main_location=proposed["after"]["documented_request"]["main_location"],
             )
-        self.assertEqual(caught.exception.detail["field"], "billing_city")
+        self.assertEqual(caught.exception.detail["field"], "billing_phone_kind")
 
         class Other:
             is_fake_double = False

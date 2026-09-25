@@ -449,6 +449,9 @@ class WriteService:
         from .creation_flow import duplicate_search, names_for, phones_for, resolve_duplicates
 
         plan = customer_request(payload)
+        from .creation_flow import bind_residential_location
+
+        bind_residential_location(plan, self.client, self.settings.residential_location_type_id)
         search = duplicate_search(self.client, payload)
         plan["duplicate_resolution"] = resolve_duplicates(search, confirmed_new=bool(plan.get("confirmed_new")), existing_customer_id=plan.get("existing_customer_id"))
         after = {
@@ -456,6 +459,17 @@ class WriteService:
             "documented_request": plan,
             "duplicate_search": {"complete": True, "candidate_ids": plan["duplicate_resolution"]["candidate_ids"]},
             "contact_requested": plan.get("contact"),
+            "contact_count": plan.get("contact_count", 0),
+            "primary_email": plan.get("primary_email"),
+            "invoice_email": plan.get("invoice_email"),
+            "location_email": plan.get("location_email"),
+            "billing_phone_kind": plan.get("billing_phone_kind"),
+            "phone_kind_supplied": plan.get("phone_kind_supplied"),
+            "property_type": plan.get("property_type"),
+            "location_type_id": plan.get("location_type_id"),
+            "reminders_type": 0,
+            "reminders_readback": "unverified_when_get_omits_field",
+            "notification_effects": plan.get("notification_effects"),
             "nested_location_address_attributes": False,
             "response_schema_verified": False,
             "schema_ready": True,
