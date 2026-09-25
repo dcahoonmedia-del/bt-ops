@@ -15,7 +15,6 @@ from urllib.request import Request
 from .allowlist import (
     GATE_AUTH_UNRESOLVED,
     GATE_LIVE_PATCH_UNTESTED,
-    GATE_SCHEMA_UNVERIFIED,
     is_lead_status,
 )
 from .config import API_BASE
@@ -396,6 +395,8 @@ class FakeTransport:
         self.users: list[dict[str, Any]] | None = None
         self.fail_work_order_page: int | None = None
         self.repeat_work_order_page: bool = False
+        self.return_create_id = True
+        self._next_id = 900000
 
     def add_customer(self, customer: dict[str, Any], location: dict[str, Any]) -> None:
         cid = str(customer["id"])
@@ -532,9 +533,47 @@ class FakeTransport:
                 self.write_mode = "ok"
                 raise AmbiguousWriteError("timeout_after_apply")
             return 200, {"appointment_occurrence": match}
-        if method == "POST" and path.startswith("/work_orders"):
-            return 403, {"error": "schema_unverified"}
+        if method == "POST" and path == "/customers":
+            return self._fake_create(body)
+        if method == "POST" and path == "/work_orders":
+            return self._fake_create(body)
         return 404, None
+
+    def _new_id(self) -> int:
+        self._next_id += 1
+        return self._next_id
+
+    def _fake_create(self, body: dict[str, Any] | None) -> tuple[int, dict[str, Any]]:
+        """Echo the request. This body is a test double, not a live Fieldwork schema."""
+        created = self._new_id()
+        response: dict[str, Any] = {
+            "echo": body,
+            "test_double": True,
+            "response_schema": "fake_test_double_not_live_schema",
+        }
+        if self.return_create_id:
+            response["id"] = created
+        customer = (body or {}).get("customer") if isinstance(body, dict) else None
+        if isinstance(customer, dict):
+            self.customers[str(created)] = {
+                "id": created,
+                "customer_type": customer.get("customer_type"),
+                "name": customer.get("name") or customer.get("last_name"),
+                "first_name": customer.get("first_name"),
+                "last_name": customer.get("last_name"),
+                "status": customer.get("status"),
+                "customer_status": customer.get("status"),
+            }
+        appointment = (body or {}).get("service_appointment") if isinstance(body, dict) else None
+        if isinstance(appointment, dict):
+            self.work_orders[str(created)] = {
+                "id": created,
+                "customer_id": appointment.get("customer_id"),
+                "service_location_id": appointment.get("service_location_id"),
+                "repeat_type": appointment.get("repeat_type"),
+                "repeat_period": appointment.get("repeat_period"),
+            }
+        return 200, response
 
 
 def _assert_typed_path(method: str, path: str) -> None:
@@ -553,8 +592,8 @@ def _assert_typed_path(method: str, path: str) -> None:
         return
     if method == "PATCH" and _WORK_ORDER.match(path):
         return
-    if method == "POST" and path == "/work_orders":
-        raise GateError(GATE_SCHEMA_UNVERIFIED)
+    if method == "POST" and path in {"/work_orders", "/customers"}:
+        return
     raise GateError("unknown_operation", method=method, path=path)
 
 
@@ -1117,5 +1156,22 @@ class TypedFieldworkClient:
         fields = [key for key in ("instructions", "private_notes") if after.get(key) != before.get(key)]
         return self.patch_work_order_fields(before, after, fields)
 
-    def create_work_order(self, *_args: Any, **_kwargs: Any) -> None:
-        raise GateError(GATE_SCHEMA_UNVERIFIED)
+    def create_customer(self, body: dict[str, Any]) -> dict[str, Any]:
+        path = "/customers"
+        _assert_typed_path("POST", path)
+        status, payload = self.transport.request("POST", path, body)
+        if status >= 500:
+            raise AmbiguousWriteError(f"remote_{status}")
+        if not isinstance(payload, dict):
+            return {}
+        return payload
+
+    def create_work_order(self, body: dict[str, Any]) -> dict[str, Any]:
+        path = "/work_orders"
+        _assert_typed_path("POST", path)
+        status, payload = self.transport.request("POST", path, body)
+        if status >= 500:
+            raise AmbiguousWriteError(f"remote_{status}")
+        if not isinstance(payload, dict):
+            return {}
+        return payload

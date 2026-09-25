@@ -10,7 +10,6 @@ from bt_fieldwork_write_mcp.allowlist import (
     GATE_READBACK,
     GATE_RECURRING,
     GATE_REPLAY,
-    GATE_SCHEMA_UNVERIFIED,
     GATE_STALE,
     OP_CREATE_WORK_ORDER,
     OP_WORK_ORDER_NOTES,
@@ -146,16 +145,18 @@ class ContractV7Tests(unittest.TestCase):
         self.assertIn("stale", proposed["reason"])
         self.assertEqual(self.role.patches, [])
 
-    def test_create_stays_unavailable(self) -> None:
+    def test_create_rejects_incomplete_documented_body(self) -> None:
         proposed = self.h.service.propose(
             OP_CREATE_WORK_ORDER,
             {"customer_id": 41, "service_location_id": 77, "repeat_type": "none", "repeat_period": 0, "line_items": [], "occurrences": []},
             IDENTITY,
         )
         self.assertFalse(proposed["ok"])
-        self.assertEqual(proposed["gate"], GATE_SCHEMA_UNVERIFIED)
+        self.assertEqual(proposed["gate"], "unknown_field")
+        self.assertEqual(proposed["fields"], ["line_items", "occurrences"])
         self.assertNotIn("proposal_id", proposed)
         self.assertEqual(self.role.patches, [])
+        self.assertFalse(any(call["method"] == "POST" for call in self.h.transport.calls))
 
     def test_arrival_constant_is_still_closed(self) -> None:
         self.assertEqual(GATE_ARRIVAL_WINDOW, "arrival_window_unverified")

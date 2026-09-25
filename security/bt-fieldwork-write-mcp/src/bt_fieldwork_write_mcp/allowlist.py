@@ -8,8 +8,9 @@ OP_LOCATION_NOTES = "update_service_location_notes"
 OP_WORK_ORDER_NOTES = "update_work_order_notes"
 OP_WORK_ORDER_SCHEDULE = "update_work_order_schedule"
 OP_CREATE_WORK_ORDER = "create_work_order"
+OP_CREATE_CUSTOMER = "create_customer"
 
-ALLOWED_OPS = frozenset({OP_LOCATION_NOTES, OP_WORK_ORDER_NOTES, OP_WORK_ORDER_SCHEDULE, OP_CREATE_WORK_ORDER})
+ALLOWED_OPS = frozenset({OP_LOCATION_NOTES, OP_WORK_ORDER_NOTES, OP_WORK_ORDER_SCHEDULE, OP_CREATE_WORK_ORDER, OP_CREATE_CUSTOMER})
 
 LOCATION_NOTE_FIELDS = frozenset({"customer_id", "location_id", "notes"})
 WORK_ORDER_NOTE_FIELDS = frozenset({"work_order_id", "service_appointment_id", "instructions", "private_notes"})
@@ -27,12 +28,40 @@ CREATE_FIELDS = frozenset(
         "occurrences",
     }
 )
-LINE_ITEM_FIELDS = frozenset({"name", "type", "quantity", "price"})
+LINE_ITEM_FIELDS = frozenset({"name", "type", "quantity", "price", "payable_id", "payable_type", "taxable"})
 OCCURRENCE_FIELDS = frozenset({"service_route_ids", "starts_at", "duration", "use_time_window"})
+CUSTOMER_CREATE_FIELDS = frozenset(
+    {
+        "customer_type",
+        "name",
+        "first_name",
+        "last_name",
+        "status",
+        "note",
+        "billing_name",
+        "billing_attention",
+        "billing_street",
+        "billing_street2",
+        "billing_city",
+        "billing_state",
+        "billing_zip",
+        "billing_county",
+        "billing_term_id",
+        "billing_phone",
+        "billing_phone_ext",
+        "billing_phone_note",
+        "billing_phone_kind",
+        "billing_phones",
+        "billing_phones_exts",
+        "billing_phones_notes",
+        "billing_phones_kinds",
+        "service_locations",
+    }
+)
+CUSTOMER_LOCATION_FIELDS = frozenset({"name", "same_as_billing_address"})
 
 FORBIDDEN_OPS = frozenset(
     {
-        "create_customer",
         "on_our_way",
         "send_message",
         "send_sms",
@@ -62,6 +91,9 @@ GATE_READBACK = "readback_failed"
 GATE_AUTH_UNRESOLVED = "fieldwork_api_auth_unresolved"
 GATE_ARRIVAL_WINDOW = "arrival_window_unverified"
 GATE_RECURRING = "recurring_series_rejected"
+GATE_CREATE_RESPONSE = "create_response_unverified"
+GATE_STARTS_AT_DATETIME = "starts_at_datetime_unverified"
+GATE_TAXABLE = "taxable_requires_tax_rate"
 
 LEAD_STATUSES = frozenset({"lead", "leads"})
 
@@ -139,10 +171,12 @@ def current_gates(
         "work_order_id_mapping_verified": bool(mapping_verified),
         "live_patch_tested": False,
         "work_order_schema_verified": False,
+        "create_response_schema_verified": False,
+        "starts_at_datetime_format_verified": False,
         "arrival_window_read_known": True,
         "arrival_window_write_verified": False,
         "arrival_window_verified": False,
-        "customer_create": False,
+        "customer_create": True,
         "lead_status_accounts": False,
         "messaging_tools": False,
         "generic_http": False,
@@ -150,12 +184,13 @@ def current_gates(
             "update_service_location_notes": {"propose": True, "execute_blocked_by": list(write_blocks)},
             "update_work_order_notes": {"propose": bool(mapping_verified), "execute_role": "client.get_api_role", "execute_blocked_by": list(work_order_blocks), "fields": ["instructions", "private_notes"]},
             "update_work_order_schedule": {"propose": bool(mapping_verified), "single_occurrence": True, "execute_role": "client.get_api_role", "execute_blocked_by": list(work_order_blocks), "fields": ["starts_at", "duration", "service_route_ids"], "arrival_window_preserved": False, "arrival_coupling": "fixed_window_selected_by_start_when_occurrence_evidence_is_fresh", "explicit_arrival_window_edit": False},
-            "create_work_order": {"propose": False, "execute_blocked_by": [GATE_SCHEMA_UNVERIFIED]},
+            "create_customer": {"propose": True, "execute_blocked_by": list(write_blocks), "nested_location_fields": ["name", "same_as_billing_address"], "address_attributes": False, "standalone_service_location_create": False, "response_schema_verified": False},
+            "create_work_order": {"propose": True, "execute_blocked_by": list(write_blocks), "repeat_type": "none", "starts_at": "YYYY-MM-DD", "starts_at_datetime_format_unverified": True, "use_time_window_sent": False, "response_schema_verified": False},
             "schedule_or_arrival_window_write": {"propose": False, "execute_blocked_by": [GATE_ARRIVAL_WINDOW]},
             "list_users": {"read": True, "endpoint": "GET /v3.1/users", "projection": "staff_and_branch_fields", "stripe_pk": False},
             "list_service_locations": {"read": True, "endpoint": "GET /v3.1/customers/{customer_id}/service_locations", "customer_required": True, "global_endpoint": False},
             "list_schedule_filtered": {"read": True, "server_side_filtering": False, "local_filter": ["date", "status", "service_route_ids", "customer_id", "service_location_id"], "query_sent": ["start_date", "end_date", "current_technician", "sort_direction", "work_pool", "filter[status]", "filter[service_routes_ids][]"]},
         },
         "rollout_safeguard": "readonly_api_role" if readonly else "writer",
-        "closed_contracts": [GATE_SCHEMA_UNVERIFIED, GATE_ARRIVAL_WINDOW],
+        "closed_contracts": [GATE_ARRIVAL_WINDOW],
     }

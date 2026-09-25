@@ -8,9 +8,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from .allowlist import (
-    CREATE_FIELDS,
     GATE_ARRIVAL_WINDOW,
     GATE_AUTH,
+    GATE_CREATE_RESPONSE,
     GATE_EXPIRED,
     GATE_IDENTITY,
     GATE_MAPPING_UNVERIFIED,
@@ -19,15 +19,13 @@ from .allowlist import (
     GATE_OPERATOR,
     GATE_READBACK,
     GATE_REPLAY,
-    GATE_SCHEMA_UNVERIFIED,
     GATE_STALE,
     GATE_UNKNOWN_OP,
     GATE_WRITES_DISABLED,
-    LINE_ITEM_FIELDS,
     LOCATION_NOTE_FIELDS,
-    OCCURRENCE_FIELDS,
     ARRIVAL_FIELDS,
     NOTE_TEXT_FIELDS,
+    OP_CREATE_CUSTOMER,
     OP_CREATE_WORK_ORDER,
     OP_LOCATION_NOTES,
     OP_WORK_ORDER_NOTES,
@@ -42,7 +40,7 @@ from .allowlist import (
 )
 from .approval import mint_operator_token, token_fingerprint, verify_operator_token
 from .config import Settings
-from .digest import proposal_digest
+from .digest import canonical, proposal_digest, sha256_hex
 from .errors import AmbiguousWriteError, GateError
 from .fieldwork import TypedFieldworkClient, location_snapshot, snapshot_hash
 
@@ -202,6 +200,8 @@ class WriteService:
                 return self._propose_work_order_schedule(payload, identity)
             if operation == OP_CREATE_WORK_ORDER:
                 return self._propose_create(payload, identity)
+            if operation == OP_CREATE_CUSTOMER:
+                return self._propose_customer(payload, identity)
         except UnknownFieldError as exc:
             return self._fail(exc.args[0].split(":")[0], fields=exc.fields)
         except GateError as exc:
@@ -344,19 +344,51 @@ class WriteService:
         return result
 
     def _propose_create(self, payload: dict[str, Any], identity: dict[str, str]) -> dict[str, Any]:
-        assert_only(payload, CREATE_FIELDS, label="create")
-        for item in payload.get("line_items") or []:
-            if not isinstance(item, dict):
-                return self._fail("unknown_field", fields=["line_items"])
-            assert_only(item, LINE_ITEM_FIELDS, label="line_item")
-        for occ in payload.get("occurrences") or []:
-            if not isinstance(occ, dict):
-                return self._fail("unknown_field", fields=["occurrences"])
-            assert_only(occ, OCCURRENCE_FIELDS, label="occurrence")
-            if "use_time_window" in occ:
-                return self._fail(GATE_ARRIVAL_WINDOW)
-        del identity
-        return self._fail(GATE_SCHEMA_UNVERIFIED, operation=OP_CREATE_WORK_ORDER)
+        from .create_contract import work_order_request
+
+        body = work_order_request(payload)
+        self._require_active_location(payload)
+        after = {
+            "exists": False,
+            "documented_request": body,
+            "starts_at_datetime_format_unverified": True,
+            "response_schema_verified": False,
+            "use_time_window_sent": False,
+        }
+        result = self._persist_proposal(
+            OP_CREATE_WORK_ORDER,
+            payload,
+            identity,
+            f"work_order:create:{sha256_hex(canonical(body))}",
+            {"exists": False},
+            after,
+        )
+        if result.get("ok"):
+            result["starts_at_datetime_format_unverified"] = True
+            result["response_schema_verified"] = False
+        return result
+
+    def _propose_customer(self, payload: dict[str, Any], identity: dict[str, str]) -> dict[str, Any]:
+        from .create_contract import customer_request
+
+        body = customer_request(payload)
+        after = {
+            "exists": False,
+            "documented_request": body,
+            "nested_location_address_attributes": False,
+            "response_schema_verified": False,
+        }
+        result = self._persist_proposal(
+            OP_CREATE_CUSTOMER,
+            payload,
+            identity,
+            f"customer:create:{sha256_hex(canonical(body))}",
+            {"exists": False},
+            after,
+        )
+        if result.get("ok"):
+            result["response_schema_verified"] = False
+        return result
 
     def _persist_proposal(
         self,
@@ -468,12 +500,12 @@ class WriteService:
             return self._fail("ambiguous_remote_write_no_retry", proposal_id=proposal_id)
         if proposal["operation"] in {OP_WORK_ORDER_NOTES, OP_WORK_ORDER_SCHEDULE} and not self.settings.mapping_verified:
             return self._fail(GATE_MAPPING_UNVERIFIED, proposal_id=proposal_id)
-        if proposal["operation"] == OP_CREATE_WORK_ORDER:
-            return self._fail(GATE_SCHEMA_UNVERIFIED, proposal_id=proposal_id)
         if proposal["operation"] in {OP_WORK_ORDER_NOTES, OP_WORK_ORDER_SCHEDULE}:
             stale = self._work_order_stale(proposal)
+        elif proposal["operation"] == OP_LOCATION_NOTES:
+            stale = self._location_stale(proposal)
         else:
-            stale = self._location_stale(proposal) if proposal["operation"] == OP_LOCATION_NOTES else None
+            stale = None
         if stale is not None:
             return stale
         if self.settings.approval_mode == "chatgpt_confirmation":
@@ -491,8 +523,8 @@ class WriteService:
             return self._execute_work_order(proposal, clock, [key for key in NOTE_TEXT_FIELDS if key in proposal["payload"]])
         if proposal["operation"] == OP_WORK_ORDER_SCHEDULE:
             return self._execute_work_order(proposal, clock, list(SCHEDULE_WRITE_FIELDS))
-        if proposal["operation"] == OP_CREATE_WORK_ORDER:
-            return self._fail(GATE_SCHEMA_UNVERIFIED, proposal_id=proposal_id)
+        if proposal["operation"] in {OP_CREATE_WORK_ORDER, OP_CREATE_CUSTOMER}:
+            return self._execute_create(proposal, clock)
         return self._fail(GATE_UNKNOWN_OP, proposal_id=proposal_id)
 
     def _bound_digest(self, proposal: dict[str, Any]) -> str:
@@ -565,6 +597,63 @@ class WriteService:
             self.store.set_status(proposal["proposal_id"], "stale")
             return self._fail(GATE_STALE, proposal_id=proposal["proposal_id"])
         return None
+
+    def _execute_create(self, proposal: dict[str, Any], clock: datetime) -> dict[str, Any]:
+        from .create_contract import response_id
+
+        request = proposal["after"].get("documented_request")
+        try:
+            attempt_id = self.store.begin_attempt(proposal["proposal_id"], proposal["subject_key"], _iso(clock))
+        except GateError as exc:
+            return self._fail(exc.gate, proposal_id=proposal["proposal_id"], **exc.detail)
+        if proposal["operation"] == OP_CREATE_WORK_ORDER:
+            try:
+                self._require_active_location(proposal["payload"])
+            except GateError as exc:
+                self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "failed_no_write")
+                return self._fail(exc.gate, proposal_id=proposal["proposal_id"], **exc.detail)
+        try:
+            if proposal["operation"] == OP_CREATE_CUSTOMER:
+                response = self.client.create_customer(request)
+            else:
+                response = self.client.create_work_order(request)
+        except AmbiguousWriteError:
+            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
+            return self._fail("ambiguous_remote_write_no_retry", proposal_id=proposal["proposal_id"], retry=False)
+        except GateError as exc:
+            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "failed_no_write")
+            return self._fail(exc.gate, proposal_id=proposal["proposal_id"], **exc.detail)
+        except Exception:
+            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
+            return self._fail("ambiguous_remote_write_no_retry", proposal_id=proposal["proposal_id"], retry=False)
+        created = response_id(response)
+        if created is None:
+            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
+            return self._fail(
+                GATE_CREATE_RESPONSE,
+                proposal_id=proposal["proposal_id"],
+                retry=False,
+                response_schema_verified=False,
+            )
+        echo = response.get("echo") if isinstance(response, dict) else None
+        if echo != request:
+            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
+            return self._fail(GATE_READBACK, proposal_id=proposal["proposal_id"], retry=False, response_schema_verified=False)
+        self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "success")
+        return {
+            "ok": True,
+            "proposal_id": proposal["proposal_id"],
+            "operation": proposal["operation"],
+            "created_id": created,
+            "readback": {
+                "id": created,
+                "test_double": True,
+                "response_schema": "fake_test_double_not_live_schema",
+                "response_schema_verified": False,
+                "matched_sent_fields": True,
+            },
+            "gates": self.gates(),
+        }
 
     def _execute_location_notes(self, proposal: dict[str, Any], clock: datetime) -> dict[str, Any]:
         payload = proposal["payload"]

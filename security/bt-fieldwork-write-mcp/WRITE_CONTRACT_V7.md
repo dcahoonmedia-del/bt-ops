@@ -22,6 +22,6 @@ Execute sends `patch_work_order_fields(before, after, ["starts_at", "duration", 
 
 Execute calls `client.get_api_role()`. Missing, unreadable, or readonly (including `read_only`) blocks with `readonly_api_role` and does not patch. `FIELDWORK_API_ROLE` / `settings.api_role` is not the execute gate. Older tests that set `api_role="writer"` without `get_api_role()` now stop at readonly. That is the live profile safeguard.
 
-## Still closed
+## Create
 
-`create_work_order` still proposes and execute returns `work_order_schema_unverified`. No customer create, messaging, or arrival-window write.
+Customer create and one-time work-order create are documented in `CREATE_CONTRACT.md`. Empty line items or occurrences stay `unknown_field`. Messaging and arrival-window writes stay closed.

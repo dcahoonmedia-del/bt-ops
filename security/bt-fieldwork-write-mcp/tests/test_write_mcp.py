@@ -20,17 +20,22 @@ from bt_fieldwork_write_mcp.allowlist import (
     GATE_OPERATOR,
     GATE_READBACK,
     GATE_REPLAY,
-    GATE_SCHEMA_UNVERIFIED,
+    GATE_CREATE_RESPONSE,
+    GATE_RECURRING,
     GATE_STALE,
+    GATE_STARTS_AT_DATETIME,
+    GATE_TAXABLE,
     GATE_UNKNOWN_FIELD,
     GATE_UNKNOWN_OP,
     GATE_WRITES_DISABLED,
+    OP_CREATE_CUSTOMER,
     OP_CREATE_WORK_ORDER,
     OP_LOCATION_NOTES,
     OP_WORK_ORDER_NOTES,
 )
 from bt_fieldwork_write_mcp.config import Settings
-from bt_fieldwork_write_mcp.fieldwork import FakeTransport, TypedFieldworkClient
+from bt_fieldwork_write_mcp.errors import GateError
+from bt_fieldwork_write_mcp.fieldwork import FakeTransport, TypedFieldworkClient, _assert_typed_path
 from bt_fieldwork_write_mcp.secrets import InMemoryApiKey
 from bt_fieldwork_write_mcp.server import build_mcp
 from bt_fieldwork_write_mcp.oauth_rs import JwtTokenVerifier
@@ -150,7 +155,7 @@ class WriteMcpTests(unittest.TestCase):
         self.assertEqual(result["fields"], ["extra"])
 
     def test_unknown_operation_and_forbidden(self) -> None:
-        for op in ("create_customer", "on_our_way", "http", "passthrough", "send_sms"):
+        for op in ("on_our_way", "http", "passthrough", "send_sms"):
             result = self.h.service.propose(op, {}, IDENTITY)
             self.assertEqual(result["gate"], GATE_UNKNOWN_OP, op)
 
@@ -283,10 +288,22 @@ class WriteMcpTests(unittest.TestCase):
         self.assertEqual(executed["readback"]["instructions"], "gate code")
         self.assertTrue(any(call["method"] == "PATCH" and call["path"] == "/work_orders/20" for call in self.h.transport.calls))
 
-    def test_create_work_order_fail_closed_unverified_schema(self) -> None:
+    def _work_order_payload(self, **overrides: object) -> dict:
+        payload = {
+            "customer_id": 41,
+            "service_location_id": 77,
+            "repeat_type": "none",
+            "repeat_period": 0,
+            "line_items": [{"name": "Service", "type": "service", "quantity": 1, "price": 99, "payable_id": 5, "payable_type": "Service"}],
+            "occurrences": [{"service_route_ids": [1], "starts_at": "2026-10-01"}],
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_create_work_order_documented_contract(self) -> None:
         self.h.close()
         self.h = Harness(writes_enabled=True, api_role="writer")
-        proposed = self.h.service.propose(
+        unsafe = self.h.service.propose(
             OP_CREATE_WORK_ORDER,
             {
                 "customer_id": 41,
@@ -298,9 +315,71 @@ class WriteMcpTests(unittest.TestCase):
             },
             IDENTITY,
         )
-        self.assertFalse(proposed["ok"])
-        self.assertEqual(proposed["gate"], GATE_SCHEMA_UNVERIFIED)
-        self.assertNotIn("proposal_id", proposed)
+        self.assertFalse(unsafe["ok"])
+        self.assertEqual(unsafe["gate"], GATE_UNKNOWN_FIELD)
+        self.assertEqual(unsafe["fields"], ["repeat_type"])
+        self.assertNotIn("proposal_id", unsafe)
+        zulu = self.h.service.propose(OP_CREATE_WORK_ORDER, self._work_order_payload(occurrences=[{"service_route_ids": [1], "starts_at": "2026-10-01T15:00:00Z"}]), IDENTITY)
+        self.assertEqual(zulu["gate"], GATE_STARTS_AT_DATETIME)
+        weekly = self.h.service.propose(OP_CREATE_WORK_ORDER, self._work_order_payload(repeat_type="weekly"), IDENTITY)
+        self.assertEqual(weekly["gate"], GATE_RECURRING)
+        taxable = self.h.service.propose(
+            OP_CREATE_WORK_ORDER,
+            self._work_order_payload(line_items=[{"name": "Service", "type": "other", "quantity": 1, "price": 10, "taxable": True}]),
+            IDENTITY,
+        )
+        self.assertEqual(taxable["gate"], GATE_TAXABLE)
+        taxed = self.h.service.propose(OP_CREATE_WORK_ORDER, {**self._work_order_payload(), "tax_rate_id": 3}, IDENTITY)
+        self.assertEqual(taxed["gate"], GATE_UNKNOWN_FIELD)
+        self.assertIn("tax_rate_id", taxed["fields"])
+        missing_payable = self.h.service.propose(
+            OP_CREATE_WORK_ORDER,
+            self._work_order_payload(line_items=[{"name": "Service", "type": "service", "quantity": 1, "price": 99}]),
+            IDENTITY,
+        )
+        self.assertEqual(missing_payable["gate"], GATE_UNKNOWN_FIELD)
+        self.assertIn("payable_id", missing_payable["fields"])
+        fee = self.h.service.propose(
+            OP_CREATE_WORK_ORDER,
+            self._work_order_payload(line_items=[{"name": "Trip", "type": "fee", "quantity": 1, "price": 15}]),
+            IDENTITY,
+        )
+        self.assertTrue(fee["ok"], fee)
+        self.assertNotIn("payable_id", fee["after"]["documented_request"]["service_appointment"]["line_items_attributes"][0])
+        self.assertFalse(any(call["method"] == "POST" for call in self.h.transport.calls))
+        self.h.transport.customers["41"]["customer_status"] = "Lead"
+        lead_order = self.h.service.propose(OP_CREATE_WORK_ORDER, self._work_order_payload(), IDENTITY)
+        self.assertEqual(lead_order["gate"], GATE_LEAD_STATUS)
+        self.h.transport.customers["41"]["customer_status"] = "Active"
+        proposed = self.h.service.propose(OP_CREATE_WORK_ORDER, self._work_order_payload(), IDENTITY)
+        self.assertTrue(proposed["ok"], proposed)
+        self.assertTrue(proposed["starts_at_datetime_format_unverified"])
+        self.assertFalse(proposed["response_schema_verified"])
+        request = proposed["after"]["documented_request"]["service_appointment"]
+        self.assertEqual(request["repeat_type"], "none")
+        self.assertEqual(request["repeat_period"], 0)
+        self.assertEqual(request["appointment_occurrences_attributes"][0]["starts_at"], "2026-10-01")
+        self.assertNotIn("use_time_window", request["appointment_occurrences_attributes"][0])
+        self.assertEqual(request["line_items_attributes"][0]["payable_type"], "Service")
+        token = self.h.approve(proposed["proposal_id"])
+        executed = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=token)
+        self.assertTrue(executed["ok"], executed)
+        self.assertEqual(executed["readback"]["response_schema"], "fake_test_double_not_live_schema")
+        self.assertFalse(executed["readback"]["response_schema_verified"])
+        posts = [call for call in self.h.transport.calls if call["method"] == "POST"]
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(posts[0]["path"], "/work_orders")
+        self.assertEqual(posts[0]["body"], proposed["after"]["documented_request"])
+        self.assertFalse(any(call["method"] == "PATCH" for call in self.h.transport.calls))
+        self.h.transport.return_create_id = False
+        unverified = self.h.service.propose(OP_CREATE_WORK_ORDER, self._work_order_payload(repeat_period=1), IDENTITY)
+        token = self.h.approve(unverified["proposal_id"])
+        failed = self.h.service.execute(unverified["proposal_id"], IDENTITY, operator_approval=token)
+        self.assertEqual(failed["gate"], GATE_CREATE_RESPONSE)
+        self.assertFalse(failed["retry"])
+        again = self.h.service.execute(unverified["proposal_id"], IDENTITY, operator_approval=token)
+        self.assertEqual(again["gate"], "ambiguous_remote_write_no_retry")
+        self.assertEqual(len([call for call in self.h.transport.calls if call["method"] == "POST" and call["path"] == "/work_orders"]), 2)
 
     def test_arrival_window_rejected(self) -> None:
         self.h.close()
@@ -324,6 +403,58 @@ class WriteMcpTests(unittest.TestCase):
             IDENTITY,
         )
         self.assertEqual(result["gate"], GATE_ARRIVAL_WINDOW)
+        self.assertNotIn("proposal_id", result)
+        self.assertFalse(any(call["method"] == "POST" for call in self.h.transport.calls))
+
+    def test_create_customer_documented_contract(self) -> None:
+        self.h.close()
+        self.h = Harness(writes_enabled=True, api_role="writer")
+        residential = {
+            "customer_type": "Residential",
+            "last_name": "Ng",
+            "billing_phone_kind": "Mobile",
+            "note": "side door",
+            "service_locations": [{"name": "Home", "same_as_billing_address": True}],
+        }
+        proposed = self.h.service.propose(OP_CREATE_CUSTOMER, residential, IDENTITY)
+        self.assertTrue(proposed["ok"], proposed)
+        body = proposed["after"]["documented_request"]["customer"]
+        self.assertEqual(body["status"], "active")
+        self.assertEqual(body["service_locations_attributes"], [{"name": "Home", "same_as_billing_address": True}])
+        self.assertNotIn("tax_rate_id", body["service_locations_attributes"][0])
+        self.assertNotIn("address_attributes", body["service_locations_attributes"][0])
+        self.assertFalse(proposed["response_schema_verified"])
+        token = self.h.approve(proposed["proposal_id"])
+        executed = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=token)
+        self.assertTrue(executed["ok"], executed)
+        self.assertEqual(executed["readback"]["response_schema"], "fake_test_double_not_live_schema")
+        posts = [call for call in self.h.transport.calls if call["method"] == "POST"]
+        self.assertEqual(posts, [{"method": "POST", "path": "/customers", "body": proposed["after"]["documented_request"], "query": None}])
+        commercial = self.h.service.propose(OP_CREATE_CUSTOMER, {"customer_type": "Commercial", "service_locations": [{"name": "Shop", "same_as_billing_address": False}]}, IDENTITY)
+        self.assertEqual(commercial["gate"], GATE_UNKNOWN_FIELD)
+        self.assertEqual(commercial["fields"], ["name"])
+        lead = self.h.service.propose(OP_CREATE_CUSTOMER, {**residential, "status": "lead"}, IDENTITY)
+        self.assertEqual(lead["gate"], GATE_LEAD_STATUS)
+        nested = self.h.service.propose(
+            OP_CREATE_CUSTOMER,
+            {**residential, "service_locations": [{"name": "Home", "same_as_billing_address": True, "tax_rate_id": 3, "address_attributes": {"street": "1 Main"}}]},
+            IDENTITY,
+        )
+        self.assertEqual(nested["gate"], GATE_UNKNOWN_FIELD)
+        self.assertEqual(nested["fields"], ["address_attributes", "tax_rate_id"])
+        invoicing = self.h.service.propose(OP_CREATE_CUSTOMER, {**residential, "invoicing_configuration": {"automation_type": "autopay"}}, IDENTITY)
+        self.assertEqual(invoicing["gate"], GATE_UNKNOWN_FIELD)
+        self.assertIn("invoicing_configuration", invoicing["fields"])
+        first_only = self.h.service.propose(
+            OP_CREATE_CUSTOMER,
+            {"customer_type": "Residential", "first_name": "Ada", "service_locations": [{"name": "Home", "same_as_billing_address": True}]},
+            IDENTITY,
+        )
+        self.assertEqual(first_only["gate"], GATE_UNKNOWN_FIELD)
+        self.assertEqual(first_only["fields"], ["last_name"])
+        with self.assertRaises(GateError) as caught:
+            _assert_typed_path("POST", "/customers/41/service_locations")
+        self.assertEqual(caught.exception.gate, "unknown_operation")
 
     def test_location_notes_success_path_offline(self) -> None:
         self.h.close()
@@ -374,8 +505,13 @@ class WriteMcpTests(unittest.TestCase):
         self.assertIn("writes_disabled", gates["operations"]["update_service_location_notes"]["execute_blocked_by"])
         self.assertIn("readonly_api_role", gates["operations"]["update_service_location_notes"]["execute_blocked_by"])
         self.assertFalse(gates["work_order_id_mapping_verified"])
-        self.assertFalse(gates["operations"]["create_work_order"]["propose"])
-        self.assertIn("work_order_schema_unverified", gates["closed_contracts"])
+        self.assertTrue(gates["customer_create"])
+        self.assertTrue(gates["operations"]["create_work_order"]["propose"])
+        self.assertTrue(gates["operations"]["create_customer"]["propose"])
+        self.assertFalse(gates["operations"]["create_work_order"]["response_schema_verified"])
+        self.assertTrue(gates["operations"]["create_work_order"]["starts_at_datetime_format_unverified"])
+        self.assertFalse(gates["create_response_schema_verified"])
+        self.assertNotIn("work_order_schema_unverified", gates["closed_contracts"])
         self.assertIn("arrival_window_unverified", gates["closed_contracts"])
         self.assertNotIn("live_patch_untested", gates["closed_contracts"])
         self.assertIn("arrival_window_unverified", gates["closed_contracts"])

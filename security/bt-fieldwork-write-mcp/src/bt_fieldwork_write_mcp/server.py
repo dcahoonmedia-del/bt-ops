@@ -19,19 +19,35 @@ from .service import WriteService
 PUBLIC_INSTRUCTIONS = (
     "Read the Fieldwork record, propose one change, inspect it, and show the user the exact before and after. "
     "Obtain explicit user approval of that before and after. Then execute only with approved=true and the exact digest "
-    "from that proposal, and show the live readback. Do not execute a draft, a stale proposal, a different proposal, "
-    "or a change the user did not approve. No customer create, no work-order create, no Lead-status accounts, "
-    "no messaging, no generic HTTP, no recurring-series edits, and no arrival-window edits. "
+    "from that proposal, and show the readback. Do not execute a draft, a stale proposal, a different proposal, "
+    "or a change the user did not approve. "
+    "Customer create accepts Residential or Commercial, the documented billing fields and note, and service locations that send only name and same_as_billing_address. "
+    "Work-order create accepts one occurrence, repeat_type none, repeat_period as an integer, starts_at as YYYY-MM-DD, and line items with payable_id and payable_type when type is service or material. "
+    "Lead status, messaging, generic HTTP, recurring series, use_time_window, taxable line items, and arrival-window edits are rejected. "
+    "Create responses are not a verified live schema. "
     "Writes stay off unless FIELDWORK_WRITES_ENABLED is set and the live API role is writer. "
-    "Work-order writes also require FIELDWORK_MAPPING_VERIFIED. GET /check_connection is not auth proof. "
+    "Work-order note and schedule writes also require FIELDWORK_MAPPING_VERIFIED. GET /check_connection is not auth proof. "
     "MCP execution requires FW_WRITE_APPROVAL_MODE=chatgpt_confirmation. A separate approval string is not accepted."
+)
+
+PROPOSE_DESCRIPTION = (
+    "Prepare one exact before/after proposal and do not change Fieldwork. "
+    "Supported: update_service_location_notes(customer_id, location_id, notes); "
+    "update_work_order_notes(work_order_id, service_appointment_id, instructions and/or private_notes); "
+    "update_work_order_schedule(work_order_id, service_appointment_id, starts_at with a numeric offset, duration minutes, service_route_ids); "
+    "create_customer(customer_type Residential or Commercial, commercial name or residential last_name, service_locations with only name and same_as_billing_address, optional documented billing fields and note); "
+    "create_work_order(customer_id, service_location_id, repeat_type none, integer repeat_period, one occurrence with service_route_ids and starts_at YYYY-MM-DD, line items name/type/quantity/price, and payable_id plus payable_type when type is service or material). "
+    "Rejected: lead status, repeat_type other than none, repeat_type never, use_time_window, Zulu or offset starts_at, taxable line items, tax fields, messages, and arrival-window edits."
 )
 
 EXECUTE_DESCRIPTION = (
     "After the user has explicitly approved the exact before and after shown by inspect_proposal, "
-    "execute that one proposal with approved=true and the exact digest. The result includes live readback. "
+    "execute that one proposal with approved=true and the exact digest. The result includes readback. "
     "Rejects missing approval, a missing or wrong digest, a stale before, an expired proposal, a tampered stored proposal, "
-    "another proposal id, or another user's proposal. create_work_order cannot execute. "
+    "another proposal id, or another user's proposal. "
+    "Customer and work-order create each send one POST of the documented request and do not PATCH. "
+    "A create response without an integer id is create_response_unverified and is not retried. "
+    "A successful create readback only checks fields that were sent and echoed by the test double. It is not a verified live schema. "
     "Requires FW_WRITE_APPROVAL_MODE=chatgpt_confirmation."
 )
 
@@ -73,7 +89,7 @@ def build_mcp(service: WriteService, settings: Settings, verifier: JwtTokenVerif
     async def report_gates() -> dict[str, Any]:
         return report_gates_body(service, settings)
 
-    @server.tool(name="propose_write", description="Prepare one exact before/after proposal and do not change Fieldwork. Supported: update_service_location_notes(customer_id, location_id, notes); update_work_order_notes(work_order_id, service_appointment_id, instructions and/or private_notes); update_work_order_schedule(work_order_id, service_appointment_id, starts_at with a numeric offset, duration minutes, service_route_ids). create_work_order, customer create, messages, series edits, and arrival-window edits are rejected.")
+    @server.tool(name="propose_write", description=PROPOSE_DESCRIPTION)
     async def propose_write(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         identity = request_identity()
         if identity is None:
@@ -147,7 +163,7 @@ def build_bridge_server(settings: Settings, service: WriteService, fieldwork_key
             return {"ok": False, "gate": GATE_AUTH}
         return report_gates_body(service, settings)
 
-    @mcp.tool(name="propose_write", description="Prepare one exact before/after proposal and do not change Fieldwork. Supported: update_service_location_notes(customer_id, location_id, notes); update_work_order_notes(work_order_id, service_appointment_id, instructions and/or private_notes); update_work_order_schedule(work_order_id, service_appointment_id, starts_at with a numeric offset, duration minutes, service_route_ids). create_work_order, customer create, messages, series edits, and arrival-window edits are rejected.")
+    @mcp.tool(name="propose_write", description=PROPOSE_DESCRIPTION)
     async def propose_write(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         identity = _identity()
         if identity is None:
