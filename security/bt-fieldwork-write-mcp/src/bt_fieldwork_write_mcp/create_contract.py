@@ -189,9 +189,13 @@ def customer_request(payload: dict[str, Any]) -> dict[str, Any]:
             "caller_field": "primary_email",
             "api_field": "invoice_email",
             "value": email.strip(),
-            "write_supported": False,
+            "post_supported": False,
+            "patch_supported": True,
+            "sole_form_field": "customer[invoice_email]",
+            "observed_http_status": 200,
+            "observed_at": "2026-09-25T17:02:00-04:00",
             "candidate_body": {"customer": {"invoice_email": email.strip()}},
-            "reason": "customer_write_spec_has_no_invoice_email",
+            "reason": "observed_customer_patch_not_customer_post",
         }
     if "location_email" in payload:
         location_email = payload["location_email"]
@@ -246,6 +250,22 @@ def _customer_api_steps(plan: dict[str, Any]) -> list[dict[str, Any]]:
                 "method": "PATCH",
                 "path": "/customers/{customer_id}/service_locations/{location_id}",
                 "body": {"service_location": service_location},
+            }
+        )
+    if plan.get("primary_email"):
+        steps.append(
+            {
+                "method": "PATCH",
+                "path": "/customers/{customer_id}",
+                "body": {"customer": {"invoice_email": plan["primary_email"]}},
+            }
+        )
+    if plan.get("deferred_location_email"):
+        steps.append(
+            {
+                "method": "PATCH",
+                "path": "/customers/{customer_id}/service_locations/{location_id}",
+                "body": {"service_location": {"email": plan["deferred_location_email"]}},
             }
         )
     if plan.get("additional_location"):

@@ -265,9 +265,15 @@ def bind_residential_location(plan: dict[str, Any], client: Any, configured_type
     plan["location_type_id"] = int(matches[0]["id"])
     plan["property_type"] = matches[0].get("name")
     fields = {"location_type_id": plan["location_type_id"], "reminders_type": 0}
-    if plan.get("location_email"):
-        fields["email"] = plan["location_email"]
+    primary = plan.get("primary_email")
+    location_email = plan.get("location_email")
+    same_as_billing = plan["customer"]["service_locations_attributes"][0]["same_as_billing_address"] is True
+    if location_email and primary and location_email != primary:
+        plan["deferred_location_email"] = location_email
+    elif location_email:
+        fields["email"] = location_email
     plan["main_location"] = fields
+    plan["expected_location_email"] = location_email or (primary if same_as_billing and primary else None)
     plan["reminders_type"] = 0
     plan["notification_effects"] = {
         "reminders_type_sent": 0,
@@ -275,6 +281,8 @@ def bind_residential_location(plan: dict[str, Any], client: Any, configured_type
         "send_report_email": "not_sent",
         "completion_report": "inherited_send_report_email_true_may_send_once_location_email_is_added",
         "customer_creation_notice": "unknown",
+        "invoice_email_notice_delivery": "not_audited",
+        "same_as_billing_invoice_email_propagation": "observed_once_not_proven_for_other_locations" if primary and same_as_billing else "not_assumed",
     }
     from .create_contract import _customer_api_steps
 
@@ -595,13 +603,15 @@ def _reminder_readback(location: dict[str, Any]) -> dict[str, Any]:
     return {"status": "verified", "value": location.get("reminders_type")}
 
 
-def customer_readback(client: Any, customer_id: str, *, sent_customer: dict[str, Any], contact: dict[str, Any] | None, location_id: str, address: dict[str, Any] | None, wrote_customer: bool = True, main_location: dict[str, Any] | None = None) -> dict[str, Any]:
+def customer_readback(client: Any, customer_id: str, *, sent_customer: dict[str, Any], contact: dict[str, Any] | None, location_id: str, address: dict[str, Any] | None, wrote_customer: bool = True, main_location: dict[str, Any] | None = None, expected_invoice_email: str | None = None, expected_location_email: str | None = None) -> dict[str, Any]:
     customer = client.get_customer(customer_id)
     status = str(customer.get("status") or customer.get("customer_status") or "").strip().lower()
     if status != "active":
         raise GateError(GATE_READBACK, reason="customer_not_active", status=status)
     if str(customer.get("id")) != str(customer_id):
         _mismatch("customer_id", customer_id, customer.get("id"))
+    if expected_invoice_email is not None:
+        _require_equal("invoice_email", expected_invoice_email, customer.get("invoice_email"))
     compared: dict[str, Any] = {}
     fields = sent_customer if wrote_customer else {}
     for key, value in fields.items():
@@ -622,7 +632,9 @@ def customer_readback(client: Any, customer_id: str, *, sent_customer: dict[str,
         _require_equal("location_name", sent_location.get("name"), location.get("name"))
         _require_equal("same_as_billing_address", sent_location.get("same_as_billing_address"), location.get("same_as_billing_address"))
     if main_location:
-        if "email" in main_location:
+        if expected_location_email is not None:
+            _require_equal("location_email", expected_location_email, location.get("email"))
+        elif "email" in main_location:
             _require_equal("location_email", main_location["email"], location.get("email"))
         if "location_type_id" in main_location:
             _require_equal("location_type_id", main_location["location_type_id"], location.get("location_type_id"))
@@ -664,17 +676,23 @@ def customer_readback(client: Any, customer_id: str, *, sent_customer: dict[str,
         "matched_sent_fields": True,
         "billing_phone_kind": {"status": "verified" if "billing_phone_kind" in fields else "not_sent", "value": customer.get("billing_phone_kind")},
         "reminders_type": _reminder_readback(location),
-        "location_email": {"status": "verified" if main_location and "email" in main_location else "not_sent", "value": location.get("email")},
+        "location_email": {"status": "verified" if expected_location_email is not None or (main_location and "email" in main_location) else "not_sent", "value": location.get("email")},
         "location_type_id": {"status": "verified" if main_location and "location_type_id" in main_location else "not_sent", "value": location.get("location_type_id")},
-        "primary_email": {"status": "not_sent", "reason": "invoice_email_not_in_customer_write_spec"},
+        "primary_email": {"status": "verified" if expected_invoice_email else "not_sent", "value": customer.get("invoice_email")},
         **labels,
     }
 
 
+def _invoice_email_matches(client: Any, customer_id: str, email: str) -> bool:
+    try:
+        customer = client.get_customer(customer_id)
+    except GateError:
+        return False
+    return str(customer.get("invoice_email") or "").casefold() == email.casefold()
+
+
 def post_customer_steps(service: Any, proposal: dict[str, Any], attempt_id: str) -> dict[str, Any]:
     plan = proposal["after"]["documented_request"]
-    if plan.get("primary_email"):
-        raise GateError("invoice_email_write_unverified", retry=False)
     client = service.client
     store = service.store
     search = duplicate_search(client, proposal["payload"])
@@ -753,6 +771,31 @@ def post_customer_steps(service: Any, proposal: dict[str, Any], attempt_id: str)
                 store.finish_creation_step(step_id, "ambiguous", {"retry": False, "reason": "location_patch_unresolved", "response": _public_diagnostic(diagnostic)}, customer_id=customer_id, location_id=location_id)
                 return stop_creation(store, proposal, attempt_id)
         _succeed(store, step_id, {"location_id": location_id, "response": _public_diagnostic(diagnostic)}, customer_id=customer_id, location_id=location_id)
+    if plan.get("primary_email"):
+        if not _proposal_current(service, proposal):
+            return stop_creation(store, proposal, attempt_id)
+        body = {"customer": {"invoice_email": plan["primary_email"]}}
+        step_id = _step(store, proposal["proposal_id"], "invoice_email_patch", body, customer_id=customer_id, location_id=location_id)
+        response, diagnostic = _sent_write(lambda: client.patch_customer_invoice_email(customer_id, plan["primary_email"]), client)
+        status = _public_diagnostic(diagnostic).get("status")
+        if response is None or status not in {200, 204, "unknown"}:
+            if not _invoice_email_matches(client, customer_id, plan["primary_email"]):
+                _ambiguous(store, step_id, customer_id=customer_id, location_id=location_id)
+                store.finish_creation_step(step_id, "ambiguous", {"retry": False, "reason": "invoice_email_patch_unresolved", "response": _public_diagnostic(diagnostic)}, customer_id=customer_id, location_id=location_id)
+                return stop_creation(store, proposal, attempt_id)
+        _succeed(store, step_id, {"customer_id": customer_id, "response": _public_diagnostic(diagnostic)}, customer_id=customer_id, location_id=location_id)
+    if plan.get("deferred_location_email"):
+        if not _proposal_current(service, proposal):
+            return stop_creation(store, proposal, attempt_id)
+        patch = {"service_location": {"email": plan["deferred_location_email"]}}
+        step_id = _step(store, proposal["proposal_id"], "location_email_patch", patch, customer_id=customer_id, location_id=nested_location_id)
+        response, diagnostic = _sent_write(lambda: client.patch_service_location(customer_id, nested_location_id, patch), client)
+        if response is None or _public_diagnostic(diagnostic).get("status") not in {200, 204, "unknown"}:
+            if not _location_matches(client, customer_id, nested_location_id, patch["service_location"]):
+                _ambiguous(store, step_id, customer_id=customer_id, location_id=nested_location_id)
+                store.finish_creation_step(step_id, "ambiguous", {"retry": False, "reason": "location_email_patch_unresolved", "response": _public_diagnostic(diagnostic)}, customer_id=customer_id, location_id=nested_location_id)
+                return stop_creation(store, proposal, attempt_id)
+        _succeed(store, step_id, {"location_id": nested_location_id, "response": _public_diagnostic(diagnostic)}, customer_id=customer_id, location_id=nested_location_id)
     if plan.get("additional_location"):
         if not _proposal_current(service, proposal):
             return stop_creation(store, proposal, attempt_id)
@@ -814,6 +857,8 @@ def post_customer_steps(service: Any, proposal: dict[str, Any], attempt_id: str)
         address=address,
         wrote_customer=not plan.get("existing_customer_id"),
         main_location=plan.get("main_location"),
+        expected_invoice_email=plan.get("primary_email"),
+        expected_location_email=plan.get("expected_location_email"),
     )
     if plan.get("additional_location"):
         extra = client.get_location(customer_id, location_id)
