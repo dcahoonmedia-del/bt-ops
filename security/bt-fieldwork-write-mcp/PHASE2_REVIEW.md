@@ -34,3 +34,11 @@ API base remains `https://api3.fieldworkhq.com/v3.1`. Public specs fetched from 
 - `stripe_pk`, account, and feature payloads are not returned. Staff with `is_technician` false stay in the directory when they have a route. Route id `-1` is unassigned.
 - Several staff on one route are listed together. `assignee` is null.
 - `GET /service_routes` may be an empty array. Route relationships then come from the live user directory. A configured snapshot is used only when that user read is unavailable, and the response names that reason and source.
+
+## Arrival windows
+
+Fieldwork documents fixed, relative, and manual windows: https://intercom.help/fieldwork/en/articles/3472212-settings-arrival-time-windows. Fixed windows are chosen from the start time and do not depend on duration. Manual windows do not move when the start changes.
+
+Verified B&T settings at `/settings/account/time_windows` use Auto-select from Fixed Time Windows. The catalog is hourly 08:00–09:00 through 16:00–17:00 America/New_York, ids 590–598. No relative windows are listed. Tim occurrence 8210560’s schedule form selects fixed (`time_window_kind` option 1). Typed GET, `/show_plain`, and profile do not return that field, so it is not added to API snapshots.
+
+Prediction runs only when that company catalog and a matching occurrence record are inside their freshness window and bound to the work order, appointment, customer, and location. Anything else, including a window that merely equals start plus duration, returns `schedule_coupling_unverified` with the reason. The stored Tim result still reconciles by this rule: a 13:00 start selects window 595 (13:00–14:00). Reconciliation does not PATCH and does not edit the approved payload.

@@ -119,16 +119,8 @@ class ContractV7Tests(unittest.TestCase):
             {"work_order_id": "10", "service_appointment_id": "20", "starts_at": "2026-09-25T13:00:00-04:00", "duration": 45, "service_route_ids": [2557, 4550]},
             IDENTITY,
         )
-        self.assertTrue(proposed["ok"], proposed)
-        self.assertEqual(proposed["after"]["arrival_time_window_str"], proposed["before"]["arrival_time_window_str"])
-        token = self.h.approve(proposed["proposal_id"])
-        executed = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=token)
-        self.assertTrue(executed["ok"], executed)
-        self.assertEqual(self.role.patches[0]["fields"], ["starts_at", "duration", "service_route_ids"])
-        self.assertEqual(executed["readback"]["starts_at"], "2026-09-25T13:00:00-04:00")
-        self.assertEqual(executed["readback"]["arrival_time_window_start"], "08:00")
-        replay = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=token)
-        self.assertEqual(replay["gate"], GATE_REPLAY)
+        self.assertFalse(proposed["ok"])
+        self.assertEqual(proposed["gate"], "schedule_coupling_unverified")
 
     def test_schedule_rejects_bad_values_series_and_arrival_edits(self) -> None:
         bad = self.h.service.propose(OP_WORK_ORDER_SCHEDULE, {"work_order_id": "10", "service_appointment_id": "20", "starts_at": "2026-09-25T13:00:00Z", "duration": 45, "service_route_ids": [1]}, IDENTITY)
@@ -144,11 +136,14 @@ class ContractV7Tests(unittest.TestCase):
         self.assertEqual(series["gate"], GATE_RECURRING)
 
     def test_schedule_stale_before_patch(self) -> None:
+        self.h.transport.work_orders["10"].update({
+            "arrival_time_window": ["2026-09-25T08:00:00-04:00", "2026-09-25T08:45:00-04:00"],
+            "arrival_time_window_start": "08:00",
+            "arrival_time_window_end": "08:45",
+        })
         proposed = self.h.service.propose(OP_WORK_ORDER_SCHEDULE, {"work_order_id": "10", "service_appointment_id": "20", "starts_at": "2026-09-25T13:00:00-04:00", "duration": 45, "service_route_ids": [2557]}, IDENTITY)
-        token = self.h.approve(proposed["proposal_id"])
-        self.h.transport.work_orders["10"]["duration"] = 90
-        result = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=token)
-        self.assertEqual(result["gate"], GATE_STALE)
+        self.assertEqual(proposed["gate"], "schedule_coupling_unverified")
+        self.assertIn("stale", proposed["reason"])
         self.assertEqual(self.role.patches, [])
 
     def test_create_stays_unavailable(self) -> None:

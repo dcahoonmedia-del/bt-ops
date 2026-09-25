@@ -522,8 +522,15 @@ class FakeTransport:
             for field in ("instructions", "private_notes", "starts_at", "duration", "service_route_ids"):
                 if field in occ:
                     match[field] = occ[field]
+            if "starts_at" in occ or "duration" in occ:
+                from .schedule import apply_fixed_window_double
+
+                apply_fixed_window_double(match)
             if not self.skip_work_order_persist:
                 self.work_orders[match_key] = match
+            if self.write_mode == "timeout_after_apply":
+                self.write_mode = "ok"
+                raise AmbiguousWriteError("timeout_after_apply")
             return 200, {"appointment_occurrence": match}
         if method == "POST" and path.startswith("/work_orders"):
             return 403, {"error": "schema_unverified"}
@@ -640,7 +647,10 @@ def _project_user(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _try_users(client: "TypedFieldworkClient") -> list[dict[str, Any]] | None:
-    status, body = client.transport.request("GET", "/users")
+    try:
+        status, body = client.transport.request("GET", "/users")
+    except Exception:
+        return None
     if status != 200:
         return None
     return [_project_user(row) for row in _as_list(body)]
@@ -690,7 +700,7 @@ def search_customers_typed(client: "TypedFieldworkClient", query: str = "", **fi
     per_page = int(filters.get("per_page") or 100)
     if not 1 <= per_page <= 100 or (page is not None and int(page) < 1):
         raise GateError("invalid_pagination")
-    if phone and any(filters.get(key) for key in ("customer_status", "postal_code", "billing_postal_code", "date_added", "start_date", "end_date", "page")):
+    if phone and (str(query or "").strip() or any(filters.get(key) for key in ("customer_status", "postal_code", "billing_postal_code", "date_added", "start_date", "end_date", "page"))):
         raise GateError("unsupported_filter", fields=["phone_with_search_filters"])
     if phone:
         status, body = client.transport.request("GET", "/customers/search_by_phone", query={"phone": phone, "as_object": True})
@@ -699,7 +709,7 @@ def search_customers_typed(client: "TypedFieldworkClient", query: str = "", **fi
         rows = _as_list(body)
         found = {"items": rows, "complete": True, "truncated": False, "pages_read": 1, "per_page": None, "endpoint": "/customers/search_by_phone"}
     else:
-        if not str(query or "").strip() and not any(filters.get(key) for key in ("customer_status", "postal_code", "billing_postal_code", "date_added", "start_date", "end_date")):
+        if not str(query or "").strip() and not str(filters.get("name") or "").strip() and not any(filters.get(key) for key in ("customer_status", "postal_code", "billing_postal_code", "date_added", "start_date", "end_date")):
             raise GateError("unknown_field")
         upstream: dict[str, Any] = {}
         if str(query or "").strip():
@@ -861,16 +871,30 @@ class TypedFieldworkClient:
     def _pages(self, path: str, query: dict[str, Any] | None = None, *, per_page: int = 100, max_pages: int = 20) -> dict[str, Any]:
         rows: list[dict[str, Any]] = []
         page = 1
+        pages_read = 0
+        seen: list[tuple[str, ...]] = []
         while page <= max_pages:
-            status, body = self.transport.request("GET", path, query={**(query or {}), "page": page, "per_page": per_page})
+            try:
+                status, body = self.transport.request("GET", path, query={**(query or {}), "page": page, "per_page": per_page})
+            except Exception:
+                if pages_read == 0:
+                    raise
+                return {"items": rows, "complete": False, "truncated": True, "pages_read": pages_read, "per_page": per_page, "next_page": page, "partial_error": {"page": page}, "repeated_page": False}
             if status != 200:
-                raise GateError("read_rejected", status=status, path=path.split("?", 1)[0])
+                if pages_read == 0:
+                    raise GateError("read_rejected", status=status, path=path.split("?", 1)[0])
+                return {"items": rows, "complete": False, "truncated": True, "pages_read": pages_read, "per_page": per_page, "next_page": page, "partial_error": {"status": status, "page": page}, "repeated_page": False}
             batch = _as_list(body)
+            signature = tuple(str(item.get("id")) for item in batch)
+            if signature in seen:
+                return {"items": rows, "complete": False, "truncated": True, "pages_read": pages_read, "per_page": per_page, "next_page": None, "repeated_page": True}
+            seen.append(signature)
+            pages_read += 1
             rows.extend(batch)
             if len(batch) < per_page:
-                return {"items": rows, "complete": True, "truncated": False, "pages_read": page, "per_page": per_page}
+                return {"items": rows, "complete": True, "truncated": False, "pages_read": pages_read, "per_page": per_page, "next_page": None, "repeated_page": False}
             page += 1
-        return {"items": rows, "complete": False, "truncated": True, "pages_read": max_pages, "per_page": per_page}
+        return {"items": rows, "complete": False, "truncated": True, "pages_read": pages_read, "per_page": per_page, "next_page": page, "repeated_page": False}
 
     def search_customers(self, query: str = "", **filters: Any) -> dict[str, Any]:
         return search_customers_typed(self, query, **filters)
@@ -935,6 +959,7 @@ class TypedFieldworkClient:
             raise GateError("invalid_pagination")
         final_page = page + max_pages - 1
         pages_read = 0
+        last_page = page - 1
         scanned = 0
         complete = False
         repeated_page = False
@@ -956,7 +981,8 @@ class TypedFieldworkClient:
                 complete = False
                 break
             seen_pages.append(signature)
-            pages_read = page
+            pages_read += 1
+            last_page = page
             scanned += len(batch)
             for item in batch:
                 if not _local_schedule_match(item, filters):
@@ -982,7 +1008,7 @@ class TypedFieldworkClient:
                 complete = True
                 break
             page += 1
-        if repeated_page or partial_error is not None:
+        if repeated_page or partial_error is not None or missing_fields:
             complete = False
         matched.sort(key=lambda row: str(row.get("starts_at") or ""), reverse=filters.get("sort_direction") == "desc")
         by_route = {row["route_id"]: row for row in (self.route_directory or {}).get("routes", [])}
@@ -1016,7 +1042,7 @@ class TypedFieldworkClient:
             "truncated": not complete,
             "pages_read": pages_read,
             "scanned_count": scanned,
-            "next_page": None if complete or repeated_page or partial_error else pages_read + 1,
+            "next_page": None if complete or repeated_page or partial_error or missing_fields else last_page + 1,
             "per_page": per_page,
             "repeated_page": repeated_page,
             "partial_error": partial_error,

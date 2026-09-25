@@ -104,6 +104,9 @@ class WriteService:
         self.client = client
         self._now = now or (lambda: datetime.now(timezone.utc))
         self._readiness: dict[str, Any] | None = None
+        from .schedule import verified_window_evidence
+
+        self.window_evidence = verified_window_evidence()
 
     def readiness(self, settings: Settings | None = None) -> dict[str, Any]:
         """One profile read and one auth snapshot. Later gates() calls reuse it."""
@@ -315,14 +318,29 @@ class WriteService:
             return self._fail("identity_mismatch")
         self._reject_series(row)
         before = self._occurrence_snapshot(row)
-        after = dict(before)
-        after["starts_at"] = _normalized_start(starts_at)
-        after["duration"] = duration
-        after["service_route_ids"] = list(routes)
-        for key in ARRIVAL_FIELDS:
-            after[key] = before[key]
+        before["service_route_ids"] = list(before.get("service_route_ids") or routes)
+        from .schedule import SCHEDULE_MODEL, predict_fixed_shift
+
+        after, reason = predict_fixed_shift(before, str(starts_at), duration, list(routes), self.window_evidence, _utc(self._now()))
+        if after is None:
+            return self._fail("schedule_coupling_unverified", reason=reason, explicit_arrival_window_edit=False)
         result = self._persist_proposal(OP_WORK_ORDER_SCHEDULE, payload, identity, f"work_order:{work_order_id}", before, after)
         result["patch_fields"] = list(SCHEDULE_WRITE_FIELDS)
+        result["schedule_model"] = SCHEDULE_MODEL
+        result["arrival_coupling"] = "fixed_window_selected_by_start"
+        result["explicit_arrival_window_edit"] = False
+        result["fixed_window_id"] = after["fixed_window_id"]
+        result["window_evidence_source"] = after["window_evidence_source"]
+        result["occurrence_evidence_field"] = after["occurrence_evidence_field"]
+        result["predicted_changes"] = {
+            "starts_at": after["starts_at"],
+            "ends_at": after["ends_at"],
+            "duration": duration,
+            "arrival_time_window": after["arrival_time_window"],
+            "arrival_time_window_start": after["arrival_time_window_start"],
+            "arrival_time_window_end": after["arrival_time_window_end"],
+            "fixed_window_id": after["fixed_window_id"],
+        }
         return result
 
     def _propose_create(self, payload: dict[str, Any], identity: dict[str, str]) -> dict[str, Any]:
@@ -613,32 +631,131 @@ class WriteService:
         if stale is not None:
             self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "failed_no_write")
             return stale
+        ambiguous_response = False
         try:
             self.client.patch_work_order_fields(proposal["before"], proposal["after"], fields)
         except AmbiguousWriteError:
-            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
-            return self._fail("ambiguous_remote_write_no_retry", proposal_id=proposal["proposal_id"])
+            ambiguous_response = True
         except GateError as exc:
             self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "failed_no_write")
             return self._fail(exc.gate, proposal_id=proposal["proposal_id"], **exc.detail)
         except Exception:
-            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
-            return self._fail("ambiguous_remote_write_no_retry", proposal_id=proposal["proposal_id"])
+            ambiguous_response = True
+        if ambiguous_response:
+            return self._reconcile_after_ambiguous_patch(proposal, attempt_id, fields)
+        return self._verify_work_order_readback(proposal, attempt_id, fields, ambiguous_response=False)
+
+    def _expected_schedule(self, proposal: dict[str, Any]) -> dict[str, Any] | None:
+        from .schedule import SCHEDULE_MODEL, predict_fixed_shift
+
+        if proposal["operation"] != OP_WORK_ORDER_SCHEDULE:
+            return proposal["after"]
+        if proposal["after"].get("schedule_model") == SCHEDULE_MODEL:
+            return proposal["after"]
+        payload = proposal["payload"]
+        predicted, self._schedule_reason = predict_fixed_shift(
+            proposal["before"],
+            str(payload.get("starts_at")),
+            int(payload.get("duration")),
+            list(payload.get("service_route_ids") or []),
+            self.window_evidence,
+            _utc(self._now()),
+        )
+        if predicted is None:
+            return None
+        predicted["legacy_stored_after_not_authoritative"] = True
+        return predicted
+
+    def _verify_work_order_readback(self, proposal: dict[str, Any], attempt_id: str, fields: list[str], *, ambiguous_response: bool) -> dict[str, Any]:
         try:
             row = self.client.get_work_order(str(proposal["before"]["work_order_id"]))
             readback = self._occurrence_snapshot(row)
+            if proposal["operation"] == OP_WORK_ORDER_SCHEDULE:
+                readback["ends_at"] = row.get("ends_at")
+                readback["finished_at"] = row.get("finished_at")
         except Exception:
             self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
-            return self._fail(GATE_READBACK, proposal_id=proposal["proposal_id"])
+            return self._fail("readback_unresolved", proposal_id=proposal["proposal_id"], retry=False, readback=None)
+        if proposal["operation"] == OP_WORK_ORDER_SCHEDULE:
+            from .schedule import compare_schedule
+
+            expected = self._expected_schedule(proposal)
+            if expected is None:
+                self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
+                return self._fail("schedule_coupling_unverified", proposal_id=proposal["proposal_id"], retry=False, reason=getattr(self, "_schedule_reason", "arrival_window_mode_unverified"))
+            mismatches = compare_schedule(expected, readback, proposal["before"])
+            if mismatches:
+                self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
+                return self._fail("readback_unresolved", proposal_id=proposal["proposal_id"], retry=False, mismatches=mismatches, readback=readback)
+            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "success")
+            body = {"ok": True, "proposal_id": proposal["proposal_id"], "operation": proposal["operation"], "readback": readback, "patch_fields": fields, "gates": self.gates()}
+            if ambiguous_response:
+                body["ambiguity_reconciled"] = True
+                body["reconciliation"] = expected.get("evidence")
+                body["general_rule"] = False
+            return body
         if snapshot_hash(readback) != snapshot_hash(proposal["after"]):
             self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
             return self._fail(GATE_READBACK, proposal_id=proposal["proposal_id"])
-        for key in ARRIVAL_FIELDS:
-            if readback.get(key) != proposal["before"].get(key):
-                self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
-                return self._fail(GATE_ARRIVAL_WINDOW, proposal_id=proposal["proposal_id"])
         self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "success")
         return {"ok": True, "proposal_id": proposal["proposal_id"], "operation": proposal["operation"], "readback": readback, "patch_fields": fields, "gates": self.gates()}
+
+    def _reconcile_after_ambiguous_patch(self, proposal: dict[str, Any], attempt_id: str, fields: list[str]) -> dict[str, Any]:
+        return self._verify_work_order_readback(proposal, attempt_id, fields, ambiguous_response=True)
+
+    def reconcile_ambiguous(self, proposal_id: str, identity: dict[str, str] | None) -> dict[str, Any]:
+        """Read the live occurrence for an ambiguous write. Does not PATCH or edit the stored payload."""
+        self.readiness()
+        ident = self._identity_or_reject(identity)
+        if "ok" in ident and ident.get("ok") is False:
+            return ident
+        proposal = self.store.get_proposal(proposal_id)
+        if proposal is None:
+            return self._fail("unknown_operation", proposal_id=proposal_id)
+        if proposal["identity"] != ident:
+            return self._fail(GATE_IDENTITY, proposal_id=proposal_id)
+        if proposal["status"] != "ambiguous":
+            return self._fail("not_ambiguous", proposal_id=proposal_id)
+        before_payload = dict(proposal["payload"])
+        before_digest = proposal["digest"]
+        before_after = dict(proposal["after"])
+        try:
+            row = self.client.get_work_order(str(proposal["before"]["work_order_id"]))
+            readback = self._occurrence_snapshot(row)
+            readback["ends_at"] = row.get("ends_at")
+            readback["finished_at"] = row.get("finished_at")
+        except Exception:
+            self.store.append_audit(proposal_id, "reconcile_get_failed", {"retry": False})
+            return self._fail("readback_unresolved", proposal_id=proposal_id, retry=False)
+        from .schedule import compare_schedule
+
+        expected = self._expected_schedule(proposal)
+        if expected is None:
+            reason = getattr(self, "_schedule_reason", "arrival_window_mode_unverified")
+            self.store.append_audit(proposal_id, "reconcile_unsupported", {"retry": False, "reason": reason})
+            return self._fail("schedule_coupling_unverified", proposal_id=proposal_id, retry=False, reason=reason)
+        mismatches = compare_schedule(expected, readback, proposal["before"])
+        stored = self.store.get_proposal(proposal_id)
+        if stored["payload"] != before_payload or stored["digest"] != before_digest or stored["after"] != before_after:
+            return self._fail("immutable_proposal_changed", proposal_id=proposal_id)
+        if mismatches:
+            self.store.append_audit(proposal_id, "reconcile_mismatch", {"mismatches": mismatches, "retry": False})
+            return self._fail("readback_unresolved", proposal_id=proposal_id, retry=False, mismatches=mismatches, readback=readback)
+        self.store.append_audit(proposal_id, "reconcile_verified", {"schedule_model": expected.get("schedule_model"), "legacy_stored_after_not_authoritative": expected.get("legacy_stored_after_not_authoritative", False)})
+        self.store.set_status(proposal_id, "executed")
+        self.store.release_ambiguous_guard(proposal["subject_key"], proposal_id)
+        unchanged = self.store.get_proposal(proposal_id)
+        return {
+            "ok": True,
+            "proposal_id": proposal_id,
+            "status": unchanged["status"],
+            "readback": readback,
+            "patched": False,
+            "immutable_payload_unchanged": unchanged["payload"] == before_payload and unchanged["digest"] == before_digest and unchanged["after"] == before_after,
+            "legacy_stored_after_not_authoritative": expected.get("legacy_stored_after_not_authoritative", False),
+            "evidence": expected.get("evidence"),
+            "general_rule": False,
+        }
 
     def inspect(self, proposal_id: str, identity: dict[str, str] | None) -> dict[str, Any]:
         self.readiness()

@@ -104,6 +104,13 @@ def build_mcp(service: WriteService, settings: Settings, verifier: JwtTokenVerif
             )
         )
 
+    @server.tool(name="reconcile_ambiguous_write", description="Read the live work order for a proposal already marked ambiguous. Does not send another PATCH and does not change the stored payload or digest.", annotations={"readOnlyHint": True, "destructiveHint": False})
+    async def reconcile_ambiguous_write(proposal_id: str) -> dict[str, Any]:
+        identity = request_identity()
+        if identity is None:
+            return {"ok": False, "gate": GATE_AUTH, "gates": service.gates()}
+        return redact(service.reconcile_ambiguous(proposal_id, identity))
+
     @server.tool(name="inspect_proposal", description="Return one stored proposal, including its digest, before, after, and expiry. Does not write. No secrets.", annotations={"readOnlyHint": True, "destructiveHint": False})
     async def inspect_proposal(proposal_id: str) -> dict[str, Any]:
         identity = request_identity()
@@ -155,6 +162,13 @@ def build_bridge_server(settings: Settings, service: WriteService, fieldwork_key
         if identity is None:
             return {"ok": False, "gate": GATE_AUTH, "gates": service.gates()}
         return redact(service.execute(proposal_id, identity, approved=approved, expected_digest=expected_digest))
+
+    @mcp.tool(name="reconcile_ambiguous_write", description="Read the live work order for a proposal already marked ambiguous. Does not send another PATCH and does not change the stored payload or digest.", annotations={"readOnlyHint": True, "destructiveHint": False})
+    async def reconcile_ambiguous_write(proposal_id: str) -> dict[str, Any]:
+        identity = _identity()
+        if identity is None:
+            return {"ok": False, "gate": GATE_AUTH, "gates": service.gates()}
+        return redact(service.reconcile_ambiguous(proposal_id, identity))
 
     @mcp.tool(name="inspect_proposal", description="Return one stored proposal, including its digest, before, after, and expiry. Does not write. No secrets.", annotations={"readOnlyHint": True, "destructiveHint": False})
     async def inspect_proposal(proposal_id: str) -> dict[str, Any]:

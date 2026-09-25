@@ -158,7 +158,7 @@ class ChatGPTApprovalTests(unittest.TestCase):
         tool=next(item for item in server._tool_manager.list_tools() if item.name=='execute_approved_write')
         self.assertNotIn('operator_approval', tool.parameters['properties'])
         names={item.name for item in server._tool_manager.list_tools()}
-        self.assertEqual(len(names), 13)
+        self.assertEqual(len(names), 14)
         proposed=self.h.propose_notes('wrapper note')
         import bt_fieldwork_write_mcp.server as server_mod
         server_mod.request_identity = lambda: dict(IDENTITY)

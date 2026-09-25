@@ -205,6 +205,20 @@ class WriteStore:
             "status": row["status"],
         }
 
+    def append_audit(self, proposal_id: str, event: str, detail: dict[str, Any]) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO audit(at, event, proposal_id, detail_json) VALUES (?,?,?,?)",
+                (_now(), event, proposal_id, _json(detail)),
+            )
+
+    def release_ambiguous_guard(self, subject_key: str, proposal_id: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM subject_guards WHERE subject_key = ? AND proposal_id = ? AND state = 'ambiguous'",
+                (subject_key, proposal_id),
+            )
+
     def set_status(self, proposal_id: str, status: str) -> None:
         with self._lock:
             self._conn.execute("UPDATE proposals SET status = ? WHERE proposal_id = ?", (status, proposal_id))

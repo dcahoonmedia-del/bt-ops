@@ -149,7 +149,7 @@ def current_gates(
         "operations": {
             "update_service_location_notes": {"propose": True, "execute_blocked_by": list(write_blocks)},
             "update_work_order_notes": {"propose": bool(mapping_verified), "execute_role": "client.get_api_role", "execute_blocked_by": list(work_order_blocks), "fields": ["instructions", "private_notes"]},
-            "update_work_order_schedule": {"propose": bool(mapping_verified), "single_occurrence": True, "execute_role": "client.get_api_role", "execute_blocked_by": list(work_order_blocks), "fields": ["starts_at", "duration", "service_route_ids"], "arrival_window_preserved": True},
+            "update_work_order_schedule": {"propose": bool(mapping_verified), "single_occurrence": True, "execute_role": "client.get_api_role", "execute_blocked_by": list(work_order_blocks), "fields": ["starts_at", "duration", "service_route_ids"], "arrival_window_preserved": False, "arrival_coupling": "fixed_window_selected_by_start_when_occurrence_evidence_is_fresh", "explicit_arrival_window_edit": False},
             "create_work_order": {"propose": False, "execute_blocked_by": [GATE_SCHEMA_UNVERIFIED]},
             "schedule_or_arrival_window_write": {"propose": False, "execute_blocked_by": [GATE_ARRIVAL_WINDOW]},
             "list_users": {"read": True, "endpoint": "GET /v3.1/users", "projection": "staff_and_branch_fields", "stripe_pk": False},

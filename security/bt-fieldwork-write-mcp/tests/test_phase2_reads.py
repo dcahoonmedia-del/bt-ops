@@ -91,7 +91,7 @@ class Phase2ReadTests(unittest.TestCase):
         self.assertNotEqual(found["items"][0]["work_order_id"], found["items"][0]["service_appointment_id"])
         self.assertIn("customer_id", found["local_filter"])
         self.assertGreaterEqual(found["rows_missing_filter_field"], 1)
-        self.assertTrue(found["complete"])
+        self.assertFalse(found["complete"])
         with self.assertRaises(GateError):
             client.list_work_orders(start_date="2026-09-25", end_date="2026-09-25", branch="1")
         transport.repeat_work_order_page = True
