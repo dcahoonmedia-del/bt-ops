@@ -58,6 +58,11 @@ class Script:
         self.drop_post = drop_post
         self.contacts: list[dict] = []
         self.posted = False
+        self.customer_id_on_get = 88001
+        self.location_customer_id = 88001
+        self.location_street = "105 Thorn Tree Ct"
+        self.extra_locations: list[dict] = []
+        self.location_lists = 0
 
     def open(self, req: Request, timeout: int = 30) -> _Response:
         self.requests.append(req)
@@ -74,7 +79,7 @@ class Script:
             return _Response(self.post_status, self.post_body)
         if req.method == "POST" and path.endswith("/contacts"):
             if self.store_contact:
-                self.contacts = [{"id": 88002, "first_name": "Case", "last_name": "Evidence", "email": "case@example.test"}]
+                self.contacts = [{"id": 88002, "customer_id": 88001, "first_name": "Case", "last_name": "Evidence", "email": "case@example.test"}]
             return _Response(200, self.contact_body)
         return _Response(200, json.dumps(self._get(path)).encode())
 
@@ -88,13 +93,20 @@ class Script:
         if path.startswith("/customers/") and path.count("/") == 2:
             identity = path.rsplit("/", 1)[-1]
             row = _customer_row()
-            if identity.isdigit():
-                row["id"] = int(identity)
+            row["id"] = self.customer_id_on_get if identity == "88001" else int(identity) if identity.isdigit() else row["id"]
             return row
         if path == "/customers/88001/service_locations":
-            return [_location_row()]
-        if path == "/customers/88001/service_locations/88011":
-            return {"service_location": _location_row()}
+            self.location_lists += 1
+            rows = [_location_row(self.location_customer_id, self.location_street)]
+            if self.location_lists > 1:
+                rows.extend(self.extra_locations)
+            return rows
+        if path.startswith("/customers/88001/service_locations/"):
+            identity = int(path.rsplit("/", 1)[-1])
+            if identity == 88011:
+                return {"service_location": _location_row(self.location_customer_id, self.location_street)}
+            found = next((row for row in self.extra_locations if row.get("id") == identity), None)
+            return {"service_location": found} if found else []
         if path == "/customers/88001/contacts":
             return self.contacts
         return []
@@ -118,14 +130,14 @@ def _customer_row() -> dict:
     }
 
 
-def _location_row() -> dict:
+def _location_row(customer_id: int = 88001, street: str = "105 Thorn Tree Ct") -> dict:
     return {
         "id": 88011,
-        "customer_id": 88001,
+        "customer_id": customer_id,
         "name": "Main Location",
         "same_as_billing_address": True,
         "tax_rate_id": 3,
-        "address": {"id": 12, "street": "105 Thorn Tree Ct", "city": "Jacksonville", "state": "NC"},
+        "address": {"id": 12, "street": street, "city": "Jacksonville", "state": "NC"},
     }
 
 
@@ -240,6 +252,65 @@ class CustomerPostRecoveryTests(unittest.TestCase):
         self.assertEqual(response["status"], "unknown")
         self.assertEqual(response["parser_stage"], "transport_drop")
         self.assertEqual(self.script.posts("/customers"), 1)
+
+    def test_conflicting_identity_does_not_post_again(self) -> None:
+        self._use(Script())
+        self.script.contacts = [{
+            "id": 88002,
+            "customer_id": 88001,
+            "first_name": "Case",
+            "last_name": "Evidence",
+            "email": "case@example.test",
+            "phone": "9100000000",
+        }]
+        phone = self._run(_payload(contact={"first_name": "Case", "last_name": "Evidence", "email": "case@example.test", "phone": "9103330000"}))
+        self.assertEqual(phone["partial"]["reason"], "contact_field_conflict")
+        self.assertEqual(self.script.posts("/contacts"), 0)
+        self.assertEqual(self.script.posts("/customers"), 1)
+
+        self.h.close()
+        self.h = Harness(writes_enabled=True, api_role="writer")
+        self._use(Script())
+        self.script.extra_locations = [{
+            "id": 88012,
+            "customer_id": 88001,
+            "name": "Shop",
+            "tax_rate_id": 7704,
+            "address": {"id": 13, "street": "9 Wrong", "city": "Jacksonville", "state": "NC"},
+        }]
+        extra = self._run(_payload(additional_location={"name": "Shop", "tax_rate_id": 7704, "address": {"street": "2 Side", "city": "Jacksonville", "state": "NC"}}))
+        self.assertEqual(extra["partial"]["reason"], "location_field_conflict")
+        self.assertEqual(self.script.posts("/service_locations"), 0)
+
+        self.h.close()
+        self.h = Harness(writes_enabled=True, api_role="writer")
+        wrong_customer = Script(post_body=b"")
+        self._use(wrong_customer)
+        wrong_customer.customer_id_on_get = 99999
+        customer = self._run()
+        self.assertEqual(customer["partial"]["reason"], "identity_not_proved")
+        self.assertEqual(self.script.posts("/contacts"), 0)
+        again = self.h.service.execute(self.proposal["proposal_id"], IDENTITY, operator_approval="unused")
+        self.assertEqual(again["gate"], "ambiguous_remote_write_no_retry")
+        self.assertEqual(self.script.posts("/customers"), 1)
+
+        self.h.close()
+        self.h = Harness(writes_enabled=True, api_role="writer")
+        wrong_owner = Script(post_body=b"")
+        self._use(wrong_owner)
+        wrong_owner.location_customer_id = 5
+        owner = self._run()
+        self.assertEqual(owner["partial"]["reason"], "identity_not_proved")
+        self.assertEqual(self.script.posts("/contacts"), 0)
+
+        self.h.close()
+        self.h = Harness(writes_enabled=True, api_role="writer")
+        wrong_street = Script(post_body=b"")
+        self._use(wrong_street)
+        wrong_street.location_street = "1 Other St"
+        street = self._run()
+        self.assertEqual(street["partial"]["reason"], "identity_not_proved")
+        self.assertEqual(self.script.posts("/contacts"), 0)
 
     def test_wrong_digest_expiry_and_replay_do_not_post(self) -> None:
         self._use(Script())

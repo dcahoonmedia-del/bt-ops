@@ -583,7 +583,9 @@ def post_customer_steps(service: Any, proposal: dict[str, Any], attempt_id: str)
             return stop_creation(store, proposal, attempt_id)
         body = {"service_location": plan["additional_location"]}
         existing_extra = _one_extra_location(client, customer_id, nested_location_id, plan["additional_location"])
-        if existing_extra == "ambiguous":
+        if existing_extra in {"ambiguous", "conflict"}:
+            if existing_extra == "conflict":
+                _stop_unsent(store, proposal, "location_post", body, "location_field_conflict", customer_id=customer_id, location_id=nested_location_id)
             return stop_creation(store, proposal, attempt_id)
         if existing_extra:
             location_id = existing_extra
@@ -593,9 +595,10 @@ def post_customer_steps(service: Any, proposal: dict[str, Any], attempt_id: str)
             new_id = response_id(response) if _id_status_accepted(diagnostic) else None
             if new_id is None:
                 found = _one_extra_location(client, customer_id, nested_location_id, plan["additional_location"])
-                if not found or found == "ambiguous":
+                if not found or found in {"ambiguous", "conflict"}:
+                    reason = "location_field_conflict" if found == "conflict" else "location_post_unresolved"
                     _ambiguous(store, step_id, customer_id=customer_id, location_id=location_id)
-                    store.finish_creation_step(step_id, "ambiguous", {"retry": False, "reason": "location_post_unresolved", "response": _public_diagnostic(diagnostic)}, customer_id=customer_id, location_id=location_id)
+                    store.finish_creation_step(step_id, "ambiguous", {"retry": False, "reason": reason, "response": _public_diagnostic(diagnostic)}, customer_id=customer_id, location_id=location_id)
                     return stop_creation(store, proposal, attempt_id)
                 new_id = int(found)
             location_id = str(new_id)
@@ -606,7 +609,9 @@ def post_customer_steps(service: Any, proposal: dict[str, Any], attempt_id: str)
         if not _proposal_current(service, proposal):
             return stop_creation(store, proposal, attempt_id)
         already = _one_contact(client, customer_id, contact)
-        if already == "ambiguous":
+        if already in {"ambiguous", "conflict"}:
+            if already == "conflict":
+                _stop_unsent(store, proposal, "contact_post", {"contact": contact}, "contact_field_conflict", customer_id=customer_id, location_id=location_id)
             return stop_creation(store, proposal, attempt_id)
         if already:
             contact_id = int(already)
@@ -617,9 +622,10 @@ def post_customer_steps(service: Any, proposal: dict[str, Any], attempt_id: str)
             contact_id = response_id(response) if _id_status_accepted(diagnostic) else None
             if contact_id is None:
                 found = _one_contact(client, customer_id, contact)
-                if not found or found == "ambiguous":
+                if not found or found in {"ambiguous", "conflict"}:
+                    reason = "contact_field_conflict" if found == "conflict" else "contact_post_unresolved"
                     _ambiguous(store, step_id, customer_id=customer_id, location_id=location_id)
-                    store.finish_creation_step(step_id, "ambiguous", {"retry": False, "reason": "contact_post_unresolved", "response": _public_diagnostic(diagnostic)}, customer_id=customer_id, location_id=location_id)
+                    store.finish_creation_step(step_id, "ambiguous", {"retry": False, "reason": reason, "response": _public_diagnostic(diagnostic)}, customer_id=customer_id, location_id=location_id)
                     return stop_creation(store, proposal, attempt_id)
                 contact_id = int(found)
             _succeed(store, step_id, {"id": contact_id, "response": _public_diagnostic(diagnostic)}, customer_id=customer_id, contact_id=str(contact_id), location_id=location_id)
@@ -635,11 +641,17 @@ def post_customer_steps(service: Any, proposal: dict[str, Any], attempt_id: str)
     )
     if plan.get("additional_location"):
         extra = client.get_location(customer_id, location_id)
-        if str(extra.get("id")) != str(location_id) or extra.get("name") != plan["additional_location"]["name"]:
-            raise GateError(GATE_READBACK, reason="additional_location_missing")
-        if extra.get("tax_rate_id") != plan["additional_location"]["tax_rate_id"]:
-            raise GateError(GATE_READBACK, reason="additional_location_tax_mismatch")
+        if str(extra.get("id")) != str(location_id) or str(extra.get("customer_id")) != str(customer_id):
+            raise GateError(GATE_READBACK, reason="additional_location_identity")
+        wanted = plan["additional_location"]
+        if extra.get("name") != wanted.get("name") or extra.get("tax_rate_id") != wanted.get("tax_rate_id"):
+            raise GateError(GATE_READBACK, reason="additional_location_mismatch")
+        extra_address = extra.get("address") if isinstance(extra.get("address"), dict) else {}
+        for key, value in (wanted.get("address_attributes") or {}).items():
+            if extra_address.get(key) != value:
+                raise GateError(GATE_READBACK, reason="additional_location_address_mismatch", field=key)
         readback["additional_location_id"] = extra.get("id")
+        readback["additional_location_customer_id"] = extra.get("customer_id")
     if contact_id is not None:
         readback["contact_id"] = contact_id
     return {"ok": True, "readback": readback, "created_id": int(customer_id), "reconciled": recovered_customer}
@@ -712,9 +724,33 @@ def _customer_matches(customer: dict[str, Any], sent: dict[str, Any]) -> bool:
     return True
 
 
-def _primary_location_matches(location: dict[str, Any], sent: dict[str, Any]) -> bool:
+def _owned(row: dict[str, Any], customer_id: str, row_id: str) -> bool:
+    return response_id({"id": row.get("id")}) is not None and str(row.get("id")) == str(row_id) and str(row.get("customer_id")) == str(customer_id)
+
+
+def _address_equal(address: dict[str, Any], sent: dict[str, Any]) -> bool:
+    for key, value in sent.items():
+        if address.get(key) != value:
+            return False
+    return True
+
+
+def _primary_location_matches(location: dict[str, Any], sent: dict[str, Any], customer_id: str, location_id: str) -> bool:
     nested = (sent.get("service_locations_attributes") or [{}])[0]
-    return location.get("name") == nested.get("name") and location.get("same_as_billing_address") is nested.get("same_as_billing_address")
+    if not _owned(location, customer_id, location_id):
+        return False
+    if location.get("name") != nested.get("name") or location.get("same_as_billing_address") is not nested.get("same_as_billing_address"):
+        return False
+    if nested.get("same_as_billing_address") is True:
+        address = location.get("address") if isinstance(location.get("address"), dict) else {}
+        expected = {
+            addr_key: sent[src]
+            for src, addr_key in (("billing_street", "street"), ("billing_street2", "street2"), ("billing_city", "city"), ("billing_state", "state"), ("billing_zip", "zip"), ("billing_county", "county"))
+            if src in sent
+        }
+        if not _address_equal(address, expected):
+            return False
+    return True
 
 
 def _prove_new_customer(client: Any, before: dict[str, Any], payload: dict[str, Any], sent: dict[str, Any]) -> dict[str, Any]:
@@ -736,18 +772,35 @@ def _prove_new_customer(client: Any, before: dict[str, Any], payload: dict[str, 
         locations = client.list_service_locations(customer_id)
     except GateError:
         return {"ok": False, "reason": "authoritative_read_failed"}
+    if str(customer.get("id")) != customer_id or response_id({"id": customer.get("id")}) is None or not _customer_matches(customer, sent):
+        return {"ok": False, "reason": "identity_not_proved"}
     if not locations.get("complete") or locations.get("truncated") or locations.get("repeated_page"):
         return {"ok": False, "reason": "duplicate_search_incomplete"}
     rows = locations.get("items") or []
-    if len(rows) != 1 or response_id({"id": rows[0].get("id")}) is None or not _customer_matches(customer, sent):
+    if len(rows) != 1 or response_id({"id": rows[0].get("id")}) is None:
         return {"ok": False, "reason": "identity_not_proved"}
+    location_id = str(rows[0]["id"])
     try:
-        location = client.get_location(customer_id, str(rows[0]["id"]))
+        location = client.get_location(customer_id, location_id)
     except GateError:
         return {"ok": False, "reason": "authoritative_read_failed"}
-    if not _primary_location_matches(location, sent):
+    if not _primary_location_matches(location, sent, customer_id, location_id):
         return {"ok": False, "reason": "identity_not_proved"}
-    return {"ok": True, "customer_id": customer_id, "location_id": str(rows[0]["id"])}
+    return {"ok": True, "customer_id": customer_id, "location_id": location_id}
+
+
+def _contact_kind(item: dict[str, Any], contact: dict[str, Any], customer_id: str) -> str:
+    if str(item.get("email") or "").casefold() != str(contact.get("email") or "").casefold() or item.get("first_name") != contact.get("first_name") or item.get("last_name") != contact.get("last_name"):
+        return "different"
+    if response_id({"id": item.get("id")}) is None or str(item.get("customer_id")) != str(customer_id):
+        return "conflict"
+    for key, value in contact.items():
+        if key == "phone":
+            if normalize_phone(item.get(key)) != normalize_phone(value):
+                return "conflict"
+        elif item.get(key) != value:
+            return "conflict"
+    return "match"
 
 
 def _one_contact(client: Any, customer_id: str, contact: dict[str, Any]) -> str | None:
@@ -757,18 +810,26 @@ def _one_contact(client: Any, customer_id: str, contact: dict[str, Any]) -> str 
         return "ambiguous"
     if not listed.get("complete") or listed.get("truncated") or listed.get("repeated_page"):
         return "ambiguous"
-    matches = [
-        item
-        for item in listed.get("items") or []
-        if str(item.get("email") or "").casefold() == str(contact.get("email") or "").casefold()
-        and item.get("first_name") == contact.get("first_name")
-        and item.get("last_name") == contact.get("last_name")
-    ]
-    if len(matches) > 1 or (len(matches) == 1 and response_id({"id": matches[0].get("id")}) is None):
-        return "ambiguous"
-    if len(matches) == 1:
-        return str(matches[0]["id"])
+    kinds = [_contact_kind(item, contact, customer_id) for item in listed.get("items") or [] if isinstance(item, dict)]
+    if "conflict" in kinds or kinds.count("match") > 1:
+        return "conflict"
+    if kinds.count("match") == 1:
+        item = next(row for row in listed.get("items") or [] if isinstance(row, dict) and _contact_kind(row, contact, customer_id) == "match")
+        return str(item["id"])
     return None
+
+
+def _extra_kind(location: dict[str, Any], wanted: dict[str, Any], customer_id: str) -> str:
+    if location.get("name") != wanted.get("name"):
+        return "different"
+    if response_id({"id": location.get("id")}) is None or str(location.get("customer_id")) != str(customer_id):
+        return "conflict"
+    if location.get("tax_rate_id") != wanted.get("tax_rate_id"):
+        return "conflict"
+    address = location.get("address") if isinstance(location.get("address"), dict) else {}
+    if not _address_equal(address, wanted.get("address_attributes") or {}):
+        return "conflict"
+    return "match"
 
 
 def _one_extra_location(client: Any, customer_id: str, nested_location_id: str, wanted: dict[str, Any]) -> str | None:
@@ -778,14 +839,24 @@ def _one_extra_location(client: Any, customer_id: str, nested_location_id: str, 
         return "ambiguous"
     if not listed.get("complete") or listed.get("truncated") or listed.get("repeated_page"):
         return "ambiguous"
-    matches = [
-        item
-        for item in listed.get("items") or []
-        if str(item.get("id")) != str(nested_location_id) and item.get("name") == wanted.get("name") and item.get("tax_rate_id") == wanted.get("tax_rate_id")
-    ]
-    if len(matches) != 1 or response_id({"id": matches[0].get("id")}) is None:
-        return None if len(matches) == 0 else "ambiguous"
-    return str(matches[0]["id"])
+    kinds: list[str] = []
+    matched: str | None = None
+    for item in listed.get("items") or []:
+        if not isinstance(item, dict) or str(item.get("id")) == str(nested_location_id):
+            continue
+        if item.get("name") != wanted.get("name"):
+            continue
+        try:
+            location = client.get_location(customer_id, str(item.get("id")))
+        except GateError:
+            return "ambiguous"
+        kind = "conflict" if str(location.get("id")) != str(item.get("id")) else _extra_kind(location, wanted, customer_id)
+        kinds.append(kind)
+        if kind == "match":
+            matched = str(location.get("id"))
+    if "conflict" in kinds or kinds.count("match") != (1 if matched else 0):
+        return "conflict" if kinds else None
+    return matched
 
 
 def _location_matches(client: Any, customer_id: str, location_id: str, patch: dict[str, Any]) -> bool:
@@ -793,15 +864,25 @@ def _location_matches(client: Any, customer_id: str, location_id: str, patch: di
         location = client.get_location(customer_id, location_id)
     except GateError:
         return False
-    if location.get("name") != patch.get("name"):
+    if not _owned(location, customer_id, location_id):
+        return False
+    if location.get("name") != patch.get("name") or location.get("tax_rate_id") != patch.get("tax_rate_id"):
         return False
     address = location.get("address") if isinstance(location.get("address"), dict) else {}
-    for key, value in (patch.get("address_attributes") or {}).items():
-        if key == "id":
-            continue
-        if address.get(key) != value:
-            return False
-    return True
+    expected = {key: value for key, value in (patch.get("address_attributes") or {}).items() if key != "id"}
+    return _address_equal(address, expected)
+
+
+def _stop_unsent(store: Any, proposal: dict[str, Any], step: str, intent: dict[str, Any], reason: str, **ids: str | None) -> None:
+    step_id = _step(store, proposal["proposal_id"], step, intent, **ids)
+    store.finish_creation_step(
+        step_id,
+        "ambiguous",
+        {"retry": False, "reason": reason, "sent": False, "response": {"status": "unknown", "content_type": "unknown", "top_level_keys": [], "parser_stage": "not_sent", "response_body_retained": False}},
+        customer_id=ids.get("customer_id"),
+        contact_id=ids.get("contact_id"),
+        location_id=ids.get("location_id"),
+    )
 
 
 def _reconcile_customer(client: Any, before: dict[str, Any], payload: dict[str, Any]) -> str | None:
