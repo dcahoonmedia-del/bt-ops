@@ -177,6 +177,7 @@ class WriteService:
         return {"sub": str(identity["sub"]), "email": str(identity["email"]).lower()}
 
     def propose(self, operation: str, payload: dict[str, Any], identity: dict[str, str] | None) -> dict[str, Any]:
+        self.readiness()
         ident = self._identity_or_reject(identity)
         if "ok" in ident and ident.get("ok") is False:
             return ident
@@ -417,11 +418,11 @@ class WriteService:
         approved: Any = None,
         expected_digest: str = "",
     ) -> dict[str, Any]:
+        snap = self.readiness()
         ident = self._identity_or_reject(identity)
         if "ok" in ident and ident.get("ok") is False:
             return ident
         identity = ident  # type: ignore[assignment]
-        snap = self.readiness()
         if not self.settings.writes_enabled:
             return self._fail(GATE_WRITES_DISABLED, proposal_id=proposal_id)
         if snap.get("role_check_error"):
@@ -640,6 +641,7 @@ class WriteService:
         return {"ok": True, "proposal_id": proposal["proposal_id"], "operation": proposal["operation"], "readback": readback, "patch_fields": fields, "gates": self.gates()}
 
     def inspect(self, proposal_id: str, identity: dict[str, str] | None) -> dict[str, Any]:
+        self.readiness()
         ident = self._identity_or_reject(identity)
         if "ok" in ident and ident.get("ok") is False:
             return ident

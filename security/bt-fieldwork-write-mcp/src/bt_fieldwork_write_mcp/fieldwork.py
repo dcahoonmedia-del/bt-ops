@@ -397,12 +397,11 @@ class FakeTransport:
                 return 500, {"error": "profile_down"}
             if self.api_role == "unknown":
                 return 200, {"roles": ["mystery"]}
-            roles = ["schedule", "work_orders"]
             if self.api_role == "readonly":
-                roles.append("readonly")
-            elif self.api_role == "writer":
-                roles.append("writer")
-            return 200, {"roles": roles}
+                return 200, {"roles": [*LIVE_PERMISSION_ROLES, "readonly"]}
+            if self.api_role == "writer":
+                return 200, {"roles": list(LIVE_PERMISSION_ROLES)}
+            return 200, {"roles": ["mystery"]}
         if method == "GET" and path == "/customers/search":
             return 200, list(self.customers.values())
         if method == "GET" and path == "/service_routes":
@@ -536,6 +535,11 @@ def load_route_directory(path: str) -> dict[str, Any] | None:
     }
 
 
+# Verified by a live read-only GET /profile. These names are permissions, not a literal writer role.
+LIVE_PERMISSION_ROLES = ("schedule", "customers", "invoicing", "reporting", "agreements", "tasks", "work_orders")
+_KNOWN_PERMISSION_ROLES = frozenset(LIVE_PERMISSION_ROLES)
+
+
 class TypedFieldworkClient:
     def __init__(self, transport: Transport, *, mapping_verified: bool = False, route_directory: dict[str, Any] | None = None) -> None:
         self.transport = transport
@@ -558,7 +562,7 @@ class TypedFieldworkClient:
         names = {role.lower() for role in roles}
         if "readonly" in names:
             observed = "readonly"
-        elif "writer" in names:
+        elif names & _KNOWN_PERMISSION_ROLES:
             observed = "writer"
         else:
             raise GateError("api_role_unverified")

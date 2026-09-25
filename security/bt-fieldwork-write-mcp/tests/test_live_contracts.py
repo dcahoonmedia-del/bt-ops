@@ -1,5 +1,5 @@
 import unittest
-from bt_fieldwork_write_mcp.fieldwork import TypedFieldworkClient, FakeTransport, HttpTransport, _flatten
+from bt_fieldwork_write_mcp.fieldwork import LIVE_PERMISSION_ROLES, TypedFieldworkClient, FakeTransport, HttpTransport, _flatten
 from bt_fieldwork_write_mcp.errors import GateError
 from bt_fieldwork_write_mcp.secrets import InMemoryApiKey
 
@@ -25,6 +25,43 @@ class LiveContractTests(unittest.TestCase):
         self.assertEqual(c.get_api_role(),'readonly')
         t.api_role='writer'
         self.assertEqual(c.get_api_role(),'writer')
+
+    def test_exact_live_permission_roles_are_writer_without_a_literal_writer(self):
+        t=FakeTransport(); t.api_role='writer'
+        status, body = t.request('GET','/profile')
+        self.assertEqual(status, 200)
+        self.assertEqual(body['roles'], list(LIVE_PERMISSION_ROLES))
+        self.assertNotIn('writer', body['roles'])
+        self.assertEqual(TypedFieldworkClient(t).get_api_role(), 'writer')
+
+    def test_readonly_wins_over_known_permissions(self):
+        t=FakeTransport(); t.api_role='readonly'
+        _status, body = t.request('GET','/profile')
+        self.assertIn('readonly', body['roles'])
+        self.assertTrue(set(LIVE_PERMISSION_ROLES).issubset(body['roles']))
+        self.assertEqual(TypedFieldworkClient(t).get_api_role(), 'readonly')
+
+    def test_unknown_empty_and_failed_profile_stay_unverified(self):
+        unknown=FakeTransport(); unknown.api_role='unknown'
+        with self.assertRaises(GateError) as caught:
+            TypedFieldworkClient(unknown).get_api_role()
+        self.assertEqual(caught.exception.gate, 'api_role_unverified')
+        class Fixed(FakeTransport):
+            def __init__(self, status, body):
+                super().__init__(); self._status=status; self._body=body
+            def request(self, method, path, body=None, query=None):
+                if method=='GET' and path=='/profile':
+                    self.calls.append({'method':method,'path':path})
+                    return self._status, self._body
+                return super().request(method, path, body, query)
+        for status, body in ((200, {'roles': []}), (200, {'roles': 'schedule'}), (200, {}), (200, {'roles': [1]})):
+            with self.assertRaises(GateError) as caught:
+                TypedFieldworkClient(Fixed(status, body)).get_api_role()
+            self.assertEqual(caught.exception.gate, 'api_role_unverified')
+        failed=FakeTransport(); failed.api_role='fail'
+        with self.assertRaises(GateError) as caught:
+            TypedFieldworkClient(failed).get_api_role()
+        self.assertEqual(caught.exception.gate, 'fieldwork_api_auth_unresolved')
 
     def test_patch_matches_published_nested_contract(self):
         t=FakeTransport();c=TypedFieldworkClient(t)
@@ -69,8 +106,16 @@ class ChatGPTApprovalTests(unittest.TestCase):
         from tests.test_write_mcp import IDENTITY
         p=self.h.propose_notes('approved standing note')
         self.h.transport.api_role='readonly'
+        before=len([c for c in self.h.transport.calls if c['path']=='/profile'])
         r=self.h.service.execute(p['proposal_id'],IDENTITY,approved=True,expected_digest=p['digest'])
+        after=len([c for c in self.h.transport.calls if c['path']=='/profile'])
+        self.assertEqual(after-before, 1)
         self.assertEqual(r['gate'],'readonly_api_role')
+        self.assertEqual(r['gates']['api_role'], 'readonly')
+        self.assertFalse(r['gates']['live_ready'])
+        again=len([c for c in self.h.transport.calls if c['path']=='/profile'])
+        self.assertEqual(self.h.service.gates()['api_role'], 'readonly')
+        self.assertEqual(len([c for c in self.h.transport.calls if c['path']=='/profile']), again)
         self.assertFalse(any(c['method']=='PATCH' for c in self.h.transport.calls))
 
     def test_nonempty_operator_approval_does_not_skip_chatgpt_confirmation(self):
