@@ -14,6 +14,7 @@ from .allowlist import (
     GATE_IDENTITY,
     GATE_LIVE_PATCH_UNTESTED,
     GATE_READONLY,
+    GATE_RECURRING,
     GATE_OPERATOR,
     GATE_READBACK,
     GATE_REPLAY,
@@ -24,10 +25,15 @@ from .allowlist import (
     LINE_ITEM_FIELDS,
     LOCATION_NOTE_FIELDS,
     OCCURRENCE_FIELDS,
+    ARRIVAL_FIELDS,
+    NOTE_TEXT_FIELDS,
     OP_CREATE_WORK_ORDER,
     OP_LOCATION_NOTES,
     OP_WORK_ORDER_NOTES,
+    OP_WORK_ORDER_SCHEDULE,
+    SCHEDULE_WRITE_FIELDS,
     WORK_ORDER_NOTE_FIELDS,
+    WORK_ORDER_SCHEDULE_FIELDS,
     UnknownFieldError,
     assert_only,
     current_gates,
@@ -38,6 +44,19 @@ from .config import Settings
 from .digest import proposal_digest
 from .errors import AmbiguousWriteError, GateError
 from .fieldwork import TypedFieldworkClient, location_snapshot, snapshot_hash
+
+
+def _offset_iso(value: Any) -> bool:
+    if not isinstance(value, str) or "T" not in value or value.endswith("Z"):
+        return False
+    tail = value[10:]
+    if "+" not in tail and "-" not in tail:
+        return False
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None and parsed.utcoffset() is not None
 from .redact import redact
 from .store import WriteStore
 
@@ -108,6 +127,8 @@ class WriteService:
                 return self._propose_location_notes(payload, identity)
             if operation == OP_WORK_ORDER_NOTES:
                 return self._propose_work_order_notes(payload, identity)
+            if operation == OP_WORK_ORDER_SCHEDULE:
+                return self._propose_work_order_schedule(payload, identity)
             if operation == OP_CREATE_WORK_ORDER:
                 return self._propose_create(payload, identity)
         except UnknownFieldError as exc:
@@ -131,8 +152,63 @@ class WriteService:
         after["notes"] = notes
         return self._persist_proposal(OP_LOCATION_NOTES, payload, identity, f"location:{customer_id}:{location_id}", before, after)
 
+    def _live_api_role(self) -> str:
+        getter = getattr(self.client, "get_api_role", None)
+        if not callable(getter):
+            return "readonly"
+        try:
+            role = getter()
+        except Exception:
+            return "readonly"
+        return str(role or "readonly").strip().lower().replace("-", "_").replace(" ", "_")
+
+    def _require_active_location(self, row: dict[str, Any]) -> dict[str, Any]:
+        customer_id = str(row.get("customer_id") or "")
+        location_id = str(row.get("service_location_id") or row.get("location_id") or "")
+        if not customer_id.isdigit() or not location_id.isdigit():
+            raise GateError("identity_mismatch")
+        customer = self.client.get_customer(customer_id)
+        self.client.reject_if_lead(customer)
+        location = self.client.get_location(customer_id, location_id)
+        self.client.assert_location_identity(customer_id, location_id, customer, location)
+        return location_snapshot(customer, location)
+
+    def _reject_series(self, row: dict[str, Any]) -> None:
+        repeat = str(row.get("repeat_type") or "").strip().lower()
+        if repeat and repeat not in {"none", "one_time"}:
+            raise GateError(GATE_RECURRING)
+        if row.get("series_id") or row.get("recurring") is True:
+            raise GateError(GATE_RECURRING)
+        series = row.get("appointment_occurrences")
+        if isinstance(series, list) and len(series) > 1:
+            raise GateError(GATE_RECURRING)
+
+    def _occurrence_snapshot(self, row: dict[str, Any]) -> dict[str, Any]:
+        identity = self._require_active_location(row)
+        snap = {
+            "work_order_id": row.get("id"),
+            "service_appointment_id": row.get("service_appointment_id"),
+            "customer_id": identity["customer_id"],
+            "customer_status": identity["customer_status"],
+            "location_id": identity["location_id"],
+            "name": identity["name"],
+            "tax_rate_id": identity["tax_rate_id"],
+            "address_id": identity["address_id"],
+            "instructions": row.get("instructions"),
+            "private_notes": row.get("private_notes"),
+            "starts_at": row.get("starts_at"),
+            "duration": row.get("duration"),
+            "service_route_ids": [item for item in (row.get("service_route_ids") or [])],
+        }
+        for key in ARRIVAL_FIELDS:
+            snap[key] = row.get(key)
+        return snap
+
     def _propose_work_order_notes(self, payload: dict[str, Any], identity: dict[str, str]) -> dict[str, Any]:
         assert_only(payload, WORK_ORDER_NOTE_FIELDS, label="work_order")
+        texts = [key for key in NOTE_TEXT_FIELDS if key in payload]
+        if not texts or any(not isinstance(payload[key], str) for key in texts):
+            return self._fail("unknown_field", fields=list(NOTE_TEXT_FIELDS))
         work_order_id = str(payload.get("work_order_id") or "")
         appointment_id = str(payload.get("service_appointment_id") or "")
         if not work_order_id.isdigit() or not appointment_id.isdigit():
@@ -140,16 +216,45 @@ class WriteService:
         row = self.client.get_work_order(work_order_id)
         if str(row.get("id")) != work_order_id or str(row.get("service_appointment_id")) != appointment_id:
             return self._fail("identity_mismatch")
+        self._reject_series(row)
         if "instructions" not in row or "private_notes" not in row:
             return self._fail("typed_read_incomplete", proposal=False, reason="instructions_or_private_notes_absent")
-        before = {"work_order_id": row.get("id"), "service_appointment_id": row.get("service_appointment_id"), "instructions": row.get("instructions"), "private_notes": row.get("private_notes")}
+        before = self._occurrence_snapshot(row)
         after = dict(before)
-        if "instructions" in payload:
-            after["instructions"] = payload["instructions"]
-        if "private_notes" in payload:
-            after["private_notes"] = payload["private_notes"]
+        for key in texts:
+            after[key] = payload[key]
         result = self._persist_proposal(OP_WORK_ORDER_NOTES, payload, identity, f"work_order:{work_order_id}", before, after)
-        result["execute_blocked_until_role"] = "writer"
+        result["patch_fields"] = texts
+        return result
+
+    def _propose_work_order_schedule(self, payload: dict[str, Any], identity: dict[str, str]) -> dict[str, Any]:
+        assert_only(payload, WORK_ORDER_SCHEDULE_FIELDS, label="schedule")
+        if any(key in payload for key in ARRIVAL_FIELDS):
+            return self._fail(GATE_ARRIVAL_WINDOW)
+        starts_at = payload.get("starts_at")
+        duration = payload.get("duration")
+        routes = payload.get("service_route_ids")
+        if not _offset_iso(starts_at) or isinstance(duration, bool) or not isinstance(duration, int) or duration <= 0:
+            return self._fail("unknown_field", fields=["starts_at", "duration", "service_route_ids"])
+        if not isinstance(routes, list) or not routes or any(isinstance(item, bool) or not isinstance(item, int) or item <= 0 for item in routes):
+            return self._fail("unknown_field", fields=["service_route_ids"])
+        work_order_id = str(payload.get("work_order_id") or "")
+        appointment_id = str(payload.get("service_appointment_id") or "")
+        if not work_order_id.isdigit() or not appointment_id.isdigit():
+            return self._fail("identity_mismatch")
+        row = self.client.get_work_order(work_order_id)
+        if str(row.get("id")) != work_order_id or str(row.get("service_appointment_id")) != appointment_id:
+            return self._fail("identity_mismatch")
+        self._reject_series(row)
+        before = self._occurrence_snapshot(row)
+        after = dict(before)
+        after["starts_at"] = starts_at
+        after["duration"] = duration
+        after["service_route_ids"] = list(routes)
+        for key in ARRIVAL_FIELDS:
+            after[key] = before[key]
+        result = self._persist_proposal(OP_WORK_ORDER_SCHEDULE, payload, identity, f"work_order:{work_order_id}", before, after)
+        result["patch_fields"] = list(SCHEDULE_WRITE_FIELDS)
         return result
 
     def _propose_create(self, payload: dict[str, Any], identity: dict[str, str]) -> dict[str, Any]:
@@ -254,7 +359,7 @@ class WriteService:
         if "ok" in ident and ident.get("ok") is False:
             return ident
         identity = ident  # type: ignore[assignment]
-        if str(self.settings.api_role or "readonly").lower() == "readonly":
+        if self._live_api_role() in {"", "readonly", "read_only"}:
             return self._fail(GATE_READONLY, proposal_id=proposal_id)
         proposal = self.store.get_proposal(proposal_id)
         if proposal is None:
@@ -278,7 +383,7 @@ class WriteService:
                 return self._fail(GATE_REPLAY, proposal_id=proposal_id)
         if proposal["operation"] == OP_CREATE_WORK_ORDER:
             return self._fail(GATE_SCHEMA_UNVERIFIED, proposal_id=proposal_id)
-        if proposal["operation"] == OP_WORK_ORDER_NOTES:
+        if proposal["operation"] in {OP_WORK_ORDER_NOTES, OP_WORK_ORDER_SCHEDULE}:
             stale = self._work_order_stale(proposal)
         else:
             stale = self._location_stale(proposal) if proposal["operation"] == OP_LOCATION_NOTES else None
@@ -290,7 +395,9 @@ class WriteService:
         if proposal["operation"] == OP_LOCATION_NOTES:
             return self._execute_location_notes(proposal, clock)
         if proposal["operation"] == OP_WORK_ORDER_NOTES:
-            return self._execute_work_order_notes(proposal, clock)
+            return self._execute_work_order(proposal, clock, [key for key in NOTE_TEXT_FIELDS if key in proposal["payload"]])
+        if proposal["operation"] == OP_WORK_ORDER_SCHEDULE:
+            return self._execute_work_order(proposal, clock, list(SCHEDULE_WRITE_FIELDS))
         if proposal["operation"] == OP_CREATE_WORK_ORDER:
             return self._fail(GATE_SCHEMA_UNVERIFIED, proposal_id=proposal_id)
         return self._fail(GATE_UNKNOWN_OP, proposal_id=proposal_id)
@@ -392,21 +499,17 @@ class WriteService:
         before = proposal["before"]
         try:
             row = self.client.get_work_order(str(before["work_order_id"]))
+            self._reject_series(row)
+            current = self._occurrence_snapshot(row)
         except GateError as exc:
             return self._fail(exc.gate, proposal_id=proposal["proposal_id"], **exc.detail)
-        current = {
-            "work_order_id": row.get("id"),
-            "service_appointment_id": row.get("service_appointment_id"),
-            "instructions": row.get("instructions"),
-            "private_notes": row.get("private_notes"),
-        }
         if snapshot_hash(current) != snapshot_hash(before):
             self.store.release_open_guard(proposal["subject_key"], proposal["proposal_id"])
             self.store.set_status(proposal["proposal_id"], "stale")
             return self._fail(GATE_STALE, proposal_id=proposal["proposal_id"])
         return None
 
-    def _execute_work_order_notes(self, proposal: dict[str, Any], clock: datetime) -> dict[str, Any]:
+    def _execute_work_order(self, proposal: dict[str, Any], clock: datetime, fields: list[str]) -> dict[str, Any]:
         try:
             attempt_id = self.store.begin_attempt(proposal["proposal_id"], proposal["subject_key"], _iso(clock))
         except GateError as exc:
@@ -416,7 +519,7 @@ class WriteService:
             self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "failed_no_write")
             return stale
         try:
-            self.client.patch_work_order_notes(proposal["before"], proposal["after"])
+            self.client.patch_work_order_fields(proposal["before"], proposal["after"], fields)
         except AmbiguousWriteError:
             self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
             return self._fail("ambiguous_remote_write_no_retry", proposal_id=proposal["proposal_id"])
@@ -428,20 +531,19 @@ class WriteService:
             return self._fail("ambiguous_remote_write_no_retry", proposal_id=proposal["proposal_id"])
         try:
             row = self.client.get_work_order(str(proposal["before"]["work_order_id"]))
-            readback = {
-                "work_order_id": row.get("id"),
-                "service_appointment_id": row.get("service_appointment_id"),
-                "instructions": row.get("instructions"),
-                "private_notes": row.get("private_notes"),
-            }
+            readback = self._occurrence_snapshot(row)
         except Exception:
             self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
             return self._fail(GATE_READBACK, proposal_id=proposal["proposal_id"])
         if snapshot_hash(readback) != snapshot_hash(proposal["after"]):
             self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
             return self._fail(GATE_READBACK, proposal_id=proposal["proposal_id"])
+        for key in ARRIVAL_FIELDS:
+            if readback.get(key) != proposal["before"].get(key):
+                self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
+                return self._fail(GATE_ARRIVAL_WINDOW, proposal_id=proposal["proposal_id"])
         self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "success")
-        return {"ok": True, "proposal_id": proposal["proposal_id"], "operation": OP_WORK_ORDER_NOTES, "readback": readback, "gates": self.gates()}
+        return {"ok": True, "proposal_id": proposal["proposal_id"], "operation": proposal["operation"], "readback": readback, "patch_fields": fields, "gates": self.gates()}
 
     def inspect(self, proposal_id: str, identity: dict[str, str] | None) -> dict[str, Any]:
         ident = self._identity_or_reject(identity)

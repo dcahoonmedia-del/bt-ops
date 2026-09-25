@@ -6,12 +6,17 @@ from typing import Any
 
 OP_LOCATION_NOTES = "update_service_location_notes"
 OP_WORK_ORDER_NOTES = "update_work_order_notes"
+OP_WORK_ORDER_SCHEDULE = "update_work_order_schedule"
 OP_CREATE_WORK_ORDER = "create_work_order"
 
-ALLOWED_OPS = frozenset({OP_LOCATION_NOTES, OP_WORK_ORDER_NOTES, OP_CREATE_WORK_ORDER})
+ALLOWED_OPS = frozenset({OP_LOCATION_NOTES, OP_WORK_ORDER_NOTES, OP_WORK_ORDER_SCHEDULE, OP_CREATE_WORK_ORDER})
 
 LOCATION_NOTE_FIELDS = frozenset({"customer_id", "location_id", "notes"})
 WORK_ORDER_NOTE_FIELDS = frozenset({"work_order_id", "service_appointment_id", "instructions", "private_notes"})
+WORK_ORDER_SCHEDULE_FIELDS = frozenset({"work_order_id", "service_appointment_id", "starts_at", "duration", "service_route_ids"})
+NOTE_TEXT_FIELDS = ("instructions", "private_notes")
+SCHEDULE_WRITE_FIELDS = ("starts_at", "duration", "service_route_ids")
+ARRIVAL_FIELDS = ("arrival_time_window", "arrival_time_window_start", "arrival_time_window_end", "arrival_time_window_str")
 CREATE_FIELDS = frozenset(
     {
         "customer_id",
@@ -56,6 +61,7 @@ GATE_AMBIGUOUS = "ambiguous_remote_write_no_retry"
 GATE_READBACK = "readback_failed"
 GATE_AUTH_UNRESOLVED = "fieldwork_api_auth_unresolved"
 GATE_ARRIVAL_WINDOW = "arrival_window_unverified"
+GATE_RECURRING = "recurring_series_rejected"
 
 LEAD_STATUSES = frozenset({"lead", "leads"})
 
@@ -127,7 +133,8 @@ def current_gates(
         "generic_http": False,
         "operations": {
             "update_service_location_notes": {"propose": True, "execute_blocked_by": [GATE_READONLY] if readonly else []},
-            "update_work_order_notes": {"propose": True, "execute_blocked_by": [GATE_READONLY] if readonly else []},
+            "update_work_order_notes": {"propose": True, "execute_role": "client.get_api_role", "execute_blocked_by": [GATE_READONLY] if readonly else [], "fields": ["instructions", "private_notes"]},
+            "update_work_order_schedule": {"propose": True, "single_occurrence": True, "execute_role": "client.get_api_role", "execute_blocked_by": [GATE_READONLY] if readonly else [], "fields": ["starts_at", "duration", "service_route_ids"], "arrival_window_preserved": True},
             "create_work_order": {"propose": True, "execute_blocked_by": [GATE_SCHEMA_UNVERIFIED]},
             "schedule_or_arrival_window_write": {"propose": False, "execute_blocked_by": [GATE_ARRIVAL_WINDOW]},
             "list_users": {"read": False, "reason": "omitted_no_documented_users_endpoint"},
