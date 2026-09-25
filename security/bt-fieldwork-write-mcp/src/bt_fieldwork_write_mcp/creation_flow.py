@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from .allowlist import (
@@ -16,6 +17,7 @@ from .allowlist import (
     GATE_RECURRING,
     GATE_ROUTE_STAFF,
     GATE_SCHEDULE,
+    GATE_STARTS_AT_POST,
     GATE_TAXABLE,
     GATE_TEMPLATE,
 )
@@ -69,6 +71,41 @@ def phones_for(payload: dict[str, Any]) -> set[str]:
     return found
 
 
+def money(value: Any) -> Decimal:
+    if isinstance(value, bool) or value is None:
+        raise GateError(GATE_CATALOG, reason="money_missing")
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        raise GateError(GATE_CATALOG, reason="money_unparsed") from None
+
+
+def money_equal(left: Any, right: Any) -> bool:
+    return money(left) == money(right)
+
+
+def money_number(value: Any) -> int | str:
+    amount = money(value)
+    if amount == amount.to_integral_value():
+        return int(amount)
+    return format(amount, "f")
+
+
+def response_labels(client: Any) -> dict[str, Any]:
+    fake = bool(getattr(getattr(client, "transport", None), "is_fake_double", False))
+    if fake:
+        return {"test_double": True, "response_schema": "fake_test_double_not_live_schema", "response_schema_verified": False}
+    return {"test_double": False, "response_schema_verified": False}
+
+
+def calendar_day(starts_at: str) -> str:
+    if len(starts_at) >= 10 and starts_at[4] == "-" and starts_at[7] == "-" and "T" not in starts_at:
+        return starts_at[:10]
+    from datetime import datetime
+
+    return datetime.fromisoformat(starts_at).date().isoformat()
+
+
 def _search_pages(client: Any, path: str, query: dict[str, Any]) -> dict[str, Any]:
     try:
         found = client._pages(path, query)
@@ -83,9 +120,15 @@ def duplicate_search(client: Any, payload: dict[str, Any]) -> dict[str, Any]:
     """Complete name and phone scans. An incomplete page is not proof of no duplicate."""
     wanted_names = names_for(payload)
     wanted_phones = phones_for(payload)
-    pages = _search_pages(client, "/customers/search", {"query": next(iter(wanted_names), "")})
-    rows = list(pages["items"])
-    seen = {str(row.get("id")) for row in rows}
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for name in sorted(wanted_names):
+        pages = _search_pages(client, "/customers/search", {"query": name})
+        for row in pages["items"]:
+            identity = str(row.get("id"))
+            if identity not in seen:
+                rows.append(row)
+                seen.add(identity)
     for phone in wanted_phones:
         status, body = client.transport.request("GET", "/customers/search_by_phone", query={"phone": phone, "as_object": True})
         if status != 200:
@@ -132,13 +175,24 @@ def _inspect_candidate(client: Any, row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def resolve_duplicates(search: dict[str, Any], *, confirmed_new: bool, existing_customer_id: int | None) -> dict[str, Any]:
+def resolve_duplicates(
+    search: dict[str, Any],
+    *,
+    confirmed_new: bool,
+    existing_customer_id: int | None,
+    approved_candidate_ids: list[Any] | None = None,
+) -> dict[str, Any]:
     candidates = search["candidates"]
+    current_ids = {str(item.get("id")) for item in candidates}
+    if approved_candidate_ids is not None:
+        appeared = sorted(current_ids - {str(item) for item in approved_candidate_ids})
+        if appeared:
+            raise GateError(GATE_DUPLICATE_UNRESOLVED, reason="new_match_requires_approval", candidate_ids=appeared, candidates=candidates)
     if confirmed_new and existing_customer_id is not None:
         raise GateError("unknown_field", fields=["confirmed_new", "existing_customer_id"])
     if candidates and not confirmed_new and existing_customer_id is None:
         raise GateError(GATE_DUPLICATE_UNRESOLVED, candidates=candidates)
-    if existing_customer_id is not None and not any(str(item.get("id")) == str(existing_customer_id) for item in candidates):
+    if existing_customer_id is not None and str(existing_customer_id) not in current_ids:
         raise GateError(GATE_DUPLICATE_UNRESOLVED, reason="existing_id_not_in_matches", candidates=candidates)
     return {
         "confirmed_new": confirmed_new,
@@ -163,11 +217,17 @@ def load_catalog(client: Any, template_id: int | None) -> dict[str, Any]:
     else:
         raise GateError(GATE_TEMPLATE, reason="template_not_unique")
     template = client.get_work_order_template(str(chosen_id))
+    defaults = template.get("work_order")
+    if not isinstance(defaults, dict):
+        raise GateError(GATE_TEMPLATE, reason="work_order_defaults_missing")
+    for required in ("duration", "instructions", "production_value"):
+        if required not in defaults:
+            raise GateError(GATE_TEMPLATE, reason="work_order_default_missing", field=required)
     if str(template.get("repeat_type") or "") != "none":
         raise GateError(GATE_RECURRING)
-    if template.get("tax_amount") not in (0, None) or template.get("discount") not in (0, None):
+    if not money_equal(template.get("tax_amount"), 0) or not money_equal(template.get("discount"), 0):
         raise GateError(GATE_TAXABLE, reason="template_tax_not_accepted")
-    if template.get("billing_frequency") not in (0, None):
+    if not money_equal(template.get("billing_frequency"), 0):
         raise GateError(GATE_CATALOG, reason="billing_frequency_not_accepted")
     lines = template.get("line_items") or []
     if len(lines) != 1 or not isinstance(lines[0], dict):
@@ -184,35 +244,50 @@ def load_catalog(client: Any, template_id: int | None) -> dict[str, Any]:
     service = matches[0]
     if "description" not in service:
         raise GateError(GATE_CATALOG, reason="service_label_is_description")
-    if service.get("description") != line.get("name") or service.get("price") != line.get("price"):
+    if service.get("description") != line.get("name") or not money_equal(service.get("price"), line.get("price")):
         raise GateError(GATE_CATALOG, reason="service_disagrees_with_template")
     if line.get("type") != "service" or line.get("payable_type") != "Service":
         raise GateError(GATE_CATALOG, reason="template_line_type")
-    return {"template": template, "line": line, "service": {"id": service.get("id"), "description": service.get("description"), "price": service.get("price")}}
+    normalized = {
+        "name": line.get("name"),
+        "type": line.get("type"),
+        "quantity": money_number(line.get("quantity")),
+        "price": money_number(line.get("price")),
+        "payable_id": line.get("payable_id"),
+        "payable_type": line.get("payable_type"),
+        "taxable": False,
+    }
+    auto = template.get("auto_generates_invoice", None)
+    return {
+        "template": template,
+        "defaults": defaults,
+        "line": normalized,
+        "observed_line": line,
+        "service": {"id": service.get("id"), "description": service.get("description"), "price": service.get("price")},
+        "billing_frequency": money_number(template.get("billing_frequency")),
+        "invoice_generation_disclosed": True,
+        "invoice_generation_reason": "billing_frequency_0_normal_invoice_generation" if auto is None else "auto_generates_invoice" if auto is True else "billing_frequency_0_normal_invoice_generation",
+        "auto_generates_invoice": auto,
+    }
 
 
 def apply_catalog(appointment: dict[str, Any], catalog: dict[str, Any]) -> dict[str, Any]:
     template = catalog["template"]
+    defaults = catalog["defaults"]
     line = catalog["line"]
-    sent_line = {
-        "name": line.get("name"),
-        "type": line.get("type"),
-        "quantity": line.get("quantity"),
-        "price": line.get("price"),
-        "payable_id": line.get("payable_id"),
-        "payable_type": line.get("payable_type"),
-        "taxable": False if line.get("taxable") is False else line.get("taxable"),
-    }
+    sent_line = dict(line)
     supplied = appointment.get("line_items_attributes")
-    if supplied is not None and supplied != [sent_line]:
+    if supplied is not None and not _lines_equal(supplied, [sent_line]):
         raise GateError(GATE_CATALOG, reason="caller_line_disagrees_with_template")
-    occurrence = dict(appointment["appointment_occurrences_attributes"][0])
-    if "duration" not in occurrence and template.get("duration") is not None:
-        occurrence["duration"] = template["duration"]
-    if "instructions" not in occurrence and template.get("instructions") is not None:
-        occurrence["instructions"] = template["instructions"]
-    if "production_value" not in occurrence and template.get("production_value") is not None:
-        occurrence["production_value"] = template["production_value"]
+    source = dict(appointment["appointment_occurrences_attributes"][0])
+    starts = source.pop("_starts", None) or {}
+    occurrence = {key: source[key] for key in ("service_route_ids", "starts_at", "duration", "instructions", "production_value") if key in source}
+    if "duration" not in occurrence:
+        occurrence["duration"] = defaults["duration"]
+    if "instructions" not in occurrence:
+        occurrence["instructions"] = defaults["instructions"]
+    if "production_value" not in occurrence:
+        occurrence["production_value"] = money_number(defaults["production_value"])
     body = {
         "customer_id": appointment["customer_id"],
         "service_location_id": appointment["service_location_id"],
@@ -223,7 +298,29 @@ def apply_catalog(appointment: dict[str, Any], catalog: dict[str, Any]) -> dict[
     }
     if body["repeat_period"] is None or isinstance(body["repeat_period"], bool):
         raise GateError("unknown_field", fields=["repeat_period"])
-    return {"service_appointment": body}
+    total = money(sent_line["quantity"]) * money(sent_line["price"])
+    return {
+        "service_appointment": body,
+        "starts": starts,
+        "line_total": int(total) if total == total.to_integral_value() else format(total, "f"),
+    }
+
+
+def _lines_equal(supplied: list[dict[str, Any]], expected: list[dict[str, Any]]) -> bool:
+    if len(supplied) != len(expected):
+        return False
+    for left, right in zip(supplied, expected):
+        for key in ("name", "type", "payable_type"):
+            if left.get(key) != right.get(key):
+                return False
+        for key in ("quantity", "price"):
+            if not money_equal(left.get(key), right.get(key)):
+                return False
+        if str(left.get("payable_id")) != str(right.get("payable_id")):
+            return False
+        if bool(left.get("taxable")) != bool(right.get("taxable")):
+            return False
+    return True
 
 
 def route_staff(client: Any, route_ids: list[int]) -> list[dict[str, Any]]:
@@ -246,17 +343,27 @@ def route_staff(client: Any, route_ids: list[int]) -> list[dict[str, Any]]:
     return shown
 
 
+def schedule_signature(view: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        view.get("date"),
+        view.get("requested_starts_at"),
+        tuple(sorted(str(item.get("id")) for item in view.get("conflicts") or [])),
+    )
+
+
 def schedule_view(client: Any, starts_at: str, route_ids: list[int]) -> dict[str, Any]:
+    day = calendar_day(starts_at)
     try:
-        found = client.list_work_orders(start_date=starts_at, end_date=starts_at, service_route_ids=route_ids)
+        found = client.list_work_orders(start_date=day, end_date=day, service_route_ids=route_ids)
     except GateError as exc:
         raise GateError(GATE_SCHEDULE) from exc
     if not found.get("complete") or found.get("truncated") or found.get("repeated_page") or found.get("partial_error"):
         raise GateError(GATE_SCHEDULE, truncated=bool(found.get("truncated")), repeated_page=bool(found.get("repeated_page")))
     return {
-        "date": starts_at,
+        "date": day,
+        "requested_starts_at": starts_at,
         "timezone": "America/New_York",
-        "clock_time_sent": False,
+        "clock_time_sent": "T" in str(starts_at),
         "promised_window_enforced": False,
         "complete": True,
         "conflicts": [
@@ -309,44 +416,79 @@ def stop_creation(store: Any, proposal: dict[str, Any], attempt_id: str | None) 
     return {"gate": gate, "partial": partial, "failed_step": partial["failed_step"], "retry": False, "recovery": "new_exact_approved_proposal"}
 
 
-def customer_readback(client: Any, customer_id: str, *, contact: dict[str, Any] | None, location_id: str, address: dict[str, Any] | None) -> dict[str, Any]:
+def _mismatch(field: str, sent: Any, got: Any) -> None:
+    raise GateError(GATE_READBACK, reason="field_mismatch", field=field, sent=sent, got=got)
+
+
+def _require_equal(field: str, sent: Any, got: Any) -> Any:
+    if sent != got:
+        _mismatch(field, sent, got)
+    return got
+
+
+def customer_readback(client: Any, customer_id: str, *, sent_customer: dict[str, Any], contact: dict[str, Any] | None, location_id: str, address: dict[str, Any] | None, wrote_customer: bool = True) -> dict[str, Any]:
     customer = client.get_customer(customer_id)
     status = str(customer.get("status") or customer.get("customer_status") or "").strip().lower()
     if status != "active":
         raise GateError(GATE_READBACK, reason="customer_not_active", status=status)
+    if str(customer.get("id")) != str(customer_id):
+        _mismatch("customer_id", customer_id, customer.get("id"))
+    compared: dict[str, Any] = {}
+    fields = sent_customer if wrote_customer else {}
+    for key, value in fields.items():
+        if key == "service_locations_attributes":
+            continue
+        got = customer.get(key)
+        if key in {"billing_phone", "phone"} or key.endswith("_phone"):
+            if normalize_phone(value) != normalize_phone(got):
+                _mismatch(key, value, got)
+        elif value != got:
+            _mismatch(key, value, got)
+        compared[key] = got
     location = client.get_location(customer_id, location_id)
-    if str(location.get("id")) != str(location_id):
-        raise GateError(GATE_READBACK, reason="location_missing")
+    if str(location.get("id")) != str(location_id) or str(location.get("customer_id")) != str(customer_id):
+        raise GateError(GATE_READBACK, reason="location_identity_mismatch")
+    if wrote_customer:
+        sent_location = (sent_customer.get("service_locations_attributes") or [{}])[0]
+        _require_equal("location_name", sent_location.get("name"), location.get("name"))
+        _require_equal("same_as_billing_address", sent_location.get("same_as_billing_address"), location.get("same_as_billing_address"))
+    got_address = location.get("address") if isinstance(location.get("address"), dict) else {}
+    compared_address = {}
     if address:
-        got = (location.get("address") or {})
         for key, value in address.items():
-            if got.get(key) != value:
-                raise GateError(GATE_READBACK, reason="address_mismatch", field=key)
+            compared_address[key] = _require_equal(f"address.{key}", value, got_address.get(key))
     contacts = client.list_contacts(customer_id)
     if not contacts.get("complete") or contacts.get("truncated") or contacts.get("repeated_page"):
         raise GateError(GATE_READBACK, reason="contact_list_incomplete")
     items = contacts.get("items") or []
-    if contact is None:
-        contact_row = None
-    else:
-        contact_row = next((item for item in items if str(item.get("email") or "").casefold() == str(contact["email"]).casefold()), None)
+    contact_row = None
+    compared_contact: dict[str, Any] = {}
+    if contact is not None:
+        contact_row = next((item for item in items if str(item.get("email") or "").casefold() == str(contact.get("email") or "").casefold()), None)
         if contact_row is None:
             raise GateError(GATE_READBACK, reason="contact_missing")
-    search = duplicate_search(client, {"name": customer.get("name"), "last_name": customer.get("last_name"), "billing_phone": customer.get("billing_phone")})
+        for key, value in contact.items():
+            compared_contact[key] = _require_equal(f"contact.{key}", value, contact_row.get(key))
+    search = duplicate_search(client, {"name": customer.get("name"), "last_name": customer.get("last_name"), "first_name": customer.get("first_name"), "billing_phone": customer.get("billing_phone")})
     if not any(str(item.get("id")) == str(customer_id) for item in search["candidates"]):
         raise GateError(GATE_READBACK, reason="customer_not_discoverable")
+    labels = response_labels(client)
     return {
         "id": customer.get("id"),
         "customer_id": customer.get("id"),
         "location_id": location.get("id"),
+        "location_customer_id": location.get("customer_id"),
+        "customer": compared,
+        "location_name": location.get("name"),
+        "address": got_address,
+        "compared_address": compared_address,
         "contact_id": None if contact_row is None else contact_row.get("id"),
+        "contact": compared_contact,
         "contact_count": len(items),
         "status": status,
         "discoverable": True,
-        "test_double": True,
-        "response_schema": "fake_test_double_not_live_schema",
-        "response_schema_verified": False,
         "matched_sent_fields": True,
+        **labels,
     }
 
 
@@ -355,7 +497,12 @@ def post_customer_steps(service: Any, proposal: dict[str, Any], attempt_id: str)
     client = service.client
     store = service.store
     search = duplicate_search(client, proposal["payload"])
-    resolve_duplicates(search, confirmed_new=bool(plan.get("confirmed_new")), existing_customer_id=plan.get("existing_customer_id"))
+    resolve_duplicates(
+        search,
+        confirmed_new=bool(plan.get("confirmed_new")),
+        existing_customer_id=plan.get("existing_customer_id"),
+        approved_candidate_ids=(plan.get("duplicate_resolution") or {}).get("candidate_ids"),
+    )
     customer_id = str(plan["existing_customer_id"]) if plan.get("existing_customer_id") else None
     if customer_id is None:
         step_id = _step(store, proposal["proposal_id"], "customer_post", plan["customer"])
@@ -437,7 +584,15 @@ def post_customer_steps(service: Any, proposal: dict[str, Any], attempt_id: str)
             return stop_creation(store, proposal, attempt_id)
         _succeed(store, step_id, {"id": contact_id}, customer_id=customer_id, contact_id=str(contact_id), location_id=location_id)
     address = None if not plan.get("location_patch") else plan["location_patch"]["address_attributes"]
-    readback = customer_readback(client, customer_id, contact=contact, location_id=nested_location_id, address=address)
+    readback = customer_readback(
+        client,
+        customer_id,
+        sent_customer=plan["customer"],
+        contact=contact,
+        location_id=nested_location_id,
+        address=address,
+        wrote_customer=not plan.get("existing_customer_id"),
+    )
     if plan.get("additional_location"):
         extra = client.get_location(customer_id, location_id)
         if str(extra.get("id")) != str(location_id) or extra.get("name") != plan["additional_location"]["name"]:
@@ -462,6 +617,21 @@ def _reconcile_customer(client: Any, before: dict[str, Any], payload: dict[str, 
     return None
 
 
+def _same_instant(sent: str, got: Any) -> bool:
+    if str(got) == str(sent):
+        return True
+    if "T" not in str(sent):
+        return str(got) == str(sent) or str(got).startswith(str(sent))
+    from datetime import datetime
+
+    try:
+        left = datetime.fromisoformat(str(sent))
+        right = datetime.fromisoformat(str(got).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return left.tzinfo is not None and right.tzinfo is not None and left == right
+
+
 def work_order_readback(client: Any, sent: dict[str, Any], occurrence_id: str) -> dict[str, Any]:
     row = client.get_work_order(occurrence_id)
     appointment_id = row.get("service_appointment_id")
@@ -469,44 +639,75 @@ def work_order_readback(client: Any, sent: dict[str, Any], occurrence_id: str) -
         raise GateError(GATE_READBACK, reason="ids_missing")
     if str(row.get("id")) == str(appointment_id):
         raise GateError(GATE_DISTINCT_IDS)
+    if str(row.get("id")) != str(occurrence_id):
+        _mismatch("occurrence_id", occurrence_id, row.get("id"))
     occurrence = sent["appointment_occurrences_attributes"][0]
     schedule = schedule_view(client, str(occurrence["starts_at"]), list(occurrence["service_route_ids"]))
     if str(row.get("id")) not in {str(item.get("id")) for item in schedule["conflicts"]}:
         raise GateError(GATE_READBACK, reason="occurrence_not_on_schedule")
-    if str(row.get("customer_id")) != str(sent["customer_id"]) or str(row.get("service_location_id")) != str(sent["service_location_id"]):
-        raise GateError(GATE_READBACK, reason="association_mismatch")
-    if str(row.get("starts_at_date") or row.get("starts_at")) != str(occurrence["starts_at"]):
-        raise GateError(GATE_READBACK, reason="date_mismatch")
-    if row.get("duration") != occurrence.get("duration"):
-        raise GateError(GATE_READBACK, reason="duration_mismatch")
-    if list(row.get("service_route_ids") or []) != list(occurrence["service_route_ids"]):
-        raise GateError(GATE_READBACK, reason="route_mismatch")
-    if row.get("instructions") != occurrence.get("instructions"):
-        raise GateError(GATE_READBACK, reason="instructions_mismatch")
-    sent_line = sent["line_items_attributes"][0]
-    got_line = (row.get("line_items") or [{}])[0]
-    if got_line.get("price") != sent_line.get("price") or got_line.get("name") != sent_line.get("name"):
-        raise GateError(GATE_READBACK, reason="service_price_mismatch")
+    _require_equal("customer_id", sent["customer_id"], row.get("customer_id"))
+    _require_equal("service_location_id", sent["service_location_id"], row.get("service_location_id"))
+    actual_start = row.get("starts_at")
+    if not _same_instant(str(occurrence["starts_at"]), actual_start) and str(row.get("starts_at_date") or "") != str(occurrence["starts_at"]):
+        _mismatch("starts_at", occurrence["starts_at"], actual_start)
+    _require_equal("duration", occurrence.get("duration"), row.get("duration"))
+    _require_equal("service_route_ids", list(occurrence["service_route_ids"]), list(row.get("service_route_ids") or []))
+    _require_equal("instructions", occurrence.get("instructions"), row.get("instructions"))
+    if not money_equal(occurrence.get("production_value"), row.get("production_value")):
+        _mismatch("production_value", occurrence.get("production_value"), row.get("production_value"))
+    sent_lines = sent["line_items_attributes"]
+    got_lines = row.get("line_items") or []
+    if len(got_lines) != len(sent_lines):
+        raise GateError(GATE_READBACK, reason="line_item_count_mismatch")
+    compared_lines = []
+    for sent_line, got_line in zip(sent_lines, got_lines):
+        compared = {
+            "payable_id": _require_equal("payable_id", sent_line.get("payable_id"), got_line.get("payable_id")),
+            "payable_type": _require_equal("payable_type", sent_line.get("payable_type"), got_line.get("payable_type")),
+            "type": _require_equal("type", sent_line.get("type"), got_line.get("type")),
+            "name": _require_equal("name", sent_line.get("name"), got_line.get("name")),
+            "taxable": _require_equal("taxable", sent_line.get("taxable"), got_line.get("taxable")),
+        }
+        if not money_equal(sent_line.get("quantity"), got_line.get("quantity")) or not money_equal(sent_line.get("price"), got_line.get("price")):
+            _mismatch("price", sent_line.get("price"), got_line.get("price"))
+        sent_total = money(sent_line["quantity"]) * money(sent_line["price"])
+        got_total = money(got_line["quantity"]) * money(got_line["price"])
+        if sent_total != got_total:
+            _mismatch("line_total", sent_total, got_total)
+        compared["quantity"] = got_line.get("quantity")
+        compared["price"] = got_line.get("price")
+        compared["total"] = int(got_total) if got_total == got_total.to_integral_value() else format(got_total, "f")
+        compared_lines.append(compared)
+    labels = response_labels(client)
     return {
         "id": row.get("id"),
         "occurrence_id": row.get("id"),
         "service_appointment_id": appointment_id,
         "customer_id": row.get("customer_id"),
         "service_location_id": row.get("service_location_id"),
-        "starts_at": occurrence["starts_at"],
+        "starts_at": actual_start,
         "timezone": "America/New_York",
-        "clock_time_sent": False,
+        "clock_time_sent": "T" in str(occurrence["starts_at"]),
         "duration": row.get("duration"),
+        "production_value": row.get("production_value"),
         "service_route_ids": row.get("service_route_ids"),
         "instructions": row.get("instructions"),
-        "price": got_line.get("price"),
-        "service_name": got_line.get("name"),
+        "price": compared_lines[0]["price"],
+        "line_total": compared_lines[0]["total"],
+        "line_items": compared_lines,
+        "service_name": compared_lines[0]["name"],
+        "after_state": {
+            "occurrence_id": row.get("id"),
+            "service_appointment_id": appointment_id,
+            "starts_at": actual_start,
+            "duration": row.get("duration"),
+            "production_value": row.get("production_value"),
+            "line_items": compared_lines,
+        },
         "promised_window_enforced": False,
-        "test_double": True,
-        "response_schema": "fake_test_double_not_live_schema",
-        "response_schema_verified": False,
         "matched_sent_fields": True,
         "schedule_complete": True,
+        **labels,
     }
 
 
@@ -514,13 +715,19 @@ def post_work_order(service: Any, proposal: dict[str, Any], attempt_id: str) -> 
     client = service.client
     store = service.store
     sent = proposal["after"]["documented_request"]["service_appointment"]
+    if proposal["after"].get("starts_at_post_ready") is False:
+        raise GateError(GATE_STARTS_AT_POST, starts_at_post_clock_live_tested=False, timed_create_ready=False, first_live_creation_approval_required=True)
     catalog = load_catalog(client, proposal["after"].get("template_id"))
     rebuilt = apply_catalog(proposal["after"]["caller_appointment"], catalog)
     if rebuilt["service_appointment"] != sent:
         raise GateError("stale_state", reason="template_changed")
     service._require_active_location(proposal["payload"])
     occurrence = sent["appointment_occurrences_attributes"][0]
-    before = schedule_view(client, str(occurrence["starts_at"]), list(occurrence["service_route_ids"]))
+    current_schedule = schedule_view(client, str(occurrence["starts_at"]), list(occurrence["service_route_ids"]))
+    approved_schedule = proposal["after"].get("schedule") or {}
+    if schedule_signature(current_schedule) != schedule_signature(approved_schedule):
+        raise GateError("stale_state", reason="schedule_changed")
+    before = current_schedule
     route_staff(client, list(occurrence["service_route_ids"]))
     step_id = _step(store, proposal["proposal_id"], "work_order_post", sent, customer_id=str(sent["customer_id"]), location_id=str(sent["service_location_id"]))
     try:

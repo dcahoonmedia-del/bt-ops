@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from .allowlist import (
@@ -16,6 +16,7 @@ from .allowlist import (
     GATE_LEAD_STATUS,
     GATE_RECURRING,
     GATE_STARTS_AT_DATETIME,
+    GATE_STARTS_AT_POST,
     GATE_TAXABLE,
     LINE_ITEM_FIELDS,
     OCCURRENCE_FIELDS,
@@ -281,31 +282,64 @@ def _line_item(item: Any) -> dict[str, Any]:
     return line
 
 
+def classify_starts_at(value: Any) -> dict[str, Any]:
+    """Date-only stays postable. An offset timestamp is preserved and is not a date-only job."""
+    if not isinstance(value, str) or not value:
+        _unknown("starts_at")
+    if _DATE.match(value):
+        try:
+            date.fromisoformat(value)
+        except ValueError:
+            _unknown("starts_at")
+        return {
+            "kind": "date",
+            "starts_at": value,
+            "calendar_date": value,
+            "instant": None,
+            "timezone": None,
+            "post_ready": True,
+        }
+    if value.endswith("Z") or "T" not in value:
+        raise GateError(
+            GATE_STARTS_AT_DATETIME,
+            field="starts_at",
+            accepted="YYYY-MM-DD or offset-aware timestamp",
+            datetime_format_unverified=True,
+        )
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        raise GateError(GATE_STARTS_AT_DATETIME, field="starts_at", datetime_format_unverified=True) from None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise GateError(GATE_STARTS_AT_DATETIME, field="starts_at", reason="offset_required", datetime_format_unverified=True)
+    tail = value[10:]
+    if "+" not in tail and "-" not in tail:
+        raise GateError(GATE_STARTS_AT_DATETIME, field="starts_at", reason="numeric_offset_required", datetime_format_unverified=True)
+    offset = parsed.strftime("%z")
+    timezone = f"{offset[:3]}:{offset[3:]}" if len(offset) == 5 else offset
+    return {
+        "kind": "offset_timestamp",
+        "starts_at": value,
+        "calendar_date": parsed.date().isoformat(),
+        "instant": parsed.isoformat(),
+        "timezone": timezone,
+        "post_ready": False,
+        "post_clock_live_tested": False,
+        "gate": GATE_STARTS_AT_POST,
+    }
+
+
 def _occurrence(item: dict[str, Any]) -> dict[str, Any]:
     rejected = sorted(key for key in REJECTED_OCCURRENCE_FIELDS if key in item)
     extra = sorted(key for key in item if key not in OCCURRENCE_FIELDS and key not in REJECTED_OCCURRENCE_FIELDS)
     if rejected or extra:
         raise UnknownFieldError(sorted(set(rejected + extra)))
-    starts_at = item.get("starts_at")
-    if not isinstance(starts_at, str):
-        _unknown("starts_at")
-    if "T" in starts_at or starts_at.endswith("Z") or (len(starts_at) > 10 and ("+" in starts_at[10:] or "-" in starts_at[10:])):
-        raise GateError(
-            GATE_STARTS_AT_DATETIME,
-            field="starts_at",
-            accepted="YYYY-MM-DD",
-            datetime_format_unverified=True,
-        )
-    if not _DATE.match(starts_at):
-        _unknown("starts_at")
-    try:
-        date.fromisoformat(starts_at)
-    except ValueError:
-        _unknown("starts_at")
+    classified = classify_starts_at(item.get("starts_at"))
+    starts_at = classified["starts_at"]
     routes = item.get("service_route_ids")
     if not isinstance(routes, list) or not routes or any(isinstance(route, bool) or not isinstance(route, int) or route <= 0 for route in routes):
         _unknown("service_route_ids")
-    occurrence: dict[str, Any] = {"service_route_ids": list(routes), "starts_at": starts_at}
+    occurrence: dict[str, Any] = {"service_route_ids": list(routes), "starts_at": starts_at, "_starts": classified}
     if "duration" in item:
         occurrence["duration"] = _int(item["duration"], "duration")
     if "instructions" in item:

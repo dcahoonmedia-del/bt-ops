@@ -385,6 +385,8 @@ def _flatten(body: dict[str, Any], prefix: str = "") -> list[tuple[str, str]]:
 class FakeTransport:
     """In-process Fieldwork stand-in. Never talks to HQ."""
 
+    is_fake_double = True
+
     def __init__(self) -> None:
         self.customers: dict[str, dict[str, Any]] = {}
         self.locations: dict[str, dict[str, Any]] = {}
@@ -603,19 +605,18 @@ class FakeTransport:
         display = customer.get("name") or " ".join(part for part in (customer.get("first_name"), customer.get("last_name")) if part) or customer.get("last_name")
         self.customers[str(created)] = {
             "id": created,
-            "customer_type": customer.get("customer_type"),
             "name": display,
-            "first_name": customer.get("first_name"),
-            "last_name": customer.get("last_name"),
-            "status": customer.get("status") or "active",
             "customer_status": customer.get("status") or "active",
             "email": None,
-            "billing_phone": customer.get("billing_phone"),
+            **{key: value for key, value in customer.items() if key != "service_locations_attributes"},
+            "status": customer.get("status") or "active",
             "billing_address": {
                 "street": customer.get("billing_street"),
+                "street2": customer.get("billing_street2"),
                 "city": customer.get("billing_city"),
                 "state": customer.get("billing_state"),
                 "zip": customer.get("billing_zip"),
+                "county": customer.get("billing_county"),
             },
         }
         self.locations[f"{created}:{location_id}"] = {
@@ -729,34 +730,35 @@ def _assert_typed_path(method: str, path: str) -> None:
 
 def _catalog_service() -> dict[str, Any]:
     """Fake catalog row. Label is description. Not a live schema and not a branch default."""
-    return {"id": 38814, "description": "PestGuard - Set-up", "price": 150}
+    return {"id": 38814, "description": "PestGuard - Set-up", "price": "150.0"}
 
 
 def _catalog_template() -> dict[str, Any]:
-    """Fake template body returned under service_appointment_template."""
+    """Observed GET shape. Defaults live under work_order. Money values are strings."""
     return {
         "id": 8835901,
         "name": "PestGuard - Initial 2026",
         "repeat_type": "none",
         "repeat_period": 1,
         "billing_frequency": 0,
-        "discount": 0,
-        "tax_amount": 0,
-        "auto_generates_invoice": False,
-        "duration": 60,
-        "production_value": 150,
-        "instructions": "Initial service",
-        "specific": False,
-        "callback": False,
+        "discount": "0.0",
+        "tax_amount": "0.0",
         "line_items": [{
             "payable_id": 38814,
             "payable_type": "Service",
             "type": "service",
             "name": "PestGuard - Set-up",
-            "quantity": 1,
-            "price": 150,
+            "quantity": "1.0",
+            "price": "150.0",
             "taxable": False,
         }],
+        "work_order": {
+            "duration": 60,
+            "instructions": "Initial service",
+            "production_value": "150.0",
+            "specific": False,
+            "callback": False,
+        },
     }
 
 

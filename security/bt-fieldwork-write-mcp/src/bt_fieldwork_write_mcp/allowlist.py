@@ -119,6 +119,7 @@ GATE_ARRIVAL_WINDOW = "arrival_window_unverified"
 GATE_RECURRING = "recurring_series_rejected"
 GATE_CREATE_RESPONSE = "create_response_unverified"
 GATE_STARTS_AT_DATETIME = "starts_at_datetime_unverified"
+GATE_STARTS_AT_POST = "starts_at_post_time_unverified"
 GATE_TAXABLE = "taxable_requires_tax_rate"
 GATE_DUPLICATE_UNRESOLVED = "duplicate_unresolved"
 GATE_DUPLICATE_SEARCH = "duplicate_search_incomplete"
@@ -223,7 +224,7 @@ def current_gates(
             "update_work_order_notes": {"propose": bool(mapping_verified), "execute_role": "client.get_api_role", "execute_blocked_by": list(work_order_blocks), "fields": ["instructions", "private_notes"]},
             "update_work_order_schedule": {"propose": bool(mapping_verified), "single_occurrence": True, "execute_role": "client.get_api_role", "execute_blocked_by": list(work_order_blocks), "fields": ["starts_at", "duration", "service_route_ids"], "arrival_window_preserved": False, "arrival_coupling": "fixed_window_selected_by_start_when_occurrence_evidence_is_fresh", "explicit_arrival_window_edit": False},
             "create_customer": {"propose": True, "schema_ready": True, "live_tested": False, "execute_blocked_by": list(write_blocks), "nested_location_fields": ["name", "same_as_billing_address"], "address_patch_when_distinct": True, "response_schema_verified": False},
-            "create_work_order": {"propose": True, "schema_ready": True, "live_tested": False, "execute_blocked_by": list(write_blocks), "repeat_type": "none", "starts_at": "YYYY-MM-DD", "starts_at_datetime_format_unverified": True, "use_time_window_sent": False, "promised_window_enforced": False, "response_schema_verified": False},
+            "create_work_order": {"propose": True, "schema_ready": True, "live_tested": False, "execute_blocked_by": list(write_blocks), "repeat_type": "none", "starts_at_date_only": "YYYY-MM-DD", "timed_create_ready": False, "starts_at_post_clock_live_tested": False, "starts_at_datetime_format_unverified": True, "use_time_window_sent": False, "promised_window_enforced": False, "response_schema_verified": False, "first_live_creation_approval_required": True},
             "schedule_or_arrival_window_write": {"propose": False, "execute_blocked_by": [GATE_ARRIVAL_WINDOW]},
             "list_users": {"read": True, "endpoint": "GET /v3.1/users", "projection": "staff_and_branch_fields", "stripe_pk": False},
             "list_service_locations": {"read": True, "endpoint": "GET /v3.1/customers/{customer_id}/service_locations", "customer_required": True, "global_endpoint": False},

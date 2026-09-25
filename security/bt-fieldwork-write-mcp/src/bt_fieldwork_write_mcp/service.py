@@ -351,8 +351,10 @@ class WriteService:
         caller = work_order_request(payload)
         self._require_active_location(payload)
         catalog = load_catalog(self.client, caller.get("template_id"))
-        documented = apply_catalog(caller["service_appointment"], catalog)
+        applied = apply_catalog(caller["service_appointment"], catalog)
+        documented = {"service_appointment": applied["service_appointment"]}
         occurrence = documented["service_appointment"]["appointment_occurrences_attributes"][0]
+        starts = applied.get("starts") or {}
         staff = route_staff(self.client, list(occurrence["service_route_ids"]))
         schedule = schedule_view(self.client, str(occurrence["starts_at"]), list(occurrence["service_route_ids"]))
         template = catalog["template"]
@@ -362,19 +364,31 @@ class WriteService:
             "template_id": template.get("id"),
             "documented_request": documented,
             "association": {"customer_id": documented["service_appointment"]["customer_id"], "service_location_id": documented["service_appointment"]["service_location_id"]},
-            "catalog": {"template_id": template.get("id"), "template_name": template.get("name"), "repeat_type": template.get("repeat_type"), "repeat_period": template.get("repeat_period"), "line": catalog["line"], "service": catalog["service"]},
+            "catalog": {"template_id": template.get("id"), "template_name": template.get("name"), "repeat_type": template.get("repeat_type"), "repeat_period": template.get("repeat_period"), "line": catalog["line"], "observed_line": catalog["observed_line"], "service": catalog["service"], "work_order_defaults": catalog["defaults"]},
             "route_staff": staff,
             "schedule": schedule,
             "duration": occurrence.get("duration"),
             "instructions": occurrence.get("instructions"),
-            "service_pricing": {"name": catalog["line"].get("name"), "price": catalog["line"].get("price"), "payable_id": catalog["line"].get("payable_id"), "payable_type": catalog["line"].get("payable_type")},
-            "auto_generates_invoice": template.get("auto_generates_invoice"),
-            "invoice_generation_disclosed": template.get("auto_generates_invoice") is True,
+            "production_value": occurrence.get("production_value"),
+            "line_total": applied.get("line_total"),
+            "service_pricing": {"name": catalog["line"].get("name"), "price": catalog["line"].get("price"), "quantity": catalog["line"].get("quantity"), "payable_id": catalog["line"].get("payable_id"), "payable_type": catalog["line"].get("payable_type"), "taxable": catalog["line"].get("taxable"), "total": applied.get("line_total")},
+            "auto_generates_invoice": catalog.get("auto_generates_invoice"),
+            "invoice_generation_disclosed": catalog["invoice_generation_disclosed"],
+            "invoice_generation_reason": catalog["invoice_generation_reason"],
+            "billing_frequency_0_means_normal_invoice_generation": True,
+            "starts_at_kind": starts.get("kind", "date"),
+            "starts_at_instant": starts.get("instant"),
+            "starts_at_timezone": starts.get("timezone"),
+            "starts_at_post_ready": starts.get("post_ready", True),
+            "starts_at_post_clock_live_tested": False,
+            "timed_create_ready": False,
+            "first_live_creation_approval_required": True,
             "starts_at_datetime_format_unverified": True,
             "use_time_window_sent": False,
             "promised_window_enforced": False,
             "response_schema_verified": False,
-            "schema_ready": True,
+            "schema_ready": starts.get("post_ready", True) is not False,
+            "timed_execution_blocked": starts.get("post_ready") is False,
             "live_tested": False,
         }
         result = self._persist_proposal(
@@ -388,7 +402,8 @@ class WriteService:
         if result.get("ok"):
             result["starts_at_datetime_format_unverified"] = True
             result["response_schema_verified"] = False
-            result["schema_ready"] = True
+            result["schema_ready"] = after["schema_ready"]
+            result["timed_execution_blocked"] = after["timed_execution_blocked"]
             result["live_tested"] = False
             result["promised_window_enforced"] = False
         return result

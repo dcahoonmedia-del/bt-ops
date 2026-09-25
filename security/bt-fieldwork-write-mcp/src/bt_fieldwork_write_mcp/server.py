@@ -24,7 +24,7 @@ PUBLIC_INSTRUCTIONS = (
     "Customer and work-order creation are schema-ready and are not live-tested. "
     "Customer create accepts Residential or Commercial, documented billing fields, one nested location with only name and same_as_billing_address, an explicit contact only when first name, last name, and email are supplied, and a distinct service address patched after create. "
     "Duplicate search must be complete, and possible matches require confirmed_new or an existing customer id. "
-    "Work-order create fetches the current template and service catalog, sends one occurrence with repeat_type none and starts_at YYYY-MM-DD, and does not promise an arrival window. "
+    "Work-order create fetches the current template and service catalog. A date-only starts_at YYYY-MM-DD can be posted. An offset timestamp is kept and is not turned into a date-only job; posting that clock time is not live-tested and stays blocked. No promised arrival window. "
     "Writes stay off unless FIELDWORK_WRITES_ENABLED is set and the live API role is writer. "
     "Work-order note and schedule writes also require FIELDWORK_MAPPING_VERIFIED. GET /check_connection is not auth proof. "
     "MCP execution requires FW_WRITE_APPROVAL_MODE=chatgpt_confirmation. A separate approval string is not accepted."
@@ -36,7 +36,7 @@ PROPOSE_DESCRIPTION = (
     "update_work_order_notes(work_order_id, service_appointment_id, instructions and/or private_notes); "
     "update_work_order_schedule(work_order_id, service_appointment_id, starts_at with a numeric offset, duration minutes, service_route_ids); "
     "create_customer is schema-ready and not live-tested: Residential or Commercial, nested location name and same_as_billing_address only, optional explicit contact with first_name, last_name, and email, confirmed_new or existing_customer_id when search finds a match; "
-    "create_work_order is schema-ready and not live-tested: one occurrence, repeat_type none, starts_at YYYY-MM-DD, template and service catalog fetched at propose, no use_time_window or promised arrival window. "
+    "create_work_order is schema-ready and not live-tested: one occurrence, repeat_type none, date-only starts_at YYYY-MM-DD. Offset-aware starts_at is preserved but execute stays starts_at_post_time_unverified until a documented POST time field is verified. No use_time_window or promised arrival window. "
     "Rejected: lead status, incomplete duplicate search, recurrence, taxable lines, portal or autopay fields, and caller fields started_at_time, finished_at_time, private_notes, status, or use_time_window."
 )
 

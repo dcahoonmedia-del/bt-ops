@@ -120,7 +120,12 @@ class CreationWorkflowTests(unittest.TestCase):
     def test_approval_digest_identity_and_stale_catalog(self) -> None:
         proposed = self.h.service.propose("create_work_order", _order(), IDENTITY)
         self.assertTrue(proposed["ok"], proposed)
-        self.assertFalse(proposed["after"]["invoice_generation_disclosed"])
+        self.assertTrue(proposed["after"]["invoice_generation_disclosed"])
+        self.assertEqual(proposed["after"]["invoice_generation_reason"], "billing_frequency_0_normal_invoice_generation")
+        self.assertIsNone(proposed["after"]["auto_generates_invoice"])
+        self.assertEqual(proposed["after"]["catalog"]["observed_line"]["quantity"], "1.0")
+        self.assertEqual(proposed["after"]["catalog"]["observed_line"]["price"], "150.0")
+        self.assertEqual(proposed["after"]["catalog"]["work_order_defaults"]["duration"], 60)
         self.assertIsNone(proposed["after"]["route_staff"][0]["assignee"])
         self.assertTrue(proposed["after"]["route_staff"][0]["ambiguous"])
         self.assertFalse(proposed["after"]["schedule"]["promised_window_enforced"])
@@ -168,7 +173,7 @@ class CreationWorkflowTests(unittest.TestCase):
         self.assertEqual(again["gate"], "ambiguous_remote_write_no_retry")
         self.assertEqual(len([call for call in self.h.transport.calls if call["method"] == "POST" and call["path"] == "/work_orders"]), 1)
         self.h.transport.readback_line_price = None
-        self.h.transport.templates[0]["auto_generates_invoice"] = False
+        self.h.transport.templates[0].pop("auto_generates_invoice", None)
         clean = self.h.service.propose("create_work_order", {**_order(), "occurrences": [{"service_route_ids": [1], "starts_at": "2026-10-05", "duration": 60}]}, IDENTITY)
         done = self.h.service.execute(clean["proposal_id"], IDENTITY, operator_approval=self.h.approve(clean["proposal_id"]))
         self.assertTrue(done["ok"], done)
@@ -228,6 +233,83 @@ class CreationWorkflowTests(unittest.TestCase):
         failed = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=self.h.approve(proposed["proposal_id"]))
         self.assertEqual(failed["gate"], GATE_DISTINCT_IDS)
         self.assertEqual(len([call for call in self.h.transport.calls if call["method"] == "POST" and call["path"] == "/work_orders"]), 1)
+
+    def test_timed_start_is_not_downgraded_or_posted(self) -> None:
+        timed = "2026-10-02T10:00:00-04:00"
+        proposed = self.h.service.propose("create_work_order", {**_order(), "occurrences": [{"service_route_ids": [1], "starts_at": timed}]}, IDENTITY)
+        self.assertTrue(proposed["ok"], proposed)
+        self.assertEqual(proposed["after"]["documented_request"]["service_appointment"]["appointment_occurrences_attributes"][0]["starts_at"], timed)
+        self.assertEqual(proposed["after"]["starts_at_instant"], "2026-10-02T10:00:00-04:00")
+        self.assertEqual(proposed["after"]["starts_at_timezone"], "-04:00")
+        self.assertFalse(proposed["after"]["starts_at_post_ready"])
+        self.assertFalse(proposed["after"]["timed_create_ready"])
+        self.assertFalse(proposed["after"]["starts_at_post_clock_live_tested"])
+        blocked = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=self.h.approve(proposed["proposal_id"]))
+        self.assertEqual(blocked["gate"], "starts_at_post_time_unverified")
+        self.assertFalse(any(call["method"] == "POST" and call["path"] == "/work_orders" for call in self.h.transport.calls))
+        zulu = self.h.service.propose("create_work_order", {**_order(), "occurrences": [{"service_route_ids": [1], "starts_at": "2026-10-02T10:00:00Z"}]}, IDENTITY)
+        self.assertEqual(zulu["gate"], "starts_at_datetime_unverified")
+
+    def test_schedule_recheck_and_new_duplicate_need_approval(self) -> None:
+        proposed = self.h.service.propose("create_work_order", _order(), IDENTITY)
+        self.h.transport.work_orders["80"] = {
+            "id": 80, "service_appointment_id": 81, "customer_id": 41, "service_location_id": 77,
+            "starts_at": "2026-10-02", "starts_at_date": "2026-10-02", "service_route_ids": [1], "duration": 30,
+        }
+        blocked = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=self.h.approve(proposed["proposal_id"]))
+        self.assertEqual(blocked["gate"], "stale_state")
+        self.assertEqual(blocked["reason"], "schedule_changed")
+        self.assertFalse(any(call["method"] == "POST" and call["path"] == "/work_orders" for call in self.h.transport.calls))
+        fresh = self.h.service.propose("create_customer", _customer(first_name="Ada", last_name="River", confirmed_new=True), IDENTITY)
+        queries = [call["query"]["query"] for call in self.h.transport.calls if call["path"] == "/customers/search"]
+        self.assertIn("ada river", queries)
+        self.assertIn("river", queries)
+        self.h.transport.add_customer(
+            {"id": 90, "name": "River", "last_name": "River", "customer_status": "Active"},
+            {"id": 91, "name": "Home", "tax_rate_id": 3, "address": {"id": 4}},
+        )
+        denied = self.h.service.execute(fresh["proposal_id"], IDENTITY, operator_approval=self.h.approve(fresh["proposal_id"]))
+        self.assertEqual(denied["gate"], "duplicate_unresolved")
+        self.assertEqual(denied["reason"], "new_match_requires_approval")
+        self.assertFalse(any(call["method"] == "POST" and call["path"] == "/customers" for call in self.h.transport.calls))
+
+    def test_readback_compares_every_sent_field(self) -> None:
+        from bt_fieldwork_write_mcp.creation_flow import customer_readback, response_labels
+        from bt_fieldwork_write_mcp.errors import GateError
+
+        payload = _customer(
+            billing_street="9 Billing",
+            billing_city="Buffalo",
+            service_locations=[{"name": "Home", "same_as_billing_address": False}],
+            service_address={"street": "4 Service", "city": "Buffalo", "state": "NY", "zip": "14201"},
+            location_tax_rate_id=3,
+            contact={"first_name": "Ada", "last_name": "Ng", "email": "ada@example.test", "phone": "7165550100"},
+        )
+        proposed = self.h.service.propose("create_customer", payload, IDENTITY)
+        executed = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=self.h.approve(proposed["proposal_id"]))
+        self.assertTrue(executed["ok"], executed)
+        self.assertTrue(executed["readback"]["matched_sent_fields"])
+        self.assertTrue(executed["readback"]["test_double"])
+        self.assertEqual(executed["readback"]["customer"]["billing_street"], "9 Billing")
+        self.assertEqual(executed["readback"]["compared_address"]["street"], "4 Service")
+        self.assertEqual(executed["readback"]["contact"]["phone"], "7165550100")
+        self.assertEqual(executed["readback"]["contact"]["email"], "ada@example.test")
+        self.h.transport.customers[str(executed["created_id"])].pop("billing_city")
+        with self.assertRaises(GateError) as caught:
+            customer_readback(
+                self.h.client,
+                str(executed["created_id"]),
+                sent_customer=proposed["after"]["documented_request"]["customer"],
+                contact=payload["contact"],
+                location_id=str(executed["readback"]["location_id"]),
+                address=payload["service_address"],
+            )
+        self.assertEqual(caught.exception.detail["field"], "billing_city")
+
+        class Other:
+            is_fake_double = False
+
+        self.assertFalse(response_labels(type("C", (), {"transport": Other()})())["test_double"])
 
 
 if __name__ == "__main__":
