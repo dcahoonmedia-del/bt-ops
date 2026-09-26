@@ -289,6 +289,29 @@ def bind_residential_location(plan: dict[str, Any], client: Any, configured_type
     plan["api_steps"] = _customer_api_steps(plan)
 
 
+def _coverage_acknowledgment_required(gap: list[Any]) -> None:
+    """The caller must name the gap. That statement is not search evidence."""
+    required = [str(item) for item in gap]
+    raise GateError(
+        GATE_DUPLICATE_SEARCH,
+        reason="coverage_acknowledgment_required",
+        coverage_gap=required,
+        searched_fields=["name", "phone"],
+        unsearched_fields=required,
+        acknowledgment_required=required,
+        field="acknowledge_duplicate_coverage",
+        required_value=required,
+        retry_example={"acknowledge_duplicate_coverage": required},
+        acknowledgment_effect="acknowledges_unsupported_or_incomplete_email_or_address_coverage",
+        does_not_assert="searches_succeeded_or_no_duplicate",
+        instructions=(
+            "Resubmit the same create_customer payload with acknowledge_duplicate_coverage set to required_value. "
+            "That field acknowledges unsupported or incomplete email and address coverage. "
+            "It does not assert that searches succeeded or that no duplicate exists."
+        ),
+    )
+
+
 def resolve_duplicates(
     search: dict[str, Any],
     *,
@@ -300,14 +323,7 @@ def resolve_duplicates(
     gap = list(search.get("coverage_gap") or [])
     acknowledged = sorted(str(item) for item in (acknowledgment or []))
     if gap and acknowledged != gap:
-        raise GateError(
-            GATE_DUPLICATE_SEARCH,
-            reason="coverage_acknowledgment_required",
-            coverage_gap=gap,
-            searched_fields=["name", "phone"],
-            unsearched_fields=gap,
-            acknowledgment_required=gap,
-        )
+        _coverage_acknowledgment_required(gap)
     if acknowledged and not gap:
         raise GateError("unknown_field", fields=["acknowledge_duplicate_coverage"])
     candidates = search["candidates"]

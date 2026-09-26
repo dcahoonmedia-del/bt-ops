@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from mcp.server.auth.middleware.auth_context import get_access_token
@@ -30,12 +31,26 @@ PUBLIC_INSTRUCTIONS = (
     "MCP execution requires FW_WRITE_APPROVAL_MODE=chatgpt_confirmation. A separate approval string is not accepted."
 )
 
+CREATE_CUSTOMER_EXAMPLE = {
+    "customer_type": "Residential",
+    "last_name": "Example",
+    "primary_email": "ada@example.test",
+    "billing_street": "1 Example St",
+    "billing_city": "Buffalo",
+    "billing_state": "NY",
+    "billing_zip": "14201",
+    "service_locations": {"name": "Main Location", "same_as_billing_address": True},
+    "acknowledge_duplicate_coverage": ["address", "email"],
+}
+
 PROPOSE_DESCRIPTION = (
     "Prepare one exact before/after proposal and do not change Fieldwork. "
     "Supported: update_service_location_notes(customer_id, location_id, notes); "
     "update_work_order_notes(work_order_id, service_appointment_id, instructions and/or private_notes); "
     "update_work_order_schedule(work_order_id, service_appointment_id, starts_at with a numeric offset, duration minutes, service_route_ids); "
-    "create_customer is schema-ready and not live-tested: Residential or Commercial; service_locations is one object or a one-item list with only name and same_as_billing_address, posted as service_locations_attributes; billing_phone stays on the customer and billing_phone_kind is sent only when it is one of Home, Office, Mobile, Fax, or Other; primary_email is one later customer PATCH of customer[invoice_email], not a customer POST field and not a contact; location email, property type, and reminders_type 0 are a documented location PATCH; name and phone are the only documented duplicate queries; a supplied email or street stays an incomplete coverage gap unless acknowledge_duplicate_coverage lists that exact gap; the proposal does not claim no duplicates; confirmed_new does not replace that acknowledgment; "
+    "create_customer is schema-ready and not live-tested: Residential or Commercial; service_locations is one object or a one-item list with only name and same_as_billing_address, posted as service_locations_attributes; flat billing fields such as billing_street, billing_city, billing_state, and billing_zip stay on the customer; billing_phone stays on the customer and billing_phone_kind is sent only when it is one of Home, Office, Mobile, Fax, or Other; primary_email is one later customer PATCH of customer[invoice_email], not a customer POST field and not a contact; contact is only for a separately requested additional contact and is not required for primary_email; location email, property type, and reminders_type 0 are a documented location PATCH; name and phone are the only documented duplicate queries; a supplied email or street stays an incomplete coverage gap unless acknowledge_duplicate_coverage lists that exact gap; that acknowledgment names unsupported or incomplete email and address coverage and does not assert that searches succeeded; the proposal does not claim no duplicates; confirmed_new does not replace that acknowledgment; "
+    "Canonical create_customer example, with no contact: " + json.dumps(CREATE_CUSTOMER_EXAMPLE, separators=(",", ":")) + ". "
+    "A successful proposal does not mark creation or response schemas live-verified. "
     "create_work_order is schema-ready and not live-tested: one initial occurrence, repeat_type none. starts_at, duration, service_route_ids, and instructions may be top-level or inside one occurrences item. Omitting starts_at or service_route_ids is missing_field. The catalog line price is the standard initial price; a caller line price for that same service is the approved price, total, and production amount. Date-only starts_at is one POST. An offset timestamp posts the calendar date because the saved create spec types starts_at as date, then one PATCH sets the approved offset. That POST clock is not live-tested. No use_time_window, agreement, or recurrence. "
     "Rejected: lead status, incomplete duplicate search, recurrence, taxable lines, portal or autopay fields, and caller fields started_at_time, finished_at_time, private_notes, status, or use_time_window."
 )
