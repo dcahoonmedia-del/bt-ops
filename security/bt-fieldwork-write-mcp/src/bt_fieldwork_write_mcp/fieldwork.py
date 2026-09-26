@@ -498,6 +498,19 @@ class FakeTransport:
             per_page = int((query or {}).get("per_page") or len(rows) or 1)
             start = max(page - 1, 0) * per_page
             return 200, rows[start : start + per_page]
+        if method == "PATCH" and _CUSTOMER.match(path):
+            cid = path.rsplit("/", 1)[-1]
+            customer = self.customers.get(cid)
+            if customer is None:
+                return 404, None
+            sent = (body or {}).get("customer") if isinstance(body, dict) else {}
+            if not isinstance(sent, dict) or set(sent) != {"invoice_email"}:
+                return 422, {"error": "invoice_email_only"}
+            customer["invoice_email"] = sent["invoice_email"]
+            for location in self.locations.values():
+                if str(location.get("customer_id")) == cid and location.get("same_as_billing_address") is True:
+                    location["email"] = sent["invoice_email"]
+            return 200, {"id": customer.get("id"), "invoice_email": customer.get("invoice_email")}
         if method == "GET" and _CUSTOMER.match(path):
             cid = path.rsplit("/", 1)[-1]
             customer = self.customers.get(cid)
@@ -747,7 +760,7 @@ def _assert_typed_path(method: str, path: str) -> None:
         or _WORK_ORDER_SEARCH.match(path)
     ):
         return
-    if method == "PATCH" and _LOCATION.match(path):
+    if method == "PATCH" and (_LOCATION.match(path) or _CUSTOMER.match(path)):
         return
     if method == "PATCH" and _WORK_ORDER.match(path):
         return
@@ -1331,7 +1344,7 @@ class TypedFieldworkClient:
         status, payload = self.transport.request("PATCH", path, body)
         if status >= 500:
             raise AmbiguousWriteError(f"remote_{status}")
-        if status != 200:
+        if status not in {200, 204}:
             raise GateError("location_patch_rejected", status=status)
         return payload if isinstance(payload, dict) else {}
 
@@ -1392,7 +1405,7 @@ class TypedFieldworkClient:
         captured = self._capture_write(status, payload)
         if status >= 500:
             raise AmbiguousWriteError(f"remote_{status}", diagnostic=self.last_write_diagnostic)
-        if status != 200:
+        if status not in {200, 204}:
             raise GateError("location_patch_rejected", status=status)
         return captured
 
@@ -1411,6 +1424,18 @@ class TypedFieldworkClient:
 
     def list_location_types(self) -> dict[str, Any]:
         return self._pages("/location_types")
+
+    def patch_customer_invoice_email(self, customer_id: str, email: str) -> dict[str, Any]:
+        path = f"/customers/{_required_id(customer_id)}"
+        _assert_typed_path("PATCH", path)
+        body = {"customer": {"invoice_email": email}}
+        status, payload = self.transport.request("PATCH", path, body)
+        captured = self._capture_write(status, payload)
+        if status >= 500:
+            raise AmbiguousWriteError(f"remote_{status}", diagnostic=self.last_write_diagnostic)
+        if status not in {200, 204}:
+            raise GateError("invoice_email_patch_rejected", status=status)
+        return captured
 
     def create_customer(self, body: dict[str, Any]) -> dict[str, Any]:
         path = "/customers"

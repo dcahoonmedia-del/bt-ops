@@ -73,6 +73,7 @@ CUSTOMER_CREATE_FIELDS = frozenset(
         "location_type_id",
         "confirmed_new",
         "existing_customer_id",
+        "acknowledge_duplicate_coverage",
     }
 )
 SERVICE_ADDRESS_FIELDS = frozenset(

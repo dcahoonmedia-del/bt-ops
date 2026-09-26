@@ -453,11 +453,24 @@ class WriteService:
 
         bind_residential_location(plan, self.client, self.settings.residential_location_type_id)
         search = duplicate_search(self.client, payload)
-        plan["duplicate_resolution"] = resolve_duplicates(search, confirmed_new=bool(plan.get("confirmed_new")), existing_customer_id=plan.get("existing_customer_id"))
+        plan["duplicate_resolution"] = resolve_duplicates(
+            search,
+            confirmed_new=bool(plan.get("confirmed_new")),
+            existing_customer_id=plan.get("existing_customer_id"),
+            acknowledgment=plan.get("acknowledge_duplicate_coverage"),
+        )
         after = {
             "exists": False,
             "documented_request": plan,
-            "duplicate_search": {"complete": True, "candidate_ids": plan["duplicate_resolution"]["candidate_ids"]},
+            "duplicate_search": {
+                "complete": search["complete"],
+                "candidate_ids": plan["duplicate_resolution"]["candidate_ids"],
+                "coverage_gap": search["coverage_gap"],
+                "searched_fields": search["searched_fields"],
+                "unsearched_fields": search["unsearched_fields"],
+                "coverage_acknowledged": plan["duplicate_resolution"]["coverage_acknowledged"],
+                "no_duplicate_claim": search["no_duplicate_claim"],
+            },
             "contact_requested": plan.get("contact"),
             "contact_count": plan.get("contact_count", 0),
             "primary_email": plan.get("primary_email"),
@@ -754,35 +767,43 @@ class WriteService:
         if stale is not None:
             self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "failed_no_write")
             return stale
+        ambiguous = False
         try:
             self.client.patch_location_notes(proposal["before"], str(payload["notes"]))
         except AmbiguousWriteError:
-            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
-            return self._fail("ambiguous_remote_write_no_retry", proposal_id=proposal["proposal_id"])
+            ambiguous = True
         except GateError as exc:
             self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "failed_no_write")
-            return self._fail(exc.gate, proposal_id=proposal["proposal_id"], **exc.detail)
+            return self._fail(exc.gate, proposal_id=proposal["proposal_id"], retry=False, **exc.detail)
         except Exception:
-            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
-            return self._fail("ambiguous_remote_write_no_retry", proposal_id=proposal["proposal_id"])
+            ambiguous = True
+        return self._finish_location_notes(proposal, attempt_id, customer_id, location_id, ambiguous=ambiguous)
+
+    def _finish_location_notes(self, proposal: dict[str, Any], attempt_id: str, customer_id: str, location_id: str, *, ambiguous: bool) -> dict[str, Any]:
         try:
             readback_customer = self.client.get_customer(customer_id)
             readback_location = self.client.get_location(customer_id, location_id)
             readback = location_snapshot(readback_customer, readback_location)
         except Exception:
             self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
-            return self._fail(GATE_READBACK, proposal_id=proposal["proposal_id"])
+            gate = "ambiguous_remote_write_no_retry" if ambiguous else GATE_READBACK
+            return self._fail(gate, proposal_id=proposal["proposal_id"], retry=False)
         if snapshot_hash(readback) != snapshot_hash(proposal["after"]):
             self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
-            return self._fail(GATE_READBACK, proposal_id=proposal["proposal_id"])
+            gate = "ambiguous_remote_write_no_retry" if ambiguous else GATE_READBACK
+            return self._fail(gate, proposal_id=proposal["proposal_id"], retry=False, readback=readback)
         self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "success")
-        return {
+        body = {
             "ok": True,
             "proposal_id": proposal["proposal_id"],
             "operation": OP_LOCATION_NOTES,
             "readback": readback,
             "gates": self.gates(),
         }
+        if ambiguous:
+            body["ambiguity_reconciled"] = True
+            body["retry"] = False
+        return body
 
     def _work_order_stale(self, proposal: dict[str, Any]) -> dict[str, Any] | None:
         before = proposal["before"]

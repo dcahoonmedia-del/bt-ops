@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from mcp.server.auth.middleware.auth_context import get_access_token
@@ -22,20 +23,34 @@ PUBLIC_INSTRUCTIONS = (
     "from that proposal, and show the readback. Do not execute a draft, a stale proposal, a different proposal, "
     "or a change the user did not approve. "
     "Customer and work-order creation are schema-ready and are not live-tested. "
-    "Customer create accepts Residential or Commercial, documented billing fields, and service_locations as one object or a one-item list with only name and same_as_billing_address. That caller wrapper becomes customer[service_locations_attributes] on POST /customers. primary_email is an unverified invoice_email candidate and is not posted and is not turned into a contact. An explicit contact still requires first_name, last_name, and email. Location email, location_type_id, and reminders_type 0 go on one documented location PATCH. send_report_email is not sent; an inherited true value may still send a completion report once a location email exists. Inactive appointment reminders do not disable every notice. A supplied email or street has no documented search query, so duplicate search fails closed with a coverage gap. Omitting the location is nested_location_required, not an unknown service_locations field. "
-    "Duplicate search must be complete, and possible matches require confirmed_new or an existing customer id. "
+    "Customer create accepts Residential or Commercial, documented billing fields, and service_locations as one object or a one-item list with only name and same_as_billing_address. That caller wrapper becomes customer[service_locations_attributes] on POST /customers. primary_email is not on the customer POST. After the customer and Main Location are posted, one PATCH sends only customer[invoice_email]. That PATCH was observed once on 2026-09-25 at 17:02 Eastern, HTTP 200, and a same-as-billing Main Location email copied it. Other location configurations and notice delivery are not proven. It is not turned into a contact. An explicit contact still requires first_name, last_name, and email. Location email, location_type_id, and reminders_type 0 go on one documented location PATCH. send_report_email is not sent; an inherited true value may still send a completion report once a location email exists. Inactive appointment reminders do not disable every notice. A supplied email or street has no documented search query. Name and phone are still searched, returned rows are inspected, and creation requires acknowledge_duplicate_coverage for the exact gap. That acknowledgment is not a claim of no duplicates. confirmed_new does not replace it. Omitting the location is nested_location_required, not an unknown service_locations field. "
+    "Name and phone duplicate search must finish without a repeated or partial page. Email and street coverage can stay incomplete when acknowledge_duplicate_coverage names that exact gap. That is not a complete no-duplicate result. Possible matches still require confirmed_new or an existing customer id. "
     "Work-order create accepts starts_at, duration, service_route_ids, and instructions on the caller or inside one occurrences item. A missing schedule is missing_field, not unknown_field occurrences. The catalog price is the standard initial price. An explicit line price is the approved amount and is not replaced by that standard. A date-only starts_at is one POST. An offset timestamp is a disclosed date POST plus one schedule PATCH of that instant. POST clock acceptance is not live-tested. No promised arrival window. "
     "Writes stay off unless FIELDWORK_WRITES_ENABLED is set and the live API role is writer. "
     "Work-order note and schedule writes also require FIELDWORK_MAPPING_VERIFIED. GET /check_connection is not auth proof. "
     "MCP execution requires FW_WRITE_APPROVAL_MODE=chatgpt_confirmation. A separate approval string is not accepted."
 )
 
+CREATE_CUSTOMER_EXAMPLE = {
+    "customer_type": "Residential",
+    "last_name": "Example",
+    "primary_email": "ada@example.test",
+    "billing_street": "1 Example St",
+    "billing_city": "Buffalo",
+    "billing_state": "NY",
+    "billing_zip": "14201",
+    "service_locations": {"name": "Main Location", "same_as_billing_address": True},
+    "acknowledge_duplicate_coverage": ["address", "email"],
+}
+
 PROPOSE_DESCRIPTION = (
     "Prepare one exact before/after proposal and do not change Fieldwork. "
     "Supported: update_service_location_notes(customer_id, location_id, notes); "
     "update_work_order_notes(work_order_id, service_appointment_id, instructions and/or private_notes); "
     "update_work_order_schedule(work_order_id, service_appointment_id, starts_at with a numeric offset, duration minutes, service_route_ids); "
-    "create_customer is schema-ready and not live-tested: Residential or Commercial; service_locations is one object or a one-item list with only name and same_as_billing_address, posted as service_locations_attributes; billing_phone stays on the customer and billing_phone_kind is sent only when it is one of Home, Office, Mobile, Fax, or Other; primary_email is not written because invoice_email is absent from the customer write spec; location email, property type, and reminders_type 0 are a documented location PATCH; name and phone are the only documented duplicate queries, so a supplied email or street is a coverage gap and is not a complete no-duplicate result; confirmed_new does not bypass that gap; "
+    "create_customer is schema-ready and not live-tested: Residential or Commercial; service_locations is one object or a one-item list with only name and same_as_billing_address, posted as service_locations_attributes; flat billing fields such as billing_street, billing_city, billing_state, and billing_zip stay on the customer; billing_phone stays on the customer and billing_phone_kind is sent only when it is one of Home, Office, Mobile, Fax, or Other; primary_email is one later customer PATCH of customer[invoice_email], not a customer POST field and not a contact; contact is only for a separately requested additional contact and is not required for primary_email; location email, property type, and reminders_type 0 are a documented location PATCH; name and phone are the only documented duplicate queries; a supplied email or street stays an incomplete coverage gap unless acknowledge_duplicate_coverage lists that exact gap; that acknowledgment names unsupported or incomplete email and address coverage and does not assert that searches succeeded; the proposal does not claim no duplicates; confirmed_new does not replace that acknowledgment; "
+    "Canonical create_customer example, with no contact: " + json.dumps(CREATE_CUSTOMER_EXAMPLE, separators=(",", ":")) + ". "
+    "A successful proposal does not mark creation or response schemas live-verified. "
     "create_work_order is schema-ready and not live-tested: one initial occurrence, repeat_type none. starts_at, duration, service_route_ids, and instructions may be top-level or inside one occurrences item. Omitting starts_at or service_route_ids is missing_field. The catalog line price is the standard initial price; a caller line price for that same service is the approved price, total, and production amount. Date-only starts_at is one POST. An offset timestamp posts the calendar date because the saved create spec types starts_at as date, then one PATCH sets the approved offset. That POST clock is not live-tested. No use_time_window, agreement, or recurrence. "
     "Rejected: lead status, incomplete duplicate search, recurrence, taxable lines, portal or autopay fields, and caller fields started_at_time, finished_at_time, private_notes, status, or use_time_window."
 )

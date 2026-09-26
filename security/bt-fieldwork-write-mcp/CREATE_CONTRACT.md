@@ -14,9 +14,9 @@ Accepted:
 - `status` when present: `active`, `inactive`, `financial_hold`, `sent_to_collections`. Omitted status is sent as `active`.
 - Optional billing fields from the create spec: `billing_name`, `billing_attention`, `billing_street`, `billing_street2`, `billing_city`, `billing_state`, `billing_zip`, `billing_county`, `billing_term_id`, `billing_phone`, `billing_phone_ext`, `billing_phone_note`, `billing_phone_kind` (`Home`, `Office`, `Mobile`, `Fax`, `Other`), and the billing phone arrays
 - `note`
-- `primary_email` is accepted as caller intent and is not posted. The customer write spec has no `invoice_email`. A caller key named `invoice_email` is `unknown_field`.
+- `primary_email` is not a customer POST field. After the customer and Main Location exist, one PATCH sends only `customer[invoice_email]`. That PATCH returned HTTP 200 on 2026-09-25 at 17:02 Eastern, and the same-as-billing Main Location email copied it. A different location email is a later location PATCH. A caller key named `invoice_email` is `unknown_field`.
 - `location_email` and `location_type_id` are location PATCH fields, together with `reminders_type` `0`. `send_report_email` is not sent. Inherited true may still send a completion report after a location email is added. Inactive reminders do not disable every notice.
-- Name and phone are the only documented duplicate queries. A supplied email or street is `duplicate_search_incomplete` / `email_or_address_coverage_gap`.
+- Name and phone are the only documented duplicate queries. A supplied email or street stays incomplete until `acknowledge_duplicate_coverage` lists that exact gap. The acknowledgment is bound to the proposal and is not a no-duplicate result. A missing or wrong list returns `coverage_acknowledgment_required` with `field`, `required_value`, and `retry_example`. That response acknowledges unsupported or incomplete coverage. It does not assert that searches succeeded. `propose_write` includes one canonical example with `primary_email`, flat billing fields, `service_locations`, and `acknowledge_duplicate_coverage`. `contact` is only for a separately requested additional contact.
 
 ## Work order `POST /v3.1/work_orders`
 
