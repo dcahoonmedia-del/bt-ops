@@ -417,6 +417,7 @@ def load_catalog(client: Any, template_id: int | None, *, configured_template_id
         "invoice_generation_disclosed": True,
         "invoice_generation_reason": "billing_frequency_0_normal_invoice_generation" if auto is None else "auto_generates_invoice" if auto is True else "billing_frequency_0_normal_invoice_generation",
         "auto_generates_invoice": auto,
+        "services": services,
     }
 
 
@@ -442,11 +443,32 @@ def apply_catalog(appointment: dict[str, Any], catalog: dict[str, Any]) -> dict[
     sent_line = dict(line)
     supplied = appointment.get("line_items_attributes")
     price_source = "template_standard"
-    if supplied is not None:
+    standard_price = line["price"]
+    price_basis = "template"
+    price_resolution = None
+    if supplied is not None and _is_other_service_line(supplied, line):
+        resolved = _resolve_service_catalog_line(supplied[0], catalog, template_price=line["price"])
+        sent_line = resolved["sent_line"]
+        price_source = resolved["price_source"]
+        standard_price = resolved["standard_price"]
+        price_basis = "service_catalog"
+        price_resolution = resolved["price_resolution"]
+    elif supplied is not None:
         if not _line_identity_equal(supplied, sent_line):
             raise GateError(GATE_CATALOG, reason="caller_line_disagrees_with_template")
         sent_line["price"] = money_number(supplied[0]["price"])
         price_source = "caller"
+        if not money_equal(sent_line["price"], line["price"]):
+            price_resolution = _price_resolution(
+                service_name=line.get("name"),
+                payable_id=line.get("payable_id"),
+                catalog_price=line["price"],
+                template_price=line["price"],
+                caller_price=sent_line["price"],
+                final_price=sent_line["price"],
+                price_source="caller",
+                override=True,
+            )
     source = dict(appointment["appointment_occurrences_attributes"][0])
     starts = source.pop("_starts", None) or {}
     occurrence = {key: source[key] for key in ("service_route_ids", "starts_at", "duration", "instructions", "production_value") if key in source}
@@ -470,7 +492,7 @@ def apply_catalog(appointment: dict[str, Any], catalog: dict[str, Any]) -> dict[
     total = money(sent_line["quantity"]) * money(sent_line["price"])
     line_total = int(total) if total == total.to_integral_value() else format(total, "f")
     if "production_value" not in occurrence:
-        if price_source == "caller" and not money_equal(sent_line["price"], line["price"]):
+        if price_basis == "service_catalog" or (price_source == "caller" and not money_equal(sent_line["price"], line["price"])):
             occurrence["production_value"] = line_total
         else:
             occurrence["production_value"] = money_number(defaults["production_value"])
@@ -479,9 +501,114 @@ def apply_catalog(appointment: dict[str, Any], catalog: dict[str, Any]) -> dict[
         "starts": starts,
         "line_total": line_total,
         "price": sent_line["price"],
-        "standard_price": line["price"],
+        "standard_price": standard_price,
         "price_source": price_source,
+        "price_resolution": price_resolution,
         "schedule_starts_at": schedule_starts,
+    }
+
+
+def _is_other_service_line(supplied: list[dict[str, Any]], expected: dict[str, Any]) -> bool:
+    """A different Service payable is resolved from the service catalog, not the template line."""
+    if len(supplied) != 1 or not isinstance(supplied[0], dict):
+        return False
+    left = supplied[0]
+    if left.get("type") != "service" or left.get("payable_type") != "Service" or "payable_id" not in left:
+        return False
+    return str(left.get("payable_id")) != str(expected.get("payable_id"))
+
+
+def _resolve_service_catalog_line(left: dict[str, Any], catalog: dict[str, Any], *, template_price: Any) -> dict[str, Any]:
+    """Current default is the service catalog price. Another work order's line is not that price."""
+    service, _complete = _configured_service(catalog.get("services"), left.get("payable_id"))
+    description = service.get("description")
+    if not isinstance(description, str) or not description.strip():
+        raise GateError(GATE_CATALOG, reason="service_label_is_description", payable_id=service.get("id"))
+    if left.get("name") != description or bool(left.get("taxable")):
+        raise GateError(
+            GATE_CATALOG,
+            reason="caller_line_disagrees_with_service_catalog",
+            payable_id=service.get("id"),
+            service_name=description,
+        )
+    if money(left.get("quantity")) <= 0:
+        raise GateError(GATE_CATALOG, reason="quantity_invalid", payable_id=service.get("id"))
+    catalog_price = _verified_catalog_price(service)
+    caller_price = money_number(left["price"])
+    matches = money_equal(caller_price, catalog_price)
+    sent_line = {
+        "name": description,
+        "type": "service",
+        "quantity": money_number(left.get("quantity")),
+        "price": caller_price,
+        "payable_id": service.get("id"),
+        "payable_type": "Service",
+        "taxable": False,
+    }
+    source = "service_catalog" if matches else "caller"
+    return {
+        "sent_line": sent_line,
+        "price_source": source,
+        "standard_price": catalog_price,
+        "price_resolution": _price_resolution(
+            service_name=description,
+            payable_id=service.get("id"),
+            catalog_price=catalog_price,
+            template_price=template_price,
+            caller_price=caller_price,
+            final_price=caller_price,
+            price_source=source,
+            override=not matches,
+        ),
+    }
+
+
+def _verified_catalog_price(service: dict[str, Any]) -> int | str:
+    raw = service.get("price")
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        raise GateError(
+            GATE_CATALOG,
+            reason="service_catalog_price_unverified",
+            payable_id=service.get("id"),
+            service_name=service.get("description"),
+            observed_existing_work_order_price=None,
+            historical_work_order_price_role="not_catalog_evidence",
+        )
+    try:
+        return money_number(raw)
+    except GateError:
+        raise GateError(
+            GATE_CATALOG,
+            reason="service_catalog_price_unverified",
+            payable_id=service.get("id"),
+            service_name=service.get("description"),
+            observed_existing_work_order_price=None,
+            historical_work_order_price_role="not_catalog_evidence",
+        ) from None
+
+
+def _price_resolution(
+    *,
+    service_name: Any,
+    payable_id: Any,
+    catalog_price: Any,
+    template_price: Any,
+    caller_price: Any,
+    final_price: Any,
+    price_source: str,
+    override: bool,
+) -> dict[str, Any]:
+    return {
+        "service_name": service_name,
+        "payable_id": payable_id,
+        "catalog_price": catalog_price,
+        "template_price": template_price,
+        "observed_existing_work_order_price": None,
+        "historical_work_order_price_role": "not_catalog_evidence",
+        "caller_approved_price": caller_price,
+        "final_price": final_price,
+        "price_source": price_source,
+        "override": override,
     }
 
 

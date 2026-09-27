@@ -396,6 +396,7 @@ class WriteService:
         schedule_at = str(applied.get("schedule_starts_at") or occurrence["starts_at"])
         schedule = schedule_view(self.client, schedule_at, list(occurrence["service_route_ids"]))
         template = catalog["template"]
+        sent_line = documented["service_appointment"]["line_items_attributes"][0]
         after = {
             "exists": False,
             "caller_appointment": caller["service_appointment"],
@@ -412,7 +413,8 @@ class WriteService:
             "price": applied.get("price"),
             "standard_price": applied.get("standard_price"),
             "price_source": applied.get("price_source"),
-            "service_pricing": {"name": catalog["line"].get("name"), "price": applied.get("price"), "standard_price": applied.get("standard_price"), "price_source": applied.get("price_source"), "quantity": catalog["line"].get("quantity"), "payable_id": catalog["line"].get("payable_id"), "payable_type": catalog["line"].get("payable_type"), "taxable": catalog["line"].get("taxable"), "total": applied.get("line_total"), "production_value": occurrence.get("production_value")},
+            **({} if applied.get("price_resolution") is None else {"price_resolution": applied["price_resolution"]}),
+            "service_pricing": {"name": sent_line.get("name"), "price": applied.get("price"), "standard_price": applied.get("standard_price"), "price_source": applied.get("price_source"), "quantity": sent_line.get("quantity"), "payable_id": sent_line.get("payable_id"), "payable_type": sent_line.get("payable_type"), "taxable": sent_line.get("taxable"), "total": applied.get("line_total"), "production_value": occurrence.get("production_value")},
             "auto_generates_invoice": catalog.get("auto_generates_invoice"),
             "invoice_generation_disclosed": catalog["invoice_generation_disclosed"],
             "invoice_generation_reason": catalog["invoice_generation_reason"],
