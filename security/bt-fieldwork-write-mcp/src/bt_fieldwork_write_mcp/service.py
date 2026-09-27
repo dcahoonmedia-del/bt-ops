@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
@@ -771,44 +772,81 @@ class WriteService:
         return self._finish_status_readback(proposal, attempt_id, ambiguous=ambiguous)
 
     def _finish_status_readback(self, proposal: dict[str, Any], attempt_id: str, *, ambiguous: bool) -> dict[str, Any]:
-        try:
-            row = self.client.get_work_order(str(proposal["before"]["work_order_id"]))
+        """One GET, then at most two more when that read is unavailable or still the prior status. Never PATCH again."""
+        last_status = None
+        for attempt in range(3):
+            if attempt:
+                time.sleep(0.05)
+            try:
+                row = self.client.get_work_order(str(proposal["before"]["work_order_id"]))
+            except Exception:
+                continue
             if str(row.get("id")) != str(proposal["before"]["work_order_id"]) or str(row.get("service_appointment_id")) != str(proposal["before"]["service_appointment_id"]):
-                raise GateError(GATE_IDENTITY)
-            live = self._status_snapshot(row)
-        except Exception:
-            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
-            return self._fail(GATE_AMBIGUOUS if ambiguous else "readback_unresolved", proposal_id=proposal["proposal_id"], retry=False)
-        if self._status_readback_matches(proposal, live):
-            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "success")
-            body = {
-                "ok": True,
-                "proposal_id": proposal["proposal_id"],
-                "operation": OP_UPDATE_WORK_ORDER_STATUS,
-                "live_tested": False,
-                "changed_fields": ["status"],
-                "other_fields": "not_sent",
-                "readback": {
-                    "work_order_id": live["work_order_id"],
-                    "service_appointment_id": live["service_appointment_id"],
-                    "status": live["status"],
-                    "customer_name": live["customer_name"],
-                    "location": live["location"],
-                    "starts_at": live["starts_at"],
-                    "route": live["route"],
-                },
-                "gates": self.gates(),
-            }
-            if ambiguous:
-                body["ambiguity_reconciled"] = True
-                body["retry"] = False
-            return body
-        if ambiguous and live.get("status") == proposal["before"].get("status"):
-            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "failed_no_write")
-            return self._fail(GATE_STATUS_FAILED, proposal_id=proposal["proposal_id"], retry=False, status=live.get("status"))
+                return self._status_readback_unverified(proposal, attempt_id, status=row.get("status"), readback_attempts=attempt + 1, reason="identity_mismatch")
+            try:
+                live = self._status_snapshot(row)
+            except GateError as exc:
+                if exc.gate == GATE_IDENTITY:
+                    return self._status_readback_unverified(proposal, attempt_id, readback_attempts=attempt + 1, reason="identity_mismatch")
+                continue
+            except Exception:
+                continue
+            last_status = live.get("status")
+            if self._status_readback_matches(proposal, live):
+                self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "success")
+                body = {
+                    "ok": True,
+                    "proposal_id": proposal["proposal_id"],
+                    "operation": OP_UPDATE_WORK_ORDER_STATUS,
+                    "live_tested": False,
+                    "changed_fields": ["status"],
+                    "other_fields": "not_sent",
+                    "readback_attempts": attempt + 1,
+                    "readback": {
+                        "work_order_id": live["work_order_id"],
+                        "service_appointment_id": live["service_appointment_id"],
+                        "status": live["status"],
+                        "customer_name": live["customer_name"],
+                        "location": live["location"],
+                        "starts_at": live["starts_at"],
+                        "route": live["route"],
+                    },
+                    "gates": self.gates(),
+                }
+                if ambiguous:
+                    body["ambiguity_reconciled"] = True
+                    body["retry"] = False
+                return body
+            if self._status_still_prior(proposal, live):
+                continue
+            return self._status_readback_unverified(proposal, attempt_id, status=live.get("status"), readback_attempts=attempt + 1, reason="protected_field_mismatch")
+        return self._status_readback_unverified(proposal, attempt_id, status=last_status, readback_attempts=3, reason="readback_unverified")
+
+    def _status_still_prior(self, proposal: dict[str, Any], live: dict[str, Any]) -> bool:
+        before = dict(proposal["before"])
+        current = dict(live)
+        live_status = current.pop("status", None)
+        prior = before.pop("status", None)
+        return snapshot_hash(current) == snapshot_hash(before) and str(live_status) == str(prior)
+
+    def _status_readback_unverified(
+        self,
+        proposal: dict[str, Any],
+        attempt_id: str,
+        *,
+        status: Any = None,
+        readback_attempts: int,
+        reason: str,
+    ) -> dict[str, Any]:
         self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
-        gate = "ambiguous_remote_write_no_retry" if ambiguous else GATE_READBACK
-        return self._fail(gate, proposal_id=proposal["proposal_id"], retry=False, status=live.get("status"))
+        return self._fail(
+            GATE_AMBIGUOUS,
+            proposal_id=proposal["proposal_id"],
+            retry=False,
+            status=status,
+            readback_attempts=readback_attempts,
+            reason=reason,
+        )
 
     def _persist_proposal(
         self,

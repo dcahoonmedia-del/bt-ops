@@ -1466,7 +1466,7 @@ class TypedFieldworkClient:
         if status >= 500:
             raise AmbiguousWriteError(f"remote_{status}")
         if status == 204:
-            raise AmbiguousWriteError("empty_status_response")
+            return {}
         if status != 200:
             raise GateError("work_order_patch_rejected", status=status)
         return payload if isinstance(payload, dict) else {}
