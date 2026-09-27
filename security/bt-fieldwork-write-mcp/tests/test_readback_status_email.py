@@ -377,8 +377,8 @@ class ReadbackStatusEmailTests(unittest.TestCase):
         self.assertEqual(proposed["after"]["only_change"], "status")
         self.assertNotIn("starts_at", proposed["after"])
         self.assertNotIn("instructions", proposed["after"])
-        catalog = [call for call in self.h.transport.calls if call["path"] == "/statuses/i18n_statuses"]
-        self.assertEqual(catalog[-1]["query"], {"entity_type": "appointment_occurrence"})
+        catalog = [call for call in self.h.transport.calls if call["path"] == "/statuses"]
+        self.assertIsNone(catalog[-1]["query"])
         self.assertEqual(self._status_patches(), [])
         self._drop(proposed)
 
@@ -389,8 +389,15 @@ class ReadbackStatusEmailTests(unittest.TestCase):
         )
         self.assertTrue(missed["ok"], missed)
         self.assertEqual(missed["after"]["status"], "Missed")
-        self.assertEqual(missed["after"]["status_write"], "Missed Appointment")
+        self.assertEqual(missed["after"]["status_write"], "Missed")
         self._drop(missed)
+        labeled = self.h.service.propose(
+            "update_work_order_status",
+            {"work_order_id": 8210, "service_appointment_id": 1501, "status": "Missed Appointment"},
+            IDENTITY,
+        )
+        self.assertEqual(labeled["after"]["status_write"], "Missed")
+        self._drop(labeled)
 
         flagged = self.h.service.propose(
             "update_work_order_status",
@@ -550,40 +557,58 @@ class ReadbackStatusEmailTests(unittest.TestCase):
             IDENTITY,
         )
         failed = self._execute(unchanged)
-        self.assertEqual(failed["gate"], GATE_STATUS_FAILED)
+        self.assertEqual(failed["gate"], "ambiguous_remote_write_no_retry")
         self.assertEqual(failed["retry"], False)
+        self.assertEqual(failed["readback_attempts"], 3)
         self.assertEqual(self.h.transport.work_orders["8210"]["status"], "Scheduled")
+        stored = self.h.store.get_proposal(unchanged["proposal_id"])
+        self.assertEqual(stored["status"], "ambiguous")
+        self.assertTrue(self.h.store.has_ambiguous(stored["subject_key"]))
         patches = len(self._status_patches())
         self.h.service.execute(unchanged["proposal_id"], IDENTITY, operator_approval="unused")
         self.assertEqual(len(self._status_patches()), patches)
+        blocked = self.h.service.propose(
+            "update_work_order_status",
+            {"work_order_id": 8210, "service_appointment_id": 1501, "status": "Flagged"},
+            IDENTITY,
+        )
+        self.assertEqual(blocked["gate"], "ambiguous_remote_write_no_retry")
+        self.assertEqual(len(self._status_patches()), patches)
 
+        self.h.transport.work_orders["8211"] = dict(self.h.transport.work_orders["8210"])
+        self.h.transport.work_orders["8211"]["id"] = 8211
+        self.h.transport.work_orders["8211"]["service_appointment_id"] = 1502
+        self.h.transport.work_orders["8211"]["status"] = "Scheduled"
         original = self.h.transport.request
 
         seen = {"patch": False}
 
         def hide_readback(method, path, body=None, query=None):
-            if method == "PATCH" and path == "/work_orders/1501":
+            if method == "PATCH" and path == "/work_orders/1502":
                 seen["patch"] = True
-            if method == "GET" and path == "/work_orders/8210" and seen["patch"]:
+            if method == "GET" and path == "/work_orders/8211" and seen["patch"]:
                 raise GateError("transport_error")
             return original(method, path, body, query)
 
         self.h.transport.write_mode = "timeout_after_apply"
-        self.h.transport.work_orders["8210"]["status"] = "Scheduled"
         hidden = self.h.service.propose(
             "update_work_order_status",
-            {"work_order_id": 8210, "service_appointment_id": 1501, "status": "Today - Anytime"},
+            {"work_order_id": 8211, "service_appointment_id": 1502, "status": "Today - Anytime"},
             IDENTITY,
         )
-        before_patches = len(self._status_patches())
+        def appointment_patches(path: str) -> list:
+            return [call for call in self.h.transport.calls if call["method"] == "PATCH" and call["path"] == path]
+
+        before_patches = len(appointment_patches("/work_orders/1502"))
         self.h.transport.request = hide_readback
         ambiguous = self._execute(hidden)
         self.assertEqual(ambiguous["gate"], "ambiguous_remote_write_no_retry")
         self.assertEqual(ambiguous["retry"], False)
-        self.assertEqual(len(self._status_patches()), before_patches + 1)
+        self.assertEqual(ambiguous["readback_attempts"], 3)
+        self.assertEqual(len(appointment_patches("/work_orders/1502")), before_patches + 1)
         self.h.transport.request = original
         self.h.service.execute(hidden["proposal_id"], IDENTITY, operator_approval="unused")
-        self.assertEqual(len(self._status_patches()), before_patches + 1)
+        self.assertEqual(len(appointment_patches("/work_orders/1502")), before_patches + 1)
 
     def test_status_api_rejection_is_not_retried(self) -> None:
         self._status_row()
@@ -609,6 +634,182 @@ class ReadbackStatusEmailTests(unittest.TestCase):
         self.assertEqual(len(self._status_patches()), 1)
         self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval="unused")
         self.assertEqual(len(self._status_patches()), 1)
+
+    def test_status_204_and_timeout_wait_for_exact_readback_without_another_patch(self) -> None:
+        self._status_row()
+        original = self.h.transport.request
+
+        def lagging(*, empty=False, errors=0, stale=0, mutate=None):
+            state = {"patched": False, "reads": 0}
+
+            def request(method, path, body=None, query=None):
+                if method == "PATCH" and path == "/work_orders/1501":
+                    state["patched"] = True
+                    if empty:
+                        status, payload = original(method, path, body, query)
+                        return 204, None if status == 200 else (status, payload)
+                    return original(method, path, body, query)
+                if method == "GET" and path == "/work_orders/8210" and state["patched"]:
+                    state["reads"] += 1
+                    if state["reads"] <= errors:
+                        raise GateError("transport_error")
+                    status, payload = original(method, path, body, query)
+                    if state["reads"] <= errors + stale and isinstance(payload, dict):
+                        occurrence = dict(payload["appointment_occurrence"])
+                        occurrence["status"] = "Scheduled"
+                        if mutate:
+                            mutate(occurrence)
+                        return status, {"appointment_occurrence": occurrence}
+                    if mutate and isinstance(payload, dict):
+                        occurrence = dict(payload["appointment_occurrence"])
+                        mutate(occurrence)
+                        return status, {"appointment_occurrence": occurrence}
+                    return status, payload
+                return original(method, path, body, query)
+
+            return request
+
+        self.h.transport.request = lagging(empty=True, stale=2)
+        proposed = self.h.service.propose(
+            "update_work_order_status",
+            {"work_order_id": 8210, "service_appointment_id": 1501, "status": "Today - Anytime"},
+            IDENTITY,
+        )
+        done = self._execute(proposed)
+        self.assertTrue(done["ok"], done)
+        self.assertNotIn("ambiguity_reconciled", done)
+        self.assertEqual(done["readback_attempts"], 3)
+        self.assertEqual(done["readback"]["status"], "Today - Anytime")
+        self.assertEqual(done["readback"]["work_order_id"], "8210")
+        self.assertEqual(done["readback"]["service_appointment_id"], "1501")
+        self.assertEqual(len(self._status_patches()), 1)
+        self.assertEqual(self.h.transport.work_orders["8210"]["instructions"], "gate")
+        self.assertEqual(self.h.transport.work_orders["8210"]["status"], "Today - Anytime")
+
+        self.h.transport.request = original
+        self.h.transport.work_orders["8210"]["status"] = "Scheduled"
+        self.h.transport.write_mode = "timeout_after_apply"
+        self.h.transport.request = lagging(errors=2)
+        delayed = self.h.service.propose(
+            "update_work_order_status",
+            {"work_order_id": 8210, "service_appointment_id": 1501, "status": "Today - Anytime"},
+            IDENTITY,
+        )
+        reconciled = self._execute(delayed)
+        self.assertTrue(reconciled["ok"], reconciled)
+        self.assertTrue(reconciled["ambiguity_reconciled"])
+        self.assertEqual(reconciled["retry"], False)
+        self.assertEqual(reconciled["readback_attempts"], 3)
+        self.assertEqual(reconciled["readback"]["status"], "Today - Anytime")
+        self.assertEqual(len(self._status_patches()), 2)
+
+        self.h.transport.request = original
+        self.h.transport.write_mode = "ok"
+        self.h.transport.work_orders["8212"] = dict(self.h.transport.work_orders["8210"])
+        self.h.transport.work_orders["8212"]["id"] = 8212
+        self.h.transport.work_orders["8212"]["service_appointment_id"] = 1503
+        self.h.transport.work_orders["8212"]["status"] = "Scheduled"
+        self.h.transport.work_orders["8212"]["instructions"] = "gate"
+
+        def stuck_old(method, path, body=None, query=None):
+            status, payload = original(method, path, body, query)
+            if method == "PATCH" and path == "/work_orders/1503" and status == 200:
+                return 204, None
+            if method == "GET" and path == "/work_orders/8212" and any(
+                call["method"] == "PATCH" and call["path"] == "/work_orders/1503" for call in self.h.transport.calls
+            ):
+                occurrence = dict(payload["appointment_occurrence"])
+                occurrence["status"] = "Scheduled"
+                return status, {"appointment_occurrence": occurrence}
+            return status, payload
+
+        self.h.transport.request = stuck_old
+        held = self.h.service.propose(
+            "update_work_order_status",
+            {"work_order_id": 8212, "service_appointment_id": 1503, "status": "Today - Anytime"},
+            IDENTITY,
+        )
+        unverified = self._execute(held)
+        self.assertEqual(unverified["gate"], "ambiguous_remote_write_no_retry")
+        self.assertEqual(unverified["reason"], "readback_unverified")
+        self.assertEqual(unverified["retry"], False)
+        self.assertEqual(unverified["readback_attempts"], 3)
+        self.assertNotEqual(unverified["gate"], GATE_STATUS_FAILED)
+        stored = self.h.store.get_proposal(held["proposal_id"])
+        self.assertEqual(stored["status"], "ambiguous")
+        self.assertTrue(self.h.store.has_ambiguous(stored["subject_key"]))
+        self.assertEqual(self.h.transport.work_orders["8212"]["status"], "Today - Anytime")
+        patches = [call for call in self.h.transport.calls if call["method"] == "PATCH" and call["path"] == "/work_orders/1503"]
+        replay = self.h.service.execute(held["proposal_id"], IDENTITY, operator_approval="unused")
+        self.assertEqual(replay["gate"], "ambiguous_remote_write_no_retry")
+        again = self.h.service.propose(
+            "update_work_order_status",
+            {"work_order_id": 8212, "service_appointment_id": 1503, "status": "Flagged"},
+            IDENTITY,
+        )
+        self.assertEqual(again["gate"], "ambiguous_remote_write_no_retry")
+        self.assertEqual(len([call for call in self.h.transport.calls if call["method"] == "PATCH" and call["path"] == "/work_orders/1503"]), len(patches))
+
+        self.h.transport.request = original
+        self.h.transport.work_orders["8213"] = dict(self.h.transport.work_orders["8210"])
+        self.h.transport.work_orders["8213"]["id"] = 8213
+        self.h.transport.work_orders["8213"]["service_appointment_id"] = 1504
+        self.h.transport.work_orders["8213"]["status"] = "Scheduled"
+
+        def wrong_identity(method, path, body=None, query=None):
+            status, payload = original(method, path, body, query)
+            if method == "PATCH" and path == "/work_orders/1504" and status == 200:
+                return 204, None
+            if method == "GET" and path == "/work_orders/8213" and isinstance(payload, dict) and payload.get("appointment_occurrence", {}).get("status") == "Today - Anytime":
+                occurrence = dict(payload["appointment_occurrence"])
+                occurrence["service_appointment_id"] = 9999
+                return status, {"appointment_occurrence": occurrence}
+            return status, payload
+
+        self.h.transport.request = wrong_identity
+        mismatched = self.h.service.propose(
+            "update_work_order_status",
+            {"work_order_id": 8213, "service_appointment_id": 1504, "status": "Today - Anytime"},
+            IDENTITY,
+        )
+        rejected = self._execute(mismatched)
+        self.assertFalse(rejected["ok"])
+        self.assertEqual(rejected["reason"], "identity_mismatch")
+        self.assertEqual(rejected["readback_attempts"], 1)
+        self.assertTrue(self.h.store.has_ambiguous(self.h.store.get_proposal(mismatched["proposal_id"])["subject_key"]))
+        identity_patches = [call for call in self.h.transport.calls if call["method"] == "PATCH" and call["path"] == "/work_orders/1504"]
+        self.assertEqual(len(identity_patches), 1)
+
+        self.h.transport.request = original
+        self.h.transport.work_orders["8214"] = dict(self.h.transport.work_orders["8210"])
+        self.h.transport.work_orders["8214"]["id"] = 8214
+        self.h.transport.work_orders["8214"]["service_appointment_id"] = 1505
+        self.h.transport.work_orders["8214"]["status"] = "Scheduled"
+        self.h.transport.work_orders["8214"]["instructions"] = "gate"
+
+        def changed_instructions(method, path, body=None, query=None):
+            status, payload = original(method, path, body, query)
+            if method == "PATCH" and path == "/work_orders/1505" and status == 200:
+                return 204, None
+            if method == "GET" and path == "/work_orders/8214" and isinstance(payload, dict) and payload.get("appointment_occurrence", {}).get("status") == "Today - Anytime":
+                occurrence = dict(payload["appointment_occurrence"])
+                occurrence["instructions"] = "changed"
+                return status, {"appointment_occurrence": occurrence}
+            return status, payload
+
+        self.h.transport.request = changed_instructions
+        drifted = self.h.service.propose(
+            "update_work_order_status",
+            {"work_order_id": 8214, "service_appointment_id": 1505, "status": "Today - Anytime"},
+            IDENTITY,
+        )
+        kept = self._execute(drifted)
+        self.assertFalse(kept["ok"])
+        self.assertEqual(kept["reason"], "protected_field_mismatch")
+        self.assertEqual(kept["readback_attempts"], 1)
+        self.assertEqual(len([call for call in self.h.transport.calls if call["method"] == "PATCH" and call["path"] == "/work_orders/1505"]), 1)
+        self.assertTrue(self.h.store.has_ambiguous(self.h.store.get_proposal(drifted["proposal_id"])["subject_key"]))
+        self.assertEqual(self.h.transport.work_orders["8214"]["instructions"], "gate")
 
     def test_primary_email_patch_is_one_customer_write_and_verified(self) -> None:
         customer = self.h.transport.customers["41"]
@@ -758,12 +959,17 @@ class ReadbackStatusEmailTests(unittest.TestCase):
         self.assertEqual(status["method"], "PATCH")
         self.assertEqual(status["status_value"], "catalog_string")
         self.assertEqual(status["other_fields"], "not_sent")
+        self.assertTrue(status["catalog_response_live_verified"])
+        self.assertEqual(status["transitions"], "not_in_spec")
+        self.assertEqual(status["catalog"], "GET /v3.1/statuses")
+        self.assertTrue(status["i18n_is_not_the_write_catalog"])
+        self.assertEqual(status["readback_reconciliation"], "immediate_plus_two_reads_no_replay")
         phone = gates["update_customer_phone"]
         self.assertFalse(phone["implemented"])
         self.assertEqual(phone["reason"], "no_verified_billing_phone_patch_helper")
         server = build_mcp(self.h.service, self.h.settings, JwtTokenVerifier(self.h.settings))
         tools = asyncio.run(server.list_tools())
-        self.assertEqual(len(tools), 14)
+        self.assertEqual(len(tools), 17)
         propose = next(tool for tool in tools if tool.name == "propose_write")
         self.assertEqual(propose.description, PROPOSE_DESCRIPTION)
         text = propose.description

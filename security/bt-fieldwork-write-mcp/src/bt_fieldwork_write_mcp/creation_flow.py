@@ -10,9 +10,11 @@ from typing import Any
 from .allowlist import (
     GATE_ADDRESS,
     GATE_CATALOG,
+    GATE_CONTACT,
     GATE_DISTINCT_IDS,
     GATE_DUPLICATE_SEARCH,
     GATE_DUPLICATE_UNRESOLVED,
+    GATE_IDENTITY,
     GATE_PARTIAL,
     GATE_READBACK,
     GATE_RECURRING,
@@ -24,6 +26,10 @@ from .allowlist import (
 )
 from .create_contract import response_id
 from .errors import AmbiguousWriteError, GateError
+from .fieldwork import service_active_eligibility, service_catalog_record
+
+PRICE_CATALOG = "catalog/default"
+PRICE_OVERRIDE = "explicit_approved_override"
 
 _WORD = re.compile(r"[a-z0-9]+")
 
@@ -410,13 +416,14 @@ def load_catalog(client: Any, template_id: int | None, *, configured_template_id
         "defaults": defaults,
         "line": normalized,
         "observed_line": line,
-        "service": {"id": service.get("id"), "description": service.get("description"), "price": service.get("price"), "category": service.get("category"), "account_id": service.get("account_id")},
+        "service": {"id": service.get("id"), "description": service.get("description"), "price": service.get("price"), "category": service.get("category"), "account_id": service.get("account_id"), "active_eligibility": service_active_eligibility(service)},
         "service_list_complete": service_list_complete,
         "service_list_caveat": None if service_list_complete else "exact_service_id_only_list_not_complete",
         "billing_frequency": money_number(template.get("billing_frequency")),
         "invoice_generation_disclosed": True,
         "invoice_generation_reason": "billing_frequency_0_normal_invoice_generation" if auto is None else "auto_generates_invoice" if auto is True else "billing_frequency_0_normal_invoice_generation",
         "auto_generates_invoice": auto,
+        "services": services,
     }
 
 
@@ -429,6 +436,11 @@ def _configured_service(services: dict[str, Any], payable_id: Any) -> tuple[dict
         raise GateError(GATE_CATALOG, reason="service_id_conflict")
     complete = bool(services.get("complete")) and not services.get("repeated_page") and not services.get("truncated")
     if len(matches) == 1:
+        eligibility = service_active_eligibility(matches[0])
+        if eligibility == "inactive":
+            raise GateError(GATE_CATALOG, reason="service_inactive", payable_id=matches[0].get("id"), active_eligibility="inactive", active_flag_fabricated=False, list_membership_proves_active=False)
+        if eligibility == "contradictory":
+            raise GateError(GATE_CATALOG, reason="service_eligibility_contradictory", payable_id=matches[0].get("id"), active_eligibility="contradictory", active_flag_fabricated=False, list_membership_proves_active=False)
         return matches[0], complete
     if not complete:
         raise GateError(GATE_CATALOG, reason="service_list_incomplete")
@@ -441,22 +453,64 @@ def apply_catalog(appointment: dict[str, Any], catalog: dict[str, Any]) -> dict[
     line = catalog["line"]
     sent_line = dict(line)
     supplied = appointment.get("line_items_attributes")
-    price_source = "template_standard"
-    if supplied is not None:
+    price_source = PRICE_CATALOG
+    standard_price = line["price"]
+    inherit_template_defaults = True
+    price_resolution = None
+    chosen_service = catalog.get("service")
+    if supplied is not None and _is_other_service_line(supplied, line):
+        resolved = _resolve_service_catalog_line(supplied[0], catalog, template_price=line["price"])
+        sent_line = resolved["sent_line"]
+        price_source = resolved["price_source"]
+        standard_price = resolved["standard_price"]
+        inherit_template_defaults = False
+        price_resolution = resolved["price_resolution"]
+        chosen_service = resolved["service_record"]
+    elif supplied is not None:
         if not _line_identity_equal(supplied, sent_line):
             raise GateError(GATE_CATALOG, reason="caller_line_disagrees_with_template")
         sent_line["price"] = money_number(supplied[0]["price"])
-        price_source = "caller"
+        if money_equal(sent_line["price"], line["price"]):
+            price_source = PRICE_CATALOG
+        else:
+            price_source = PRICE_OVERRIDE
+            price_resolution = _price_resolution(
+                service_name=line.get("name"),
+                payable_id=line.get("payable_id"),
+                catalog_price=line["price"],
+                template_price=line["price"],
+                caller_price=sent_line["price"],
+                final_price=sent_line["price"],
+                price_source=PRICE_OVERRIDE,
+                override=True,
+            )
     source = dict(appointment["appointment_occurrences_attributes"][0])
     starts = source.pop("_starts", None) or {}
-    occurrence = {key: source[key] for key in ("service_route_ids", "starts_at", "duration", "instructions", "production_value") if key in source}
-    if "duration" not in occurrence:
-        occurrence["duration"] = defaults["duration"]
-    if "instructions" not in occurrence:
-        occurrence["instructions"] = defaults["instructions"]
+    occurrence = {key: source[key] for key in ("service_route_ids", "starts_at", "duration", "instructions", "production_value", "callback") if key in source}
+    if inherit_template_defaults:
+        if "duration" not in occurrence:
+            occurrence["duration"] = defaults["duration"]
+        if "instructions" not in occurrence:
+            occurrence["instructions"] = defaults["instructions"]
+        duration_source = "explicit" if "duration" in source else "template_default"
+        instructions_source = "explicit" if "instructions" in source else "template_default"
+    else:
+        missing = [key for key in ("duration", "instructions") if key not in occurrence]
+        if missing:
+            raise GateError("missing_field", fields=missing, reason="generic_service_does_not_inherit_template_defaults")
+        duration_source = "explicit"
+        instructions_source = "explicit"
     schedule_starts = occurrence["starts_at"]
     if starts.get("kind") == "offset_timestamp":
         occurrence["starts_at"] = starts["calendar_date"]
+    if "production_value" in source:
+        production_source = "explicit_approved"
+    elif inherit_template_defaults:
+        occurrence["production_value"] = money_number(defaults["production_value"])
+        production_source = "template_default"
+    else:
+        production_source = "omitted_remote_default_unverified"
+    callback_source = "explicit_approved" if "callback" in source else "not_sent"
     body = {
         "customer_id": appointment["customer_id"],
         "service_location_id": appointment["service_location_id"],
@@ -469,19 +523,257 @@ def apply_catalog(appointment: dict[str, Any], catalog: dict[str, Any]) -> dict[
         raise GateError("unknown_field", fields=["repeat_period"])
     total = money(sent_line["quantity"]) * money(sent_line["price"])
     line_total = int(total) if total == total.to_integral_value() else format(total, "f")
-    if "production_value" not in occurrence:
-        if price_source == "caller" and not money_equal(sent_line["price"], line["price"]):
-            occurrence["production_value"] = line_total
-        else:
-            occurrence["production_value"] = money_number(defaults["production_value"])
     return {
         "service_appointment": body,
         "starts": starts,
         "line_total": line_total,
         "price": sent_line["price"],
-        "standard_price": line["price"],
+        "standard_price": standard_price,
         "price_source": price_source,
+        "price_resolution": price_resolution,
         "schedule_starts_at": schedule_starts,
+        "production_source": production_source,
+        "production_sent": "production_value" in occurrence,
+        "callback_source": callback_source,
+        "callback_sent": "callback" in occurrence,
+        "duration_source": duration_source,
+        "instructions_source": instructions_source,
+        "service_record": chosen_service,
+        "active_eligibility": ((chosen_service or {}).get("active_eligibility") or "unverified") if isinstance(chosen_service, dict) else "unverified",
+    }
+
+
+def _is_other_service_line(supplied: list[dict[str, Any]], expected: dict[str, Any]) -> bool:
+    """A different Service payable is resolved from the service catalog, not the template line."""
+    if len(supplied) != 1 or not isinstance(supplied[0], dict):
+        return False
+    left = supplied[0]
+    if left.get("type") != "service" or left.get("payable_type") != "Service" or "payable_id" not in left:
+        return False
+    return str(left.get("payable_id")) != str(expected.get("payable_id"))
+
+
+def _resolve_service_catalog_line(left: dict[str, Any], catalog: dict[str, Any], *, template_price: Any) -> dict[str, Any]:
+    """Current default is the service catalog price. Another work order's line is not that price."""
+    service, _complete = _configured_service(catalog.get("services"), left.get("payable_id"))
+    description = service.get("description")
+    if not isinstance(description, str) or not description.strip():
+        raise GateError(GATE_CATALOG, reason="service_label_is_description", payable_id=service.get("id"))
+    if left.get("name") != description or bool(left.get("taxable")):
+        raise GateError(
+            GATE_CATALOG,
+            reason="caller_line_disagrees_with_service_catalog",
+            payable_id=service.get("id"),
+            service_name=description,
+        )
+    if money(left.get("quantity")) <= 0:
+        raise GateError(GATE_CATALOG, reason="quantity_invalid", payable_id=service.get("id"))
+    catalog_price = _verified_catalog_price(service)
+    caller_price = money_number(left["price"])
+    matches = money_equal(caller_price, catalog_price)
+    sent_line = {
+        "name": description,
+        "type": "service",
+        "quantity": money_number(left.get("quantity")),
+        "price": caller_price,
+        "payable_id": service.get("id"),
+        "payable_type": "Service",
+        "taxable": False,
+    }
+    source = PRICE_CATALOG if matches else PRICE_OVERRIDE
+    return {
+        "sent_line": sent_line,
+        "price_source": source,
+        "standard_price": catalog_price,
+        "service_record": service_catalog_record(service, catalog.get("services") or {}),
+        "price_resolution": _price_resolution(
+            service_name=description,
+            payable_id=service.get("id"),
+            catalog_price=catalog_price,
+            template_price=template_price,
+            caller_price=caller_price,
+            final_price=caller_price,
+            price_source=source,
+            override=not matches,
+        ),
+    }
+
+
+def _verified_catalog_price(service: dict[str, Any]) -> int | str:
+    raw = service.get("price")
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        raise GateError(
+            GATE_CATALOG,
+            reason="service_catalog_price_unverified",
+            payable_id=service.get("id"),
+            service_name=service.get("description"),
+            observed_existing_work_order_price=None,
+            historical_work_order_price_role="not_catalog_evidence",
+        )
+    try:
+        return money_number(raw)
+    except GateError:
+        raise GateError(
+            GATE_CATALOG,
+            reason="service_catalog_price_unverified",
+            payable_id=service.get("id"),
+            service_name=service.get("description"),
+            observed_existing_work_order_price=None,
+            historical_work_order_price_role="not_catalog_evidence",
+        ) from None
+
+
+def _generic_service_line(appointment: dict[str, Any], configured_service_id: str) -> dict[str, Any] | None:
+    """A Service payable other than the configured PestGuard service. Fee lines stay on the template."""
+    supplied = appointment.get("line_items_attributes")
+    if not isinstance(supplied, list) or len(supplied) != 1 or not isinstance(supplied[0], dict):
+        return None
+    left = supplied[0]
+    configured = str(configured_service_id or "").strip()
+    if not configured or left.get("type") != "service" or left.get("payable_type") != "Service" or "payable_id" not in left:
+        return None
+    if str(left.get("payable_id")) == configured:
+        return None
+    return left
+
+
+def _prepare_generic_service(client: Any, appointment: dict[str, Any], line: dict[str, Any]) -> dict[str, Any]:
+    """Build one generic Service body from the caller and GET /services. The PestGuard template is not read."""
+    services = client.list_services()
+    service, complete = _configured_service(services, line.get("payable_id"))
+    if "repeat_period" not in appointment:
+        raise GateError("missing_field", fields=["repeat_period"], reason="generic_service_repeat_period_required")
+    period = appointment.get("repeat_period")
+    if isinstance(period, bool) or not isinstance(period, int):
+        raise GateError("unknown_field", fields=["repeat_period"])
+    source = dict(appointment["appointment_occurrences_attributes"][0])
+    starts = source.pop("_starts", None) or {}
+    occurrence = {key: source[key] for key in ("service_route_ids", "starts_at", "duration", "instructions", "production_value", "callback") if key in source}
+    missing = [key for key in ("duration", "instructions") if key not in occurrence]
+    if missing:
+        raise GateError("missing_field", fields=missing, reason="generic_service_does_not_inherit_template_defaults")
+    schedule_starts = occurrence["starts_at"]
+    if starts.get("kind") == "offset_timestamp":
+        occurrence["starts_at"] = starts["calendar_date"]
+    production_source = "explicit_approved" if "production_value" in source else "omitted_remote_default_unverified"
+    callback_source = "explicit_approved" if "callback" in source else "not_sent"
+    resolved = _resolve_service_catalog_line(line, {"services": services}, template_price=None)
+    sent_line = resolved["sent_line"]
+    body = {
+        "customer_id": appointment["customer_id"],
+        "service_location_id": appointment["service_location_id"],
+        "repeat_type": "none",
+        "repeat_period": period,
+        "line_items_attributes": [sent_line],
+        "appointment_occurrences_attributes": [occurrence],
+    }
+    total = money(sent_line["quantity"]) * money(sent_line["price"])
+    line_total = int(total) if total == total.to_integral_value() else format(total, "f")
+    record = resolved["service_record"]
+    eligibility = record.get("active_eligibility") or service_active_eligibility(service)
+    catalog_line = {
+        "name": sent_line["name"],
+        "type": "service",
+        "quantity": sent_line["quantity"],
+        "price": resolved["standard_price"],
+        "payable_id": sent_line["payable_id"],
+        "payable_type": "Service",
+        "taxable": False,
+    }
+    return {
+        "applied": {
+            "service_appointment": body,
+            "starts": starts,
+            "line_total": line_total,
+            "price": sent_line["price"],
+            "standard_price": resolved["standard_price"],
+            "price_source": resolved["price_source"],
+            "price_resolution": resolved["price_resolution"],
+            "schedule_starts_at": schedule_starts,
+            "production_source": production_source,
+            "production_sent": "production_value" in occurrence,
+            "callback_source": callback_source,
+            "callback_sent": "callback" in occurrence,
+            "duration_source": "explicit",
+            "instructions_source": "explicit",
+            "service_record": record,
+            "active_eligibility": eligibility,
+        },
+        "catalog": {
+            "template": None,
+            "defaults": None,
+            "line": catalog_line,
+            "observed_line": None,
+            "service": {"id": service.get("id"), "description": service.get("description"), "price": service.get("price"), "active_eligibility": eligibility},
+            "service_list_complete": complete,
+            "service_list_caveat": None if complete else "exact_service_id_only_list_not_complete",
+            "billing_frequency": None,
+            "invoice_generation_disclosed": True,
+            "invoice_generation_reason": "not_in_service_catalog",
+            "auto_generates_invoice": None,
+        },
+        "template_consulted": False,
+        "execution_blocked": True,
+        "execution_block_reason": "service_selectability_unverified",
+        "selectability_source": "not_in_get_services",
+        "list_membership_proves_active": False,
+        "path": "generic_service",
+    }
+
+
+def prepare_work_order(
+    client: Any,
+    appointment: dict[str, Any],
+    template_id: int | None,
+    *,
+    configured_template_id: str = "",
+    configured_service_id: str = "",
+) -> dict[str, Any]:
+    """PestGuard stays on its template. Any other Service uses only the service list and the request."""
+    generic = _generic_service_line(appointment, configured_service_id)
+    if generic is not None:
+        return _prepare_generic_service(client, appointment, generic)
+    catalog = load_catalog(
+        client,
+        template_id,
+        configured_template_id=configured_template_id,
+        configured_service_id=configured_service_id,
+    )
+    applied = apply_catalog(appointment, catalog)
+    return {
+        "applied": applied,
+        "catalog": catalog,
+        "template_consulted": True,
+        "execution_blocked": False,
+        "execution_block_reason": None,
+        "selectability_source": "pestguard_initial_template",
+        "list_membership_proves_active": False,
+        "path": "pestguard_template",
+    }
+
+
+def _price_resolution(
+    *,
+    service_name: Any,
+    payable_id: Any,
+    catalog_price: Any,
+    template_price: Any,
+    caller_price: Any,
+    final_price: Any,
+    price_source: str,
+    override: bool,
+) -> dict[str, Any]:
+    return {
+        "service_name": service_name,
+        "payable_id": payable_id,
+        "catalog_price": catalog_price,
+        "template_price": template_price,
+        "observed_existing_work_order_price": None,
+        "historical_work_order_price_role": "not_catalog_evidence",
+        "caller_approved_price": caller_price,
+        "final_price": final_price,
+        "price_source": price_source,
+        "override": override,
     }
 
 
@@ -578,6 +870,9 @@ def journal_partial(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 partial["reason"] = result["reason"]
             if result.get("field"):
                 partial["field"] = result["field"]
+            for key in ("mismatches", "unverified", "field_checks"):
+                if result.get(key) is not None:
+                    partial[key] = result[key]
             if result.get("response"):
                 partial["response"] = result["response"]
     partial["recovery"] = "new_exact_approved_proposal"
@@ -847,29 +1142,10 @@ def post_customer_steps(service: Any, proposal: dict[str, Any], attempt_id: str)
     contact = plan.get("contact")
     contact_id = None
     if contact:
-        if not _proposal_current(service, proposal):
-            return stop_creation(store, proposal, attempt_id)
-        already = _one_contact(client, customer_id, contact)
-        if already in {"ambiguous", "conflict"}:
-            if already == "conflict":
-                _stop_unsent(store, proposal, "contact_post", {"contact": contact}, "contact_field_conflict", customer_id=customer_id, location_id=location_id)
-            return stop_creation(store, proposal, attempt_id)
-        if already:
-            contact_id = int(already)
-        else:
-            body = {"contact": contact}
-            step_id = _step(store, proposal["proposal_id"], "contact_post", body, customer_id=customer_id, location_id=location_id)
-            response, diagnostic = _sent_write(lambda: client.create_contact(customer_id, body), client)
-            contact_id = response_id(response) if _id_status_accepted(diagnostic) else None
-            if contact_id is None:
-                found = _one_contact(client, customer_id, contact)
-                if not found or found in {"ambiguous", "conflict"}:
-                    reason = "contact_field_conflict" if found == "conflict" else "contact_post_unresolved"
-                    _ambiguous(store, step_id, customer_id=customer_id, location_id=location_id)
-                    store.finish_creation_step(step_id, "ambiguous", {"retry": False, "reason": reason, "response": _public_diagnostic(diagnostic)}, customer_id=customer_id, location_id=location_id)
-                    return stop_creation(store, proposal, attempt_id)
-                contact_id = int(found)
-            _succeed(store, step_id, {"id": contact_id, "response": _public_diagnostic(diagnostic)}, customer_id=customer_id, contact_id=str(contact_id), location_id=location_id)
+        posted = commit_contact(service, proposal, attempt_id, customer_id, contact, location_id=location_id, reject_existing=False)
+        if not posted["ok"]:
+            return posted["stopped"]
+        contact_id = posted["contact_id"]
     address = None if not plan.get("location_patch") else plan["location_patch"]["address_attributes"]
     readback = customer_readback(
         client,
@@ -1033,6 +1309,85 @@ def _prove_new_customer(client: Any, before: dict[str, Any], payload: dict[str, 
     return {"ok": True, "customer_id": customer_id, "location_id": location_id}
 
 
+def _normalize_contact_email(value: Any) -> str:
+    """Candidate detection only. Exact post-write matching still uses the stored string."""
+    return "".join(str(value or "").split()).casefold()
+
+
+def _contact_candidate(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": item.get("id"),
+        "customer_id": item.get("customer_id"),
+        "first_name": item.get("first_name"),
+        "last_name": item.get("last_name"),
+        "email": item.get("email"),
+    }
+
+
+def contact_preflight(client: Any, customer_id: str, contact: dict[str, Any]) -> dict[str, Any]:
+    """Normalized email and name candidates. A shared email is not merged into one person."""
+    try:
+        listed = client.list_contacts(customer_id)
+    except GateError:
+        raise GateError(GATE_CONTACT, reason="contact_list_incomplete", write_sent=False) from None
+    if not isinstance(listed, dict) or not listed.get("complete") or listed.get("truncated") or listed.get("repeated_page"):
+        raise GateError(GATE_CONTACT, reason="contact_list_incomplete", write_sent=False)
+    email = _normalize_contact_email(contact.get("email"))
+    first = normalize_name(contact.get("first_name"))
+    last = normalize_name(contact.get("last_name"))
+    same_person: list[dict[str, Any]] = []
+    shared_email: list[dict[str, Any]] = []
+    identity_conflicts: list[dict[str, Any]] = []
+    for item in listed.get("items") or []:
+        if not isinstance(item, dict) or _normalize_contact_email(item.get("email")) != email:
+            continue
+        shown = _contact_candidate(item)
+        if response_id({"id": item.get("id")}) is None or str(item.get("customer_id")) != str(customer_id):
+            identity_conflicts.append(shown)
+            continue
+        if normalize_name(item.get("first_name")) == first and normalize_name(item.get("last_name")) == last:
+            same_person.append(shown)
+        else:
+            shared_email.append(shown)
+    if same_person:
+        blocked = {"blocked": True, "reason": "contact_duplicate", "candidates": same_person, "merge": False, "gate": GATE_DUPLICATE_UNRESOLVED}
+        if len(same_person) == 1:
+            blocked["contact_id"] = same_person[0]["id"]
+        return blocked
+    if shared_email:
+        return {"blocked": True, "reason": "shared_email_not_merged", "candidates": shared_email, "merge": False, "gate": GATE_DUPLICATE_UNRESOLVED}
+    if identity_conflicts:
+        return {"blocked": True, "reason": "contact_field_conflict", "candidates": identity_conflicts, "merge": False, "gate": GATE_CONTACT}
+    return {"blocked": False, "candidates": [], "merge": False}
+
+
+def customer_identity_snapshot(customer: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "customer_id": str(customer.get("id")),
+        "name": customer.get("name"),
+        "status": customer.get("status"),
+        "customer_status": customer.get("customer_status"),
+    }
+
+
+def bind_standalone_customer(client: Any, customer_id: str, bound: dict[str, Any]) -> dict[str, Any]:
+    """Re-read the customer immediately before a standalone contact POST."""
+    try:
+        customer = client.get_customer(customer_id)
+    except GateError as exc:
+        if exc.gate == "customer_not_found":
+            raise GateError("customer_not_found", reason="customer_missing", customer_id=str(customer_id), write_sent=False) from exc
+        raise
+    client.reject_if_lead(customer)
+    current = customer_identity_snapshot(customer)
+    if current["customer_id"] != str(customer_id):
+        raise GateError(GATE_IDENTITY, reason="customer_identity_changed", write_sent=False)
+    for key in ("name", "status", "customer_status"):
+        if bound.get(key) != current[key]:
+            raise GateError(GATE_IDENTITY, reason="customer_identity_changed", field=key, write_sent=False)
+    return customer
+
+
 def _contact_kind(item: dict[str, Any], contact: dict[str, Any], customer_id: str) -> str:
     if str(item.get("email") or "").casefold() != str(contact.get("email") or "").casefold() or item.get("first_name") != contact.get("first_name") or item.get("last_name") != contact.get("last_name"):
         return "different"
@@ -1045,6 +1400,93 @@ def _contact_kind(item: dict[str, Any], contact: dict[str, Any], customer_id: st
         elif item.get(key) != value:
             return "conflict"
     return "match"
+
+
+def commit_contact(
+    service: Any,
+    proposal: dict[str, Any],
+    attempt_id: str,
+    customer_id: str,
+    contact: dict[str, Any],
+    *,
+    location_id: str | None,
+    reject_existing: bool,
+) -> dict[str, Any]:
+    """POST one contact, or reconcile one ambiguous response. Never send a second POST."""
+    client = service.client
+    store = service.store
+    ids = {"customer_id": customer_id, "location_id": location_id}
+    if not _proposal_current(service, proposal):
+        return {"ok": False, "stopped": stop_creation(store, proposal, attempt_id)}
+    already = _one_contact(client, customer_id, contact)
+    if already in {"ambiguous", "conflict"}:
+        if already == "conflict":
+            _stop_unsent(store, proposal, "contact_post", {"contact": contact}, "contact_field_conflict", **ids)
+        return {"ok": False, "stopped": stop_creation(store, proposal, attempt_id)}
+    if already:
+        if reject_existing:
+            _stop_unsent(store, proposal, "contact_post", {"contact": contact}, "contact_duplicate", **ids)
+            return {"ok": False, "stopped": stop_creation(store, proposal, attempt_id)}
+        return {"ok": True, "contact_id": int(already), "reused": True, "reconciled": False}
+    body = {"contact": contact}
+    step_id = _step(store, proposal["proposal_id"], "contact_post", body, **ids)
+    response, diagnostic = _sent_write(lambda: client.create_contact(customer_id, body), client)
+    contact_id = response_id(response) if _id_status_accepted(diagnostic) else None
+    reconciled = False
+    if contact_id is None:
+        found = _one_contact(client, customer_id, contact)
+        if not found or found in {"ambiguous", "conflict"}:
+            reason = "contact_field_conflict" if found == "conflict" else "contact_post_unresolved"
+            _ambiguous(store, step_id, **ids)
+            store.finish_creation_step(step_id, "ambiguous", {"retry": False, "reason": reason, "response": _public_diagnostic(diagnostic)}, **ids)
+            return {"ok": False, "stopped": stop_creation(store, proposal, attempt_id)}
+        contact_id = int(found)
+        reconciled = True
+    _succeed(store, step_id, {"id": contact_id, "response": _public_diagnostic(diagnostic), "reconciled": reconciled}, contact_id=str(contact_id), **ids)
+    return {"ok": True, "contact_id": contact_id, "reused": False, "reconciled": reconciled}
+
+
+def verify_contact(client: Any, customer_id: str, contact_id: int, contact: dict[str, Any]) -> dict[str, Any]:
+    """Exact post-write match. Returns the listed row, not only the ids."""
+    found = _one_contact(client, customer_id, contact)
+    if found in {None, "ambiguous", "conflict"} or str(found) != str(contact_id):
+        raise GateError(GATE_READBACK, reason="contact_not_verified", field="contact")
+    try:
+        listed = client.list_contacts(customer_id)
+    except GateError:
+        raise GateError(GATE_READBACK, reason="contact_not_verified", field="contact") from None
+    if not listed.get("complete") or listed.get("truncated") or listed.get("repeated_page"):
+        raise GateError(GATE_READBACK, reason="contact_not_verified", field="contact")
+    row = next(
+        (
+            item
+            for item in listed.get("items") or []
+            if isinstance(item, dict) and str(item.get("id")) == str(contact_id) and _contact_kind(item, contact, customer_id) == "match"
+        ),
+        None,
+    )
+    if row is None:
+        raise GateError(GATE_READBACK, reason="contact_not_verified", field="contact")
+    checks: dict[str, Any] = {}
+    for key, value in contact.items():
+        got = row.get(key)
+        verified = normalize_phone(got) == normalize_phone(value) if key == "phone" else got == value
+        checks[key] = {"verified": verified, "authoritative": got}
+        if not verified:
+            raise GateError(GATE_READBACK, reason="contact_not_verified", field=key)
+    readback = {
+        "contact_id": int(contact_id),
+        "customer_id": str(row.get("customer_id")),
+        "first_name": row.get("first_name"),
+        "last_name": row.get("last_name"),
+        "email": row.get("email"),
+        "verified": True,
+        "field_checks": checks,
+        "authoritative_source": "GET /v3.1/customers/{customer_id}/contacts",
+    }
+    if "phone" in row or "phone" in contact:
+        readback["phone"] = row.get("phone")
+    return readback
 
 
 def _one_contact(client: Any, customer_id: str, contact: dict[str, Any]) -> str | None:
@@ -1184,15 +1626,19 @@ def _instructions_equal(sent: Any, got: Any) -> bool:
     return sent == got
 
 
+def _recurrence_evidence(row: dict[str, Any]) -> dict[str, Any]:
+    from .fieldwork import recurrence_provenance
+
+    return recurrence_provenance(row)
+
+
 def _nonrecurring(row: dict[str, Any]) -> None:
-    repeat = row.get("repeat_type")
-    if repeat is None or str(repeat).strip() == "":
-        raise GateError(GATE_READBACK, reason="repeat_type_unverified")
-    if str(repeat).strip().lower() not in {"none", "one_time"} or row.get("series_id") or row.get("recurring") is True:
+    evidence = _recurrence_evidence(row)
+    if evidence.get("verified") is True:
+        return
+    if evidence.get("reason") == "recurrence_mismatch":
         raise GateError(GATE_READBACK, reason="recurrence_mismatch", field="repeat_type")
-    series = row.get("appointment_occurrences")
-    if isinstance(series, list) and len(series) > 1:
-        raise GateError(GATE_READBACK, reason="recurrence_mismatch", field="repeat_type")
+    raise GateError(GATE_READBACK, reason="repeat_type_unverified", field="repeat_type", recurrence=evidence)
 
 
 def _schedule_pair(schedule: dict[str, Any], occurrence_id: Any, appointment_id: Any) -> Any:
@@ -1264,33 +1710,89 @@ def work_order_readback(client: Any, sent: dict[str, Any], occurrence_id: str, a
         _mismatch("service_route_ids", list(occurrence["service_route_ids"]), list(row.get("service_route_ids") or []))
     if not _instructions_equal(occurrence.get("instructions"), row.get("instructions")):
         _mismatch("instructions", occurrence.get("instructions"), row.get("instructions"))
-    _nonrecurring(row)
-    if not money_equal(occurrence.get("production_value"), row.get("production_value")):
-        _mismatch("production_value", occurrence.get("production_value"), row.get("production_value"))
+    mismatches: list[dict[str, Any]] = []
+    unverified: list[dict[str, Any]] = []
+    checks: dict[str, Any] = {}
+    recurrence = _recurrence_evidence(row)
+    checks["repeat_type"] = recurrence
+    if recurrence["verified"] is not True:
+        if recurrence.get("reason") == "recurrence_mismatch":
+            mismatches.append({"field": "repeat_type", "expected": "none", "actual": recurrence.get("repeat_type"), "verified": False})
+        else:
+            unverified.append({"field": "repeat_type", "reason": "repeat_type_unverified", "verified": False, "provenance": recurrence})
+    if "production_value" in occurrence:
+        if "production_value" not in row or not money_equal(occurrence.get("production_value"), row.get("production_value")):
+            mismatches.append({"field": "production_value", "expected": occurrence.get("production_value"), "actual": row.get("production_value"), "verified": False})
+        else:
+            checks["production_value"] = {"verified": True, "source": "occurrence_field"}
+    else:
+        checks["production_value"] = {
+            "verified": False,
+            "reason": "omitted_remote_default_unverified",
+            "observed": row.get("production_value") if "production_value" in row else None,
+        }
+        unverified.append(checks["production_value"] | {"field": "production_value"})
+    if "callback" in occurrence:
+        if row.get("callback") is not occurrence.get("callback"):
+            mismatches.append({"field": "callback", "expected": occurrence.get("callback"), "actual": row.get("callback"), "verified": False})
+        else:
+            checks["callback"] = {"verified": True}
+    else:
+        checks["callback"] = {"verified": False, "reason": "not_sent", "observed": row.get("callback") if "callback" in row else None}
     sent_lines = sent["line_items_attributes"]
     got_lines = row.get("line_items") or []
     if len(got_lines) != len(sent_lines):
-        raise GateError(GATE_READBACK, reason="line_item_count_mismatch")
+        raise GateError(GATE_READBACK, reason="line_item_count_mismatch", mismatches=mismatches, unverified=unverified, field_checks=checks)
     compared_lines = []
     for sent_line, got_line in zip(sent_lines, got_lines):
         compared = {
-            "payable_id": got_line.get("payable_id") if _same_id(sent_line.get("payable_id"), got_line.get("payable_id")) else _mismatch("payable_id", sent_line.get("payable_id"), got_line.get("payable_id")),
-            "payable_type": _require_equal("payable_type", sent_line.get("payable_type"), got_line.get("payable_type")),
-            "type": _require_equal("type", sent_line.get("type"), got_line.get("type")),
-            "name": _require_equal("name", sent_line.get("name"), got_line.get("name")),
-            "taxable": _require_equal("taxable", sent_line.get("taxable"), got_line.get("taxable")),
+            "payable_id": got_line.get("payable_id"),
+            "payable_type": got_line.get("payable_type"),
+            "type": got_line.get("type"),
+            "name": got_line.get("name"),
+            "taxable": got_line.get("taxable"),
         }
+        for key in ("payable_id", "payable_type", "type", "name", "taxable"):
+            expected = sent_line.get(key)
+            actual = got_line.get(key)
+            same = _same_id(expected, actual) if key == "payable_id" else expected == actual
+            if not same:
+                mismatches.append({"field": key, "expected": expected, "actual": actual, "verified": False})
+                checks[key] = {"verified": False, "reason": "field_mismatch"}
+            else:
+                checks[key] = {"verified": True}
         if not money_equal(sent_line.get("quantity"), got_line.get("quantity")) or not money_equal(sent_line.get("price"), got_line.get("price")):
-            _mismatch("price", sent_line.get("price"), got_line.get("price"))
+            mismatches.append({"field": "price", "expected": sent_line.get("price"), "actual": got_line.get("price"), "verified": False})
+            checks["price"] = {"verified": False, "reason": "field_mismatch"}
+        else:
+            checks["price"] = {"verified": True}
         sent_total = money(sent_line["quantity"]) * money(sent_line["price"])
         got_total = money(got_line["quantity"]) * money(got_line["price"])
         if sent_total != got_total:
-            _mismatch("line_total", sent_total, got_total)
+            mismatches.append({"field": "line_total", "expected": sent_total, "actual": got_total, "verified": False})
         compared["quantity"] = got_line.get("quantity")
         compared["price"] = got_line.get("price")
         compared["total"] = int(got_total) if got_total == got_total.to_integral_value() else format(got_total, "f")
         compared_lines.append(compared)
+    if mismatches or any(item.get("field") == "repeat_type" for item in unverified):
+        first = mismatches[0] if mismatches else unverified[0]
+        reason = "recurrence_mismatch" if first.get("field") == "repeat_type" and first in mismatches else ("repeat_type_unverified" if not mismatches else "field_mismatch")
+        if mismatches and mismatches[0]["field"] == "repeat_type":
+            reason = "recurrence_mismatch"
+        elif not mismatches:
+            reason = "repeat_type_unverified"
+        else:
+            reason = "field_mismatch"
+        raise GateError(
+            GATE_READBACK,
+            reason=reason,
+            field=first.get("field"),
+            mismatches=mismatches,
+            unverified=unverified,
+            field_checks=checks,
+        )
     labels = response_labels(client)
+    production_check = checks["production_value"]
     return {
         "id": row.get("id"),
         "occurrence_id": row.get("id"),
@@ -1301,7 +1803,11 @@ def work_order_readback(client: Any, sent: dict[str, Any], occurrence_id: str, a
         "timezone": "America/New_York",
         "clock_time_sent": "T" in str(occurrence["starts_at"]),
         "duration": row.get("duration"),
-        "production_value": row.get("production_value"),
+        "production_value": row.get("production_value") if production_check.get("verified") else None,
+        "production_verification": production_check,
+        "recurrence": recurrence,
+        "field_checks": checks,
+        "callback": occurrence.get("callback") if "callback" in occurrence else None,
         "service_route_ids": row.get("service_route_ids"),
         "instructions": row.get("instructions"),
         "price": compared_lines[0]["price"],
@@ -1330,15 +1836,27 @@ def post_work_order(service: Any, proposal: dict[str, Any], attempt_id: str) -> 
     schedule_patch = proposal["after"].get("schedule_patch")
     if proposal["after"].get("starts_at_post_ready") is False and not schedule_patch:
         raise GateError(GATE_STARTS_AT_POST, starts_at_post_clock_live_tested=False, timed_create_ready=False, first_live_creation_approval_required=True)
-    catalog = load_catalog(
+    prepared = prepare_work_order(
         client,
+        proposal["after"]["caller_appointment"],
         proposal["after"].get("template_id"),
         configured_template_id=service.settings.pestguard_initial_template_id,
         configured_service_id=service.settings.pestguard_initial_service_id,
     )
-    rebuilt = apply_catalog(proposal["after"]["caller_appointment"], catalog)
-    if rebuilt["service_appointment"] != sent:
-        raise GateError("stale_state", reason="template_changed")
+    rebuilt = prepared["applied"]["service_appointment"]
+    if rebuilt != sent:
+        raise GateError("stale_state", reason="template_changed" if prepared["template_consulted"] else "service_catalog_changed")
+    if prepared["execution_blocked"]:
+        raise GateError(
+            GATE_CATALOG,
+            reason=prepared["execution_block_reason"] or "service_selectability_unverified",
+            active_eligibility=prepared["applied"].get("active_eligibility"),
+            active_flag_fabricated=False,
+            list_membership_proves_active=False,
+            selectability_source=prepared.get("selectability_source") or "not_in_get_services",
+            retry=False,
+            write_sent=False,
+        )
     service._require_active_location(proposal["payload"])
     occurrence = sent["appointment_occurrences_attributes"][0]
     schedule_at = str((schedule_patch or {}).get("starts_at") or occurrence["starts_at"])
@@ -1440,8 +1958,9 @@ def _stop_readback(
         "occurrence_id": _stored_id(occurrence_id),
         "service_appointment_id": _stored_id(appointment_id),
     }
-    if exc.detail.get("field"):
-        detail["field"] = exc.detail["field"]
+    for key in ("field", "mismatches", "unverified", "field_checks"):
+        if exc.detail.get(key) is not None:
+            detail[key] = exc.detail[key]
     step_id = _step(store, proposal["proposal_id"], "readback", {"occurrence_id": occurrence_id, "service_appointment_id": appointment_id}, **ids)
     store.finish_creation_step(step_id, "failed", detail, **ids)
     stopped = stop_creation(store, proposal, attempt_id)
@@ -1502,7 +2021,7 @@ def _created_state_matches(row: dict[str, Any], sent: dict[str, Any], occurrence
         return False
     if row.get("instructions") != occurrence.get("instructions"):
         return False
-    if not money_equal(occurrence.get("production_value"), row.get("production_value")):
+    if "production_value" in occurrence and ("production_value" not in row or not money_equal(occurrence.get("production_value"), row.get("production_value"))):
         return False
     sent_lines = sent.get("line_items_attributes") or []
     got_lines = row.get("line_items") or []
