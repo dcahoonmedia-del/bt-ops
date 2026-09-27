@@ -10,9 +10,11 @@ from typing import Any
 from .allowlist import (
     GATE_ADDRESS,
     GATE_CATALOG,
+    GATE_CONTACT,
     GATE_DISTINCT_IDS,
     GATE_DUPLICATE_SEARCH,
     GATE_DUPLICATE_UNRESOLVED,
+    GATE_IDENTITY,
     GATE_PARTIAL,
     GATE_READBACK,
     GATE_RECURRING,
@@ -414,7 +416,7 @@ def load_catalog(client: Any, template_id: int | None, *, configured_template_id
         "defaults": defaults,
         "line": normalized,
         "observed_line": line,
-        "service": {"id": service.get("id"), "description": service.get("description"), "price": service.get("price"), "category": service.get("category"), "account_id": service.get("account_id")},
+        "service": {"id": service.get("id"), "description": service.get("description"), "price": service.get("price"), "category": service.get("category"), "account_id": service.get("account_id"), "active_eligibility": service_active_eligibility(service)},
         "service_list_complete": service_list_complete,
         "service_list_caveat": None if service_list_complete else "exact_service_id_only_list_not_complete",
         "billing_frequency": money_number(template.get("billing_frequency")),
@@ -434,8 +436,11 @@ def _configured_service(services: dict[str, Any], payable_id: Any) -> tuple[dict
         raise GateError(GATE_CATALOG, reason="service_id_conflict")
     complete = bool(services.get("complete")) and not services.get("repeated_page") and not services.get("truncated")
     if len(matches) == 1:
-        if service_active_eligibility(matches[0]) == "inactive":
-            raise GateError(GATE_CATALOG, reason="service_inactive", payable_id=matches[0].get("id"), active_eligibility="inactive", active_flag_fabricated=False)
+        eligibility = service_active_eligibility(matches[0])
+        if eligibility == "inactive":
+            raise GateError(GATE_CATALOG, reason="service_inactive", payable_id=matches[0].get("id"), active_eligibility="inactive", active_flag_fabricated=False, list_membership_proves_active=False)
+        if eligibility == "contradictory":
+            raise GateError(GATE_CATALOG, reason="service_eligibility_contradictory", payable_id=matches[0].get("id"), active_eligibility="contradictory", active_flag_fabricated=False, list_membership_proves_active=False)
         return matches[0], complete
     if not complete:
         raise GateError(GATE_CATALOG, reason="service_list_incomplete")
@@ -616,6 +621,135 @@ def _verified_catalog_price(service: dict[str, Any]) -> int | str:
             observed_existing_work_order_price=None,
             historical_work_order_price_role="not_catalog_evidence",
         ) from None
+
+
+def _generic_service_line(appointment: dict[str, Any], configured_service_id: str) -> dict[str, Any] | None:
+    """A Service payable other than the configured PestGuard service. Fee lines stay on the template."""
+    supplied = appointment.get("line_items_attributes")
+    if not isinstance(supplied, list) or len(supplied) != 1 or not isinstance(supplied[0], dict):
+        return None
+    left = supplied[0]
+    configured = str(configured_service_id or "").strip()
+    if not configured or left.get("type") != "service" or left.get("payable_type") != "Service" or "payable_id" not in left:
+        return None
+    if str(left.get("payable_id")) == configured:
+        return None
+    return left
+
+
+def _prepare_generic_service(client: Any, appointment: dict[str, Any], line: dict[str, Any]) -> dict[str, Any]:
+    """Build one generic Service body from the caller and GET /services. The PestGuard template is not read."""
+    services = client.list_services()
+    service, complete = _configured_service(services, line.get("payable_id"))
+    if "repeat_period" not in appointment:
+        raise GateError("missing_field", fields=["repeat_period"], reason="generic_service_repeat_period_required")
+    period = appointment.get("repeat_period")
+    if isinstance(period, bool) or not isinstance(period, int):
+        raise GateError("unknown_field", fields=["repeat_period"])
+    source = dict(appointment["appointment_occurrences_attributes"][0])
+    starts = source.pop("_starts", None) or {}
+    occurrence = {key: source[key] for key in ("service_route_ids", "starts_at", "duration", "instructions", "production_value", "callback") if key in source}
+    missing = [key for key in ("duration", "instructions") if key not in occurrence]
+    if missing:
+        raise GateError("missing_field", fields=missing, reason="generic_service_does_not_inherit_template_defaults")
+    schedule_starts = occurrence["starts_at"]
+    if starts.get("kind") == "offset_timestamp":
+        occurrence["starts_at"] = starts["calendar_date"]
+    production_source = "explicit_approved" if "production_value" in source else "omitted_remote_default_unverified"
+    callback_source = "explicit_approved" if "callback" in source else "not_sent"
+    resolved = _resolve_service_catalog_line(line, {"services": services}, template_price=None)
+    sent_line = resolved["sent_line"]
+    body = {
+        "customer_id": appointment["customer_id"],
+        "service_location_id": appointment["service_location_id"],
+        "repeat_type": "none",
+        "repeat_period": period,
+        "line_items_attributes": [sent_line],
+        "appointment_occurrences_attributes": [occurrence],
+    }
+    total = money(sent_line["quantity"]) * money(sent_line["price"])
+    line_total = int(total) if total == total.to_integral_value() else format(total, "f")
+    record = resolved["service_record"]
+    eligibility = record.get("active_eligibility") or service_active_eligibility(service)
+    catalog_line = {
+        "name": sent_line["name"],
+        "type": "service",
+        "quantity": sent_line["quantity"],
+        "price": resolved["standard_price"],
+        "payable_id": sent_line["payable_id"],
+        "payable_type": "Service",
+        "taxable": False,
+    }
+    return {
+        "applied": {
+            "service_appointment": body,
+            "starts": starts,
+            "line_total": line_total,
+            "price": sent_line["price"],
+            "standard_price": resolved["standard_price"],
+            "price_source": resolved["price_source"],
+            "price_resolution": resolved["price_resolution"],
+            "schedule_starts_at": schedule_starts,
+            "production_source": production_source,
+            "production_sent": "production_value" in occurrence,
+            "callback_source": callback_source,
+            "callback_sent": "callback" in occurrence,
+            "duration_source": "explicit",
+            "instructions_source": "explicit",
+            "service_record": record,
+            "active_eligibility": eligibility,
+        },
+        "catalog": {
+            "template": None,
+            "defaults": None,
+            "line": catalog_line,
+            "observed_line": None,
+            "service": {"id": service.get("id"), "description": service.get("description"), "price": service.get("price"), "active_eligibility": eligibility},
+            "service_list_complete": complete,
+            "service_list_caveat": None if complete else "exact_service_id_only_list_not_complete",
+            "billing_frequency": None,
+            "invoice_generation_disclosed": True,
+            "invoice_generation_reason": "not_in_service_catalog",
+            "auto_generates_invoice": None,
+        },
+        "template_consulted": False,
+        "execution_blocked": True,
+        "execution_block_reason": "service_selectability_unverified",
+        "selectability_source": "not_in_get_services",
+        "list_membership_proves_active": False,
+        "path": "generic_service",
+    }
+
+
+def prepare_work_order(
+    client: Any,
+    appointment: dict[str, Any],
+    template_id: int | None,
+    *,
+    configured_template_id: str = "",
+    configured_service_id: str = "",
+) -> dict[str, Any]:
+    """PestGuard stays on its template. Any other Service uses only the service list and the request."""
+    generic = _generic_service_line(appointment, configured_service_id)
+    if generic is not None:
+        return _prepare_generic_service(client, appointment, generic)
+    catalog = load_catalog(
+        client,
+        template_id,
+        configured_template_id=configured_template_id,
+        configured_service_id=configured_service_id,
+    )
+    applied = apply_catalog(appointment, catalog)
+    return {
+        "applied": applied,
+        "catalog": catalog,
+        "template_consulted": True,
+        "execution_blocked": False,
+        "execution_block_reason": None,
+        "selectability_source": "pestguard_initial_template",
+        "list_membership_proves_active": False,
+        "path": "pestguard_template",
+    }
 
 
 def _price_resolution(
@@ -1175,6 +1309,85 @@ def _prove_new_customer(client: Any, before: dict[str, Any], payload: dict[str, 
     return {"ok": True, "customer_id": customer_id, "location_id": location_id}
 
 
+def _normalize_contact_email(value: Any) -> str:
+    """Candidate detection only. Exact post-write matching still uses the stored string."""
+    return "".join(str(value or "").split()).casefold()
+
+
+def _contact_candidate(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": item.get("id"),
+        "customer_id": item.get("customer_id"),
+        "first_name": item.get("first_name"),
+        "last_name": item.get("last_name"),
+        "email": item.get("email"),
+    }
+
+
+def contact_preflight(client: Any, customer_id: str, contact: dict[str, Any]) -> dict[str, Any]:
+    """Normalized email and name candidates. A shared email is not merged into one person."""
+    try:
+        listed = client.list_contacts(customer_id)
+    except GateError:
+        raise GateError(GATE_CONTACT, reason="contact_list_incomplete", write_sent=False) from None
+    if not isinstance(listed, dict) or not listed.get("complete") or listed.get("truncated") or listed.get("repeated_page"):
+        raise GateError(GATE_CONTACT, reason="contact_list_incomplete", write_sent=False)
+    email = _normalize_contact_email(contact.get("email"))
+    first = normalize_name(contact.get("first_name"))
+    last = normalize_name(contact.get("last_name"))
+    same_person: list[dict[str, Any]] = []
+    shared_email: list[dict[str, Any]] = []
+    identity_conflicts: list[dict[str, Any]] = []
+    for item in listed.get("items") or []:
+        if not isinstance(item, dict) or _normalize_contact_email(item.get("email")) != email:
+            continue
+        shown = _contact_candidate(item)
+        if response_id({"id": item.get("id")}) is None or str(item.get("customer_id")) != str(customer_id):
+            identity_conflicts.append(shown)
+            continue
+        if normalize_name(item.get("first_name")) == first and normalize_name(item.get("last_name")) == last:
+            same_person.append(shown)
+        else:
+            shared_email.append(shown)
+    if same_person:
+        blocked = {"blocked": True, "reason": "contact_duplicate", "candidates": same_person, "merge": False, "gate": GATE_DUPLICATE_UNRESOLVED}
+        if len(same_person) == 1:
+            blocked["contact_id"] = same_person[0]["id"]
+        return blocked
+    if shared_email:
+        return {"blocked": True, "reason": "shared_email_not_merged", "candidates": shared_email, "merge": False, "gate": GATE_DUPLICATE_UNRESOLVED}
+    if identity_conflicts:
+        return {"blocked": True, "reason": "contact_field_conflict", "candidates": identity_conflicts, "merge": False, "gate": GATE_CONTACT}
+    return {"blocked": False, "candidates": [], "merge": False}
+
+
+def customer_identity_snapshot(customer: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "customer_id": str(customer.get("id")),
+        "name": customer.get("name"),
+        "status": customer.get("status"),
+        "customer_status": customer.get("customer_status"),
+    }
+
+
+def bind_standalone_customer(client: Any, customer_id: str, bound: dict[str, Any]) -> dict[str, Any]:
+    """Re-read the customer immediately before a standalone contact POST."""
+    try:
+        customer = client.get_customer(customer_id)
+    except GateError as exc:
+        if exc.gate == "customer_not_found":
+            raise GateError("customer_not_found", reason="customer_missing", customer_id=str(customer_id), write_sent=False) from exc
+        raise
+    client.reject_if_lead(customer)
+    current = customer_identity_snapshot(customer)
+    if current["customer_id"] != str(customer_id):
+        raise GateError(GATE_IDENTITY, reason="customer_identity_changed", write_sent=False)
+    for key in ("name", "status", "customer_status"):
+        if bound.get(key) != current[key]:
+            raise GateError(GATE_IDENTITY, reason="customer_identity_changed", field=key, write_sent=False)
+    return customer
+
+
 def _contact_kind(item: dict[str, Any], contact: dict[str, Any], customer_id: str) -> str:
     if str(item.get("email") or "").casefold() != str(contact.get("email") or "").casefold() or item.get("first_name") != contact.get("first_name") or item.get("last_name") != contact.get("last_name"):
         return "different"
@@ -1234,10 +1447,46 @@ def commit_contact(
 
 
 def verify_contact(client: Any, customer_id: str, contact_id: int, contact: dict[str, Any]) -> dict[str, Any]:
+    """Exact post-write match. Returns the listed row, not only the ids."""
     found = _one_contact(client, customer_id, contact)
     if found in {None, "ambiguous", "conflict"} or str(found) != str(contact_id):
         raise GateError(GATE_READBACK, reason="contact_not_verified", field="contact")
-    return {"contact_id": int(contact_id), "customer_id": str(customer_id), "verified": True}
+    try:
+        listed = client.list_contacts(customer_id)
+    except GateError:
+        raise GateError(GATE_READBACK, reason="contact_not_verified", field="contact") from None
+    if not listed.get("complete") or listed.get("truncated") or listed.get("repeated_page"):
+        raise GateError(GATE_READBACK, reason="contact_not_verified", field="contact")
+    row = next(
+        (
+            item
+            for item in listed.get("items") or []
+            if isinstance(item, dict) and str(item.get("id")) == str(contact_id) and _contact_kind(item, contact, customer_id) == "match"
+        ),
+        None,
+    )
+    if row is None:
+        raise GateError(GATE_READBACK, reason="contact_not_verified", field="contact")
+    checks: dict[str, Any] = {}
+    for key, value in contact.items():
+        got = row.get(key)
+        verified = normalize_phone(got) == normalize_phone(value) if key == "phone" else got == value
+        checks[key] = {"verified": verified, "authoritative": got}
+        if not verified:
+            raise GateError(GATE_READBACK, reason="contact_not_verified", field=key)
+    readback = {
+        "contact_id": int(contact_id),
+        "customer_id": str(row.get("customer_id")),
+        "first_name": row.get("first_name"),
+        "last_name": row.get("last_name"),
+        "email": row.get("email"),
+        "verified": True,
+        "field_checks": checks,
+        "authoritative_source": "GET /v3.1/customers/{customer_id}/contacts",
+    }
+    if "phone" in row or "phone" in contact:
+        readback["phone"] = row.get("phone")
+    return readback
 
 
 def _one_contact(client: Any, customer_id: str, contact: dict[str, Any]) -> str | None:
@@ -1587,15 +1836,27 @@ def post_work_order(service: Any, proposal: dict[str, Any], attempt_id: str) -> 
     schedule_patch = proposal["after"].get("schedule_patch")
     if proposal["after"].get("starts_at_post_ready") is False and not schedule_patch:
         raise GateError(GATE_STARTS_AT_POST, starts_at_post_clock_live_tested=False, timed_create_ready=False, first_live_creation_approval_required=True)
-    catalog = load_catalog(
+    prepared = prepare_work_order(
         client,
+        proposal["after"]["caller_appointment"],
         proposal["after"].get("template_id"),
         configured_template_id=service.settings.pestguard_initial_template_id,
         configured_service_id=service.settings.pestguard_initial_service_id,
     )
-    rebuilt = apply_catalog(proposal["after"]["caller_appointment"], catalog)
-    if rebuilt["service_appointment"] != sent:
-        raise GateError("stale_state", reason="template_changed")
+    rebuilt = prepared["applied"]["service_appointment"]
+    if rebuilt != sent:
+        raise GateError("stale_state", reason="template_changed" if prepared["template_consulted"] else "service_catalog_changed")
+    if prepared["execution_blocked"]:
+        raise GateError(
+            GATE_CATALOG,
+            reason=prepared["execution_block_reason"] or "service_selectability_unverified",
+            active_eligibility=prepared["applied"].get("active_eligibility"),
+            active_flag_fabricated=False,
+            list_membership_proves_active=False,
+            selectability_source=prepared.get("selectability_source") or "not_in_get_services",
+            retry=False,
+            write_sent=False,
+        )
     service._require_active_location(proposal["payload"])
     occurrence = sent["appointment_occurrences_attributes"][0]
     schedule_at = str((schedule_patch or {}).get("starts_at") or occurrence["starts_at"])

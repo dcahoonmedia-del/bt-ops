@@ -383,32 +383,36 @@ class WriteService:
 
     def _propose_create(self, payload: dict[str, Any], identity: dict[str, str]) -> dict[str, Any]:
         from .create_contract import work_order_request
-        from .creation_flow import apply_catalog, load_catalog, route_staff, schedule_view
+        from .creation_flow import prepare_work_order, route_staff, schedule_view
 
         caller = work_order_request(payload)
         self._require_active_location(payload)
-        catalog = load_catalog(
+        prepared = prepare_work_order(
             self.client,
+            caller["service_appointment"],
             caller.get("template_id"),
             configured_template_id=self.settings.pestguard_initial_template_id,
             configured_service_id=self.settings.pestguard_initial_service_id,
         )
-        applied = apply_catalog(caller["service_appointment"], catalog)
+        applied = prepared["applied"]
+        catalog = prepared["catalog"]
         documented = {"service_appointment": applied["service_appointment"]}
         occurrence = documented["service_appointment"]["appointment_occurrences_attributes"][0]
         starts = applied.get("starts") or {}
         staff = route_staff(self.client, list(occurrence["service_route_ids"]))
         schedule_at = str(applied.get("schedule_starts_at") or occurrence["starts_at"])
         schedule = schedule_view(self.client, schedule_at, list(occurrence["service_route_ids"]))
-        template = catalog["template"]
+        template = catalog.get("template") if isinstance(catalog.get("template"), dict) else {}
+        template_consulted = bool(prepared["template_consulted"])
         sent_line = documented["service_appointment"]["line_items_attributes"][0]
         after = {
             "exists": False,
             "caller_appointment": caller["service_appointment"],
-            "template_id": template.get("id"),
+            "template_id": template.get("id") if template_consulted else None,
+            "template_consulted": template_consulted,
             "documented_request": documented,
             "association": {"customer_id": documented["service_appointment"]["customer_id"], "service_location_id": documented["service_appointment"]["service_location_id"]},
-            "catalog": {"template_id": template.get("id"), "template_name": template.get("name"), "repeat_type": template.get("repeat_type"), "repeat_period": template.get("repeat_period"), "line": catalog["line"], "observed_line": catalog["observed_line"], "service": catalog["service"], "work_order_defaults": catalog["defaults"], "service_list_complete": catalog.get("service_list_complete"), "service_list_caveat": catalog.get("service_list_caveat")},
+            "catalog": {"template_id": template.get("id") if template_consulted else None, "template_name": template.get("name") if template_consulted else None, "template_consulted": template_consulted, "repeat_type": template.get("repeat_type") if template_consulted else documented["service_appointment"].get("repeat_type"), "repeat_period": template.get("repeat_period") if template_consulted else documented["service_appointment"].get("repeat_period"), "line": catalog["line"], "observed_line": catalog.get("observed_line"), "service": catalog.get("service"), "work_order_defaults": catalog.get("defaults") if template_consulted else None, "service_list_complete": catalog.get("service_list_complete"), "service_list_caveat": catalog.get("service_list_caveat")},
             "route_staff": staff,
             "schedule": schedule,
             "duration": occurrence.get("duration"),
@@ -424,6 +428,10 @@ class WriteService:
             "service_record": applied.get("service_record"),
             "active_eligibility": applied.get("active_eligibility"),
             "active_flag_fabricated": False,
+            "execution_blocked": bool(prepared["execution_blocked"]),
+            "execution_block_reason": prepared.get("execution_block_reason"),
+            "list_membership_proves_active": False,
+            "selectability_source": prepared.get("selectability_source"),
             "line_total": applied.get("line_total"),
             "price": applied.get("price"),
             "standard_price": applied.get("standard_price"),
@@ -433,7 +441,7 @@ class WriteService:
             "auto_generates_invoice": catalog.get("auto_generates_invoice"),
             "invoice_generation_disclosed": catalog["invoice_generation_disclosed"],
             "invoice_generation_reason": catalog["invoice_generation_reason"],
-            "billing_frequency_0_means_normal_invoice_generation": True,
+            "billing_frequency_0_means_normal_invoice_generation": template_consulted,
             "starts_at_kind": starts.get("kind", "date"),
             "starts_at_instant": starts.get("instant"),
             "starts_at_timezone": starts.get("timezone"),
@@ -452,7 +460,7 @@ class WriteService:
             "schedule_patch": None if starts.get("kind") != "offset_timestamp" else {"starts_at": starts.get("starts_at"), "duration": occurrence.get("duration"), "service_route_ids": list(occurrence.get("service_route_ids") or [])},
             "api_steps": _work_order_steps(documented, starts, occurrence),
             "live_tested": False,
-            "initial_treatment_only": True,
+            "initial_treatment_only": template_consulted,
             "recurrence": False,
             "agreement": False,
         }
@@ -651,7 +659,7 @@ class WriteService:
 
     def _propose_contact(self, payload: dict[str, Any], identity: dict[str, str]) -> dict[str, Any]:
         from .create_contract import _contact
-        from .creation_flow import _one_contact
+        from .creation_flow import _normalize_contact_email, contact_preflight, customer_identity_snapshot
 
         assert_only(payload, CUSTOMER_CONTACT_FIELDS, label="contact")
         customer_id = str(payload.get("customer_id") or "")
@@ -662,13 +670,17 @@ class WriteService:
         self.client.reject_if_lead(customer)
         if str(customer.get("id")) != customer_id:
             return self._fail(GATE_IDENTITY, persisted=False, write_sent=False)
-        found = _one_contact(self.client, customer_id, contact)
-        if found == "ambiguous":
-            return self._fail("contact_incomplete", reason="contact_list_incomplete", persisted=False, write_sent=False)
-        if found == "conflict":
-            return self._fail("contact_incomplete", reason="contact_field_conflict", persisted=False, write_sent=False)
-        if found:
-            return self._fail("duplicate_unresolved", reason="contact_duplicate", contact_id=found, persisted=False, write_sent=False)
+        try:
+            preflight = contact_preflight(self.client, customer_id, contact)
+        except GateError as exc:
+            detail = {key: value for key, value in exc.detail.items() if key not in {"reason", "write_sent", "persisted"}}
+            return self._fail(exc.gate, reason=exc.detail.get("reason") or exc.gate, persisted=False, write_sent=False, **detail)
+        if preflight.get("blocked"):
+            extra = {"candidates": preflight.get("candidates") or [], "merge": False, "persisted": False, "write_sent": False}
+            if preflight.get("contact_id") is not None:
+                extra["contact_id"] = preflight["contact_id"]
+            return self._fail(preflight.get("gate") or "duplicate_unresolved", reason=preflight["reason"], **extra)
+        bound = customer_identity_snapshot(customer)
         after = {
             "customer_id": customer_id,
             "contact": contact,
@@ -676,19 +688,20 @@ class WriteService:
             "path": f"/customers/{customer_id}/contacts",
             "portal_access": "not_sent",
             "notification_changes": "not_sent",
+            "duplicate_preflight": "normalized_email_and_name",
             "live_tested": False,
         }
         return self._persist_proposal(
             OP_ADD_CUSTOMER_CONTACT,
             payload,
             identity,
-            f"customer_contact:{customer_id}:{str(contact.get('email') or '').casefold()}",
-            {"exists": False, "customer_id": customer_id},
+            f"customer_contact:{customer_id}:{_normalize_contact_email(contact.get('email'))}",
+            {"exists": False, **bound},
             after,
         )
 
     def _execute_contact(self, proposal: dict[str, Any], clock: datetime) -> dict[str, Any]:
-        from .creation_flow import commit_contact, verify_contact
+        from .creation_flow import bind_standalone_customer, commit_contact, contact_preflight, verify_contact
 
         contact = proposal["after"]["contact"]
         customer_id = str(proposal["after"]["customer_id"])
@@ -696,6 +709,19 @@ class WriteService:
             attempt_id = self.store.begin_attempt(proposal["proposal_id"], proposal["subject_key"], _iso(clock))
         except GateError as exc:
             return self._fail(exc.gate, proposal_id=proposal["proposal_id"], **exc.detail)
+        try:
+            bind_standalone_customer(self.client, customer_id, proposal.get("before") or {})
+            preflight = contact_preflight(self.client, customer_id, contact)
+        except GateError as exc:
+            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "failed_no_write")
+            detail = {key: value for key, value in exc.detail.items() if key not in {"reason", "retry", "write_sent"}}
+            return self._fail(exc.gate, proposal_id=proposal["proposal_id"], reason=exc.detail.get("reason") or exc.gate, retry=False, write_sent=False, **detail)
+        if preflight.get("blocked"):
+            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "failed_no_write")
+            extra = {"candidates": preflight.get("candidates") or [], "merge": False, "write_sent": False, "retry": False}
+            if preflight.get("contact_id") is not None:
+                extra["contact_id"] = preflight["contact_id"]
+            return self._fail(preflight.get("gate") or "duplicate_unresolved", proposal_id=proposal["proposal_id"], reason=preflight["reason"], **extra)
         posted = commit_contact(self, proposal, attempt_id, customer_id, contact, location_id=None, reject_existing=True)
         if not posted.get("ok"):
             stopped = posted.get("stopped") or {}

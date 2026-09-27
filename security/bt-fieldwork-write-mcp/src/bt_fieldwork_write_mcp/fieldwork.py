@@ -953,18 +953,50 @@ _SERVICE_KEYS = (
 )
 
 
+def _eligibility_evidence(key: str, value: Any) -> str | None:
+    """One flag's evidence. None means the value is absent, not false."""
+    if value is None or key not in {"active", "enabled", "inactive", "disabled"}:
+        return None
+    positive_key = key in {"active", "enabled"}
+    if value is True:
+        return "active" if positive_key else "inactive"
+    if value is False:
+        return "inactive" if positive_key else "active"
+    if not isinstance(value, str):
+        return "unrecognized"
+    text = value.strip().lower()
+    if not text:
+        return None
+    if text in {"false", "0", "no"}:
+        return "inactive" if positive_key else "active"
+    if text in {"true", "1", "yes"}:
+        return "active" if positive_key else "inactive"
+    if text in {"inactive", "disabled"}:
+        return "inactive"
+    if text in {"active", "enabled"}:
+        return "active"
+    return "unrecognized"
+
+
 def service_active_eligibility(row: dict[str, Any]) -> str:
-    """Catalog membership is not an active flag. An explicit inactive value is rejected later."""
-    for key in ("active", "enabled"):
+    """Inspect every present flag. Explicit inactive evidence beats an active flag.
+
+    Contradictory flags fail closed. Absence is unverified, not active.
+    A true flag is not proof the service is currently selectable.
+    """
+    seen: set[str] = set()
+    for key in ("active", "enabled", "inactive", "disabled"):
         if key not in row:
             continue
-        flag = row.get(key)
-        if flag is False or (isinstance(flag, str) and flag.strip().lower() in {"false", "inactive", "disabled", "0"}):
-            return "inactive"
-        if flag is True or (isinstance(flag, str) and flag.strip().lower() in {"true", "active", "enabled", "1"}):
-            return "explicit_true_not_proven_selectable"
-    if row.get("inactive") is True or row.get("disabled") is True:
+        evidence = _eligibility_evidence(key, row.get(key))
+        if evidence:
+            seen.add(evidence)
+    if "unrecognized" in seen or ("inactive" in seen and "active" in seen):
+        return "contradictory"
+    if "inactive" in seen:
         return "inactive"
+    if "active" in seen:
+        return "explicit_true_not_proven_selectable"
     return "unverified"
 
 

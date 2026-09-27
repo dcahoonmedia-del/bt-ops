@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 
 from bt_fieldwork_write_mcp.errors import GateError
-from bt_fieldwork_write_mcp.fieldwork import parse_work_order_status_catalog, recurrence_provenance, resolve_work_order_status, work_order_view
+from bt_fieldwork_write_mcp.fieldwork import parse_work_order_status_catalog, recurrence_provenance, resolve_work_order_status, service_active_eligibility, work_order_view
 from tests.test_write_mcp import IDENTITY, Harness
 
 TERMITE = "Termite Treatment"
@@ -86,14 +86,15 @@ class OneTimeGeneralTests(unittest.TestCase):
         self.assertEqual(proposed["after"]["service_record"]["unknowns"]["production_default"], "not_in_response")
         self.assertIsNone(proposed["after"]["service_record"]["site_time"])
         self.assertTrue(proposed["after"]["service_record"]["site_time_present"])
+        self.assertTrue(proposed["after"]["execution_blocked"])
+        self.assertIsNone(proposed["after"]["price_resolution"]["template_price"])
+        self.assertFalse(proposed["after"]["template_consulted"])
         done = self._execute(proposed)
-        self.assertTrue(done["ok"], done)
-        self.assertEqual(done["readback"]["price"], 1275)
-        self.assertEqual(done["readback"]["production_value"], 400)
-        self.assertTrue(done["readback"]["production_verification"]["verified"])
-        self.assertTrue(done["readback"]["recurrence"]["verified"])
-        self.assertEqual(done["readback"]["recurrence"]["authoritative_source"], "occurrence_field")
-        self.assertFalse(done["readback"]["recurrence"]["live_get_shape"])
+        self.assertFalse(done["ok"])
+        self.assertEqual(done["reason"], "service_selectability_unverified")
+        self.assertFalse(done["list_membership_proves_active"])
+        posts = [call for call in self.h.transport.calls if call["method"] == "POST" and call["path"] == "/work_orders"]
+        self.assertEqual(len(posts), 0)
 
     def test_zero_price_callback_and_separate_production(self) -> None:
         callback = self._propose(_order(
@@ -120,10 +121,9 @@ class OneTimeGeneralTests(unittest.TestCase):
         self.assertEqual(priced_occurrence["production_value"], 35)
         self.assertIs(priced_occurrence["callback"], False)
         done = self._execute(priced)
-        self.assertTrue(done["ok"], done)
-        self.assertEqual(done["readback"]["price"], 0)
-        self.assertEqual(done["readback"]["production_value"], 35)
-        self.assertIs(done["readback"]["callback"], False)
+        self.assertFalse(done["ok"])
+        self.assertEqual(done["reason"], "service_selectability_unverified")
+        self.assertEqual(len([call for call in self.h.transport.calls if call["method"] == "POST" and call["path"] == "/work_orders"]), 0)
 
     def test_omitted_production_is_not_manufactured_and_generic_defaults_are_required(self) -> None:
         omitted = self._propose(_order(starts_at="2026-11-06", line_items=[_line(TERMITE, 38853, 900)]))
@@ -147,6 +147,19 @@ class OneTimeGeneralTests(unittest.TestCase):
         inactive = self._propose(_order(starts_at="2026-11-09", line_items=[_line("Closed Service", 38899, 10)], duration=30, instructions="no"))
         self.assertEqual(inactive["reason"], "service_inactive")
         self.assertEqual(inactive["active_eligibility"], "inactive")
+        self.h.transport.services.append({"id": 38900, "description": "Mixed Flags", "price": "10.0", "active": True, "enabled": False})
+        mixed = self._propose(_order(starts_at="2026-11-09T10:00:00-04:00", line_items=[_line("Mixed Flags", 38900, 10)], duration=30, instructions="no"))
+        self.assertEqual(mixed["reason"], "service_eligibility_contradictory")
+        self.assertEqual(mixed["active_eligibility"], "contradictory")
+        self.h.transport.services.append({"id": 38901, "description": "Disabled Only", "price": "10.0", "enabled": False})
+        disabled = self._propose(_order(starts_at="2026-11-09T11:00:00-04:00", line_items=[_line("Disabled Only", 38901, 10)], duration=30, instructions="no"))
+        self.assertEqual(disabled["reason"], "service_inactive")
+        self.assertEqual(service_active_eligibility({"active": True, "enabled": False}), "contradictory")
+        self.assertEqual(service_active_eligibility({"enabled": False}), "inactive")
+        self.assertEqual(service_active_eligibility({"disabled": True}), "inactive")
+        self.assertEqual(service_active_eligibility({"active": True}), "explicit_true_not_proven_selectable")
+        self.assertEqual(service_active_eligibility({}), "unverified")
+        self.assertEqual(service_active_eligibility({"inactive": True, "active": False}), "inactive")
         negative = self._propose(_order(line_items=[_line(TERMITE, 38853, -5)], starts_at="2026-11-10"))
         self.assertEqual(negative["fields"], ["price"])
         floated = self._propose(_order(line_items=[_line(TERMITE, 38853, 1.5)], starts_at="2026-11-11"))  # type: ignore[list-item]
@@ -251,6 +264,12 @@ class OneTimeGeneralTests(unittest.TestCase):
         done = self._execute(proposed)
         self.assertTrue(done["ok"], done)
         self.assertEqual(done["readback"]["customer_id"], "41")
+        self.assertEqual(done["readback"]["first_name"], "Ada")
+        self.assertEqual(done["readback"]["last_name"], "Lovelace")
+        self.assertEqual(done["readback"]["email"], "ada@example.test")
+        self.assertEqual(done["readback"]["phone"], "7165550100")
+        self.assertTrue(done["readback"]["field_checks"]["email"]["verified"])
+        self.assertEqual(done["readback"]["authoritative_source"], "GET /v3.1/customers/{customer_id}/contacts")
         posts = [call for call in self.h.transport.calls if call["method"] == "POST" and call["path"] == "/customers/41/contacts"]
         self.assertEqual(len(posts), 1)
         duplicate = self.h.service.propose("add_customer_contact", {"customer_id": 41, "contact": contact}, IDENTITY)
@@ -292,6 +311,101 @@ class OneTimeGeneralTests(unittest.TestCase):
         self.assertTrue(recovered["reconciled"])
         contact_posts = [call for call in self.h.transport.calls if call["method"] == "POST" and call["path"] == "/customers/41/contacts"]
         self.assertEqual(len(contact_posts), 3)
+
+    def test_contact_preflight_blocks_whitespace_shared_email_and_late_duplicates(self) -> None:
+        self.h.transport.contacts["41:91"] = {
+            "id": 91,
+            "customer_id": 41,
+            "first_name": "Ada",
+            "last_name": "Lovelace",
+            "email": "ada@example.test",
+        }
+        spaced = self.h.service.propose(
+            "add_customer_contact",
+            {"customer_id": 41, "contact": {"first_name": "Ada ", "last_name": "Lovelace", "email": "Ada@Example.Test"}},
+            IDENTITY,
+        )
+        self.assertFalse(spaced["ok"])
+        self.assertEqual(spaced["reason"], "contact_duplicate")
+        self.assertEqual(spaced["contact_id"], 91)
+        self.assertFalse(spaced.get("merge", False))
+        family = self.h.service.propose(
+            "add_customer_contact",
+            {"customer_id": 41, "contact": {"first_name": "Byron", "last_name": "Lovelace", "email": "ada@example.test"}},
+            IDENTITY,
+        )
+        self.assertFalse(family["ok"])
+        self.assertEqual(family["reason"], "shared_email_not_merged")
+        self.assertEqual(family["gate"], "duplicate_unresolved")
+        self.assertFalse(family["merge"])
+        self.assertEqual(family["candidates"][0]["id"], 91)
+        self.assertEqual(len([call for call in self.h.transport.calls if call["method"] == "POST"]), 0)
+
+        fresh = self.h.service.propose(
+            "add_customer_contact",
+            {"customer_id": 41, "contact": {"first_name": "Ada ", "last_name": "Lovelace", "email": "late@example.test"}},
+            IDENTITY,
+        )
+        self.assertTrue(fresh["ok"], fresh)
+        self.h.transport.contacts["41:92"] = {
+            "id": 92,
+            "customer_id": 41,
+            "first_name": "Ada",
+            "last_name": "Lovelace",
+            "email": "late@example.test",
+        }
+        late = self._execute(fresh)
+        self.assertFalse(late["ok"])
+        self.assertEqual(late["reason"], "contact_duplicate")
+        self.assertEqual(late["contact_id"], 92)
+        self.assertFalse(late["merge"])
+        self.assertEqual(len([call for call in self.h.transport.calls if call["method"] == "POST" and "/contacts" in call["path"]]), 0)
+
+        renamed = self.h.service.propose(
+            "add_customer_contact",
+            {"customer_id": 41, "contact": {"first_name": "Grace", "last_name": "Hopper", "email": "grace2@example.test"}},
+            IDENTITY,
+        )
+        self.h.transport.customers["41"]["name"] = "Renamed"
+        changed = self._execute(renamed)
+        self.assertEqual(changed["gate"], "identity_mismatch")
+        self.assertEqual(changed["reason"], "customer_identity_changed")
+        self.h.transport.customers["41"]["name"] = "Existing"
+        self.h.transport.customers["41"]["customer_status"] = "Lead"
+        lead = self.h.service.propose(
+            "add_customer_contact",
+            {"customer_id": 41, "contact": {"first_name": "Ken", "last_name": "Thompson", "email": "lead@example.test"}},
+            IDENTITY,
+        )
+        self.assertEqual(lead["gate"], "never_lead_status_accounts")
+        self.h.transport.customers["41"]["customer_status"] = "Active"
+        pending = self.h.service.propose(
+            "add_customer_contact",
+            {"customer_id": 41, "contact": {"first_name": "Ken", "last_name": "Thompson", "email": "gone@example.test"}},
+            IDENTITY,
+        )
+        self.assertTrue(pending["ok"], pending)
+        self.h.transport.customers["41"]["customer_status"] = "Lead"
+        became_lead = self._execute(pending)
+        self.assertEqual(became_lead["gate"], "never_lead_status_accounts")
+        self.h.transport.customers["41"]["customer_status"] = "Active"
+        deleted_target = self.h.service.propose(
+            "add_customer_contact",
+            {"customer_id": 41, "contact": {"first_name": "Ken", "last_name": "Thompson", "email": "deleted@example.test"}},
+            IDENTITY,
+        )
+        del self.h.transport.customers["41"]
+        missing = self._execute(deleted_target)
+        self.assertEqual(missing["gate"], "customer_not_found")
+        self.assertEqual(missing["reason"], "customer_missing")
+        self.assertEqual(len([call for call in self.h.transport.calls if call["method"] == "POST" and "/contacts" in call["path"]]), 0)
+
+    def test_generic_service_requires_its_own_repeat_period(self) -> None:
+        payload = _order(starts_at="2026-11-16", line_items=[_line(TERMITE, 38853, 900)])
+        payload.pop("repeat_period")
+        missing = self._propose(payload)
+        self.assertEqual(missing["fields"], ["repeat_period"])
+        self.assertEqual(missing["reason"], "generic_service_repeat_period_required")
 
     def test_recurrence_provenance_does_not_treat_a_request_as_readback(self) -> None:
         absent = recurrence_provenance({"id": 50219749, "service_appointment_id": 8954306})
