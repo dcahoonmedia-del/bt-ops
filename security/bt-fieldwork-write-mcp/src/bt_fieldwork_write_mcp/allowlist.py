@@ -11,6 +11,7 @@ OP_CREATE_WORK_ORDER = "create_work_order"
 OP_CREATE_CUSTOMER = "create_customer"
 OP_UPDATE_CUSTOMER_PRIMARY_EMAIL = "update_customer_primary_email"
 OP_UPDATE_WORK_ORDER_STATUS = "update_work_order_status"
+OP_ADD_CUSTOMER_CONTACT = "add_customer_contact"
 
 ALLOWED_OPS = frozenset(
     {
@@ -21,6 +22,7 @@ ALLOWED_OPS = frozenset(
         OP_CREATE_CUSTOMER,
         OP_UPDATE_CUSTOMER_PRIMARY_EMAIL,
         OP_UPDATE_WORK_ORDER_STATUS,
+        OP_ADD_CUSTOMER_CONTACT,
     }
 )
 
@@ -29,6 +31,7 @@ WORK_ORDER_NOTE_FIELDS = frozenset({"work_order_id", "service_appointment_id", "
 WORK_ORDER_SCHEDULE_FIELDS = frozenset({"work_order_id", "service_appointment_id", "starts_at", "duration", "service_route_ids"})
 CUSTOMER_EMAIL_FIELDS = frozenset({"customer_id", "primary_email"})
 WORK_ORDER_STATUS_FIELDS = frozenset({"work_order_id", "service_appointment_id", "status"})
+CUSTOMER_CONTACT_FIELDS = frozenset({"customer_id", "contact"})
 NOTE_TEXT_FIELDS = ("instructions", "private_notes")
 SCHEDULE_WRITE_FIELDS = ("starts_at", "duration", "service_route_ids")
 ARRIVAL_FIELDS = ("arrival_time_window", "arrival_time_window_start", "arrival_time_window_end", "arrival_time_window_str")
@@ -46,11 +49,12 @@ CREATE_FIELDS = frozenset(
         "service_route_ids",
         "instructions",
         "production_value",
+        "callback",
     }
 )
-CALLER_OCCURRENCE_FIELDS = frozenset({"starts_at", "duration", "service_route_ids", "instructions", "production_value"})
+CALLER_OCCURRENCE_FIELDS = frozenset({"starts_at", "duration", "service_route_ids", "instructions", "production_value", "callback"})
 LINE_ITEM_FIELDS = frozenset({"name", "type", "quantity", "price", "payable_id", "payable_type", "taxable"})
-OCCURRENCE_FIELDS = frozenset({"service_route_ids", "starts_at", "duration", "instructions", "production_value"})
+OCCURRENCE_FIELDS = frozenset({"service_route_ids", "starts_at", "duration", "instructions", "production_value", "callback"})
 REJECTED_OCCURRENCE_FIELDS = frozenset({"started_at_time", "finished_at_time", "private_notes", "status", "use_time_window"})
 CUSTOMER_CREATE_FIELDS = frozenset(
     {
@@ -260,7 +264,8 @@ def current_gates(
             "update_work_order_notes": {"propose": bool(mapping_verified), "execute_role": "client.get_api_role", "execute_blocked_by": list(work_order_blocks), "fields": ["instructions", "private_notes"]},
             "update_work_order_schedule": {"propose": bool(mapping_verified), "single_occurrence": True, "execute_role": "client.get_api_role", "execute_blocked_by": list(work_order_blocks), "fields": ["starts_at", "duration", "service_route_ids"], "arrival_window_preserved": False, "arrival_coupling": "fixed_window_selected_by_start_when_occurrence_evidence_is_fresh", "explicit_arrival_window_edit": False},
             "create_customer": {"propose": True, "schema_ready": True, "live_tested": False, "execute_blocked_by": list(write_blocks), "caller_location_key": "service_locations", "caller_location_shape": "one_object_or_one_item_list", "fieldwork_location_key": "service_locations_attributes", "nested_location_fields": ["name", "same_as_billing_address"], "missing_location_gate": "nested_location_required", "address_patch_when_distinct": True, "response_schema_verified": False, "post_response_body_retained": False, "ambiguous_customer_post": "authoritative_get_no_retry"},
-            "create_work_order": {"propose": True, "schema_ready": True, "live_tested": False, "execute_blocked_by": list(write_blocks), "repeat_type": "none", "caller_schedule_keys": ["starts_at", "duration", "service_route_ids", "instructions"], "missing_schedule_gate": "missing_field", "starts_at_date_only": "YYYY-MM-DD", "offset_starts_at": "date_post_plus_one_schedule_patch", "timed_create_ready": False, "starts_at_post_clock_live_tested": False, "starts_at_datetime_format_unverified": True, "price": "caller_line_price_or_template_standard", "use_time_window_sent": False, "promised_window_enforced": False, "initial_treatment_only": True, "response_schema_verified": False, "first_live_creation_approval_required": True, "readback_reconciliation": "immediate_plus_two_reads_no_replay"},
+            "create_work_order": {"propose": True, "schema_ready": True, "live_tested": False, "execute_blocked_by": list(write_blocks), "repeat_type": "none", "recurrence_authoritative_get": "not_in_documented_get", "occurrence_get_repeat_type": "omitted_on_inspected_live_get", "caller_schedule_keys": ["starts_at", "duration", "service_route_ids", "instructions"], "missing_schedule_gate": "missing_field", "starts_at_date_only": "YYYY-MM-DD", "offset_starts_at": "date_post_plus_one_schedule_patch", "timed_create_ready": False, "starts_at_post_clock_live_tested": False, "starts_at_datetime_format_unverified": True, "price": "catalog_default_or_explicit_approved_override", "production": "explicit_or_template_default_only", "callback": "explicit_boolean_only", "use_time_window_sent": False, "promised_window_enforced": False, "initial_treatment_only": True, "response_schema_verified": False, "first_live_creation_approval_required": True, "readback_reconciliation": "immediate_plus_two_reads_no_replay"},
+            "add_customer_contact": {"propose": True, "live_tested": False, "execute_blocked_by": list(write_blocks), "method": "POST", "path": "/v3.1/customers/{customer_id}/contacts", "edits": False, "portal_access": "not_sent", "notification_changes": "not_sent"},
             "update_customer_primary_email": {"propose": True, "live_tested": False, "execute_blocked_by": list(write_blocks), "caller_field": "primary_email", "sole_field": "invoice_email", "location_email_patch": "not_sent", "same_as_billing_location_email_propagation": "observed_once_not_proven_for_other_locations", "notice_delivery": "not_audited"},
             "update_work_order_status": {
                 "propose": bool(mapping_verified),
@@ -272,8 +277,15 @@ def current_gates(
                 "nested_id": "work_order_id",
                 "status_field": "service_appointment[appointment_occurrences_attributes][][status]",
                 "status_value": "catalog_string",
-                "catalog": "GET /v3.1/statuses/i18n_statuses?entity_type=appointment_occurrence",
-                "catalog_response_live_verified": False,
+                "catalog": "GET /v3.1/statuses",
+                "catalog_shape": "bare_array_id_name_value_color_font_color",
+                "catalog_response_live_verified": True,
+                "write_field": "value",
+                "label_field": "name",
+                "id_is_not_the_write_value": True,
+                "i18n_catalog": "GET /v3.1/statuses/i18n_statuses?entity_type=appointment_occurrence",
+                "i18n_shape": "bare_string_map_without_custom_statuses",
+                "i18n_is_not_the_write_catalog": True,
                 "transitions": "not_in_spec",
                 "readback_reconciliation": "immediate_plus_two_reads_no_replay",
                 "other_fields": "not_sent",

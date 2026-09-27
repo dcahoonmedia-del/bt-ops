@@ -94,6 +94,56 @@ def occurrence_ids(record: dict[str, Any]) -> dict[str, Any]:
         "confirmed": row.get("confirmed"),
         "instructions": row.get("instructions") if "instructions" in row else None,
         "private_notes": row.get("private_notes") if "private_notes" in row else None,
+        "production_value": row.get("production_value") if "production_value" in row else None,
+        "callback": row.get("callback") if "callback" in row else None,
+        "recurrence": recurrence_provenance(row),
+    }
+
+
+def recurrence_provenance(row: dict[str, Any]) -> dict[str, Any]:
+    """Report repeat_type only when this occurrence payload actually contains it.
+
+    Live GET /v3.1/work_orders/{id}, show_plain, and the date list omit repeat_type.
+    Swagger documents it on the create/update body and on agreement appointments.
+    Those are not a one-time occurrence read. A submitted POST body is not readback.
+    """
+    bound = {
+        "bound_occurrence_id": row.get("id"),
+        "bound_service_appointment_id": row.get("service_appointment_id"),
+    }
+    repeat = row.get("repeat_type") if "repeat_type" in row else None
+    if repeat is None or str(repeat).strip() == "":
+        return {
+            "verified": False,
+            "repeat_type": None,
+            "repeat_period": row.get("repeat_period") if "repeat_period" in row else None,
+            "authoritative_source": "not_in_documented_get",
+            "reason": "occurrence_get_omits_repeat_type",
+            "live_get_shape": True,
+            "examined": [
+                "GET /v3.1/work_orders/{occurrence_id}",
+                "GET /v3.1/work_orders/{occurrence_id}/show_plain",
+                "GET /v3.1/work_orders",
+            ],
+            "rejected_substitutes": [
+                "submitted_post_body",
+                "single_schedule_row",
+                "GET /v3.1/service_agreement_setups/{id}/agreement_appointments/{id}",
+            ],
+            **bound,
+        }
+    text = str(repeat).strip()
+    series = row.get("appointment_occurrences")
+    contradictory = text.lower() not in {"none", "one_time"} or bool(row.get("series_id")) or row.get("recurring") is True or (isinstance(series, list) and len(series) > 1)
+    return {
+        "verified": not contradictory,
+        "repeat_type": text,
+        "repeat_period": row.get("repeat_period") if "repeat_period" in row else None,
+        "authoritative_source": "occurrence_field",
+        "live_get_shape": False,
+        "reason": "recurrence_mismatch" if contradictory else "present_on_occurrence_payload",
+        "note": "This payload includes repeat_type. Inspected live occurrence GETs omitted it. This is not a newly discovered endpoint.",
+        **bound,
     }
 
 
@@ -235,11 +285,11 @@ def snapshot_hash(snapshot: dict[str, Any]) -> str:
 
 
 def parse_work_order_status_catalog(body: Any) -> list[dict[str, Any]]:
-    """Turn a statuses catalog body into write strings. Unknown shapes fail closed.
+    """Turn GET /v3.1/statuses into write strings. Unknown shapes fail closed.
 
-    The swagger response model is null. A list of strings uses each string as the
-    PATCH value. An object uses the first present string among value, status, name,
-    and label. acts_as and id are never the write value. A bare string map is rejected.
+    The observed custom catalog is a bare array of objects. `value` is the PATCH
+    string. `name` is the label. `id` is metadata and is never the write value.
+    A bare string-to-string map is the i18n catalog and is rejected here.
     """
     rows = _status_catalog_rows(body)
     entries: list[dict[str, Any]] = []
@@ -248,7 +298,7 @@ def parse_work_order_status_catalog(body: Any) -> list[dict[str, Any]]:
             text = row.strip()
             if not text:
                 raise GateError("work_order_status_catalog_unverified")
-            entries.append({"write": text, "label": text, "labels": [text]})
+            entries.append({"write": text, "label": text, "labels": [text], "id": None})
             continue
         if not isinstance(row, dict):
             raise GateError("work_order_status_catalog_unverified")
@@ -256,12 +306,24 @@ def parse_work_order_status_catalog(body: Any) -> list[dict[str, Any]]:
         if write is None:
             raise GateError("work_order_status_catalog_unverified")
         labels = [write]
-        for key in ("label", "name", "status", "value"):
+        for key in ("name", "label"):
             item = row.get(key)
             if isinstance(item, str) and item.strip() and item.strip() not in labels:
                 labels.append(item.strip())
-        label = row.get("label") if isinstance(row.get("label"), str) and row.get("label").strip() else write
-        entries.append({"write": write, "label": label.strip(), "labels": labels})
+        name = row.get("name") if isinstance(row.get("name"), str) and row.get("name").strip() else None
+        label = name or (row.get("label").strip() if isinstance(row.get("label"), str) and row.get("label").strip() else write)
+        status_id = row.get("id")
+        if isinstance(status_id, bool) or not isinstance(status_id, int):
+            status_id = None
+        entries.append({
+            "write": write,
+            "label": label,
+            "labels": labels,
+            "id": status_id,
+            "name": name,
+            "color": row.get("color") if "color" in row else None,
+            "font_color": row.get("font_color") if "font_color" in row else None,
+        })
     if not entries:
         raise GateError("work_order_status_catalog_unverified")
     return entries
@@ -287,10 +349,9 @@ def _status_catalog_rows(body: Any) -> list[Any]:
 
 
 def _status_write_value(row: dict[str, Any]) -> str | None:
-    for key in ("value", "status", "name", "label"):
-        item = row.get(key)
-        if isinstance(item, str) and item.strip():
-            return item.strip()
+    item = row.get("value")
+    if isinstance(item, str) and item.strip():
+        return item.strip()
     return None
 
 
@@ -495,13 +556,24 @@ class FakeTransport:
         self.services = [_catalog_service()]
         self.templates = [_catalog_template()]
         self.readback_line_price = None
-        # Stand-in for GET /statuses/i18n_statuses. Not the live account enum.
+        self.readback_taxable = None
+        # Live occurrence GETs omit repeat_type. Tests that need a successful
+        # readback of other fields opt in. That opt-in is not the live shape.
+        self.include_repeat_type_on_occurrence = False
+        self.i18n_statuses: Any = {
+            "scheduled": "Scheduled",
+            "complete": "Complete",
+            "flagged": "Flagged",
+            "missed_appointment": "Missed",
+            "cancelled": "Cancelled",
+        }
+        # Stand-in for GET /statuses. Not a hardcoded account enum.
         self.work_order_statuses: Any = [
-            {"label": "Scheduled", "value": "Scheduled"},
-            {"label": "Today - Anytime", "value": "Today - Anytime"},
-            {"label": "Flagged", "value": "Flagged"},
-            {"label": "Left Message with Customer", "value": "Left Message with Customer"},
-            {"label": "Missed", "value": "Missed Appointment"},
+            {"id": 8013, "name": "Scheduled", "value": "Scheduled"},
+            {"id": 12501, "name": "Today - Anytime", "value": "Today - Anytime"},
+            {"id": 8014, "name": "Flagged", "value": "Flagged"},
+            {"id": 8015, "name": "Left Message with Customer", "value": "Left Message with Customer"},
+            {"id": 8011, "name": "Missed Appointment", "value": "Missed"},
         ]
 
     def add_customer(self, customer: dict[str, Any], location: dict[str, Any]) -> None:
@@ -555,10 +627,12 @@ class FakeTransport:
             phone = str((query or {}).get("phone") or "")
             found = [row for row in self.customers.values() if phone and phone in json.dumps(row)]
             return 200, {"data": found}
+        if method == "GET" and path == "/statuses":
+            return 200, self.work_order_statuses
         if method == "GET" and path == "/statuses/i18n_statuses":
             if str((query or {}).get("entity_type") or "") != "appointment_occurrence":
                 return 400, {"error": "entity_type"}
-            return 200, self.work_order_statuses
+            return 200, self.i18n_statuses
         if method == "GET" and path == "/users":
             if self.users is None:
                 return 503, {"error": "users_unavailable"}
@@ -643,9 +717,12 @@ class FakeTransport:
             if wo is None:
                 return 404, None
             view = dict(wo)
-            if self.readback_line_price is not None and view.get("line_items"):
+            if view.get("line_items") and (self.readback_line_price is not None or self.readback_taxable is not None):
                 view["line_items"] = [dict(item) for item in view["line_items"]]
-                view["line_items"][0]["price"] = self.readback_line_price
+                if self.readback_line_price is not None:
+                    view["line_items"][0]["price"] = self.readback_line_price
+                if self.readback_taxable is not None:
+                    view["line_items"][0]["taxable"] = self.readback_taxable
             return 200, {"appointment_occurrence": view}
         if method == "PATCH" and _WORK_ORDER.match(path):
             appointment_id = path.split("/")[2]
@@ -797,17 +874,22 @@ class FakeTransport:
             "service_appointment_id": appointment_id,
             "customer_id": appointment.get("customer_id"),
             "service_location_id": appointment.get("service_location_id"),
-            "repeat_type": appointment.get("repeat_type"),
-            "repeat_period": appointment.get("repeat_period"),
             "starts_at": occ.get("starts_at"),
             "starts_at_date": occ.get("starts_at"),
             "duration": occ.get("duration"),
             "instructions": occ.get("instructions"),
-            "production_value": occ.get("production_value"),
             "service_route_ids": list(occ.get("service_route_ids") or []),
             "line_items": lines,
             "status": "scheduled",
         }
+        if self.include_repeat_type_on_occurrence:
+            stored["repeat_type"] = appointment.get("repeat_type")
+            if "repeat_period" in appointment:
+                stored["repeat_period"] = appointment.get("repeat_period")
+        if "production_value" in occ:
+            stored["production_value"] = occ.get("production_value")
+        if "callback" in occ:
+            stored["callback"] = occ.get("callback")
         self.work_orders[str(occurrence_id)] = stored
         response: dict[str, Any] = {
             "echo": body,
@@ -825,7 +907,7 @@ class FakeTransport:
         return self._next_id
 
 def _assert_typed_path(method: str, path: str) -> None:
-    if method == "GET" and path in {"/profile", "/service_routes", "/customers/search", "/customers/search_by_phone", "/customers", "/users", "/work_order_templates", "/services", "/location_types", "/statuses/i18n_statuses"}:
+    if method == "GET" and path in {"/profile", "/service_routes", "/customers/search", "/customers/search_by_phone", "/customers", "/users", "/work_order_templates", "/services", "/location_types", "/statuses", "/statuses/i18n_statuses"}:
         return
     if method == "GET" and (
         _CUSTOMER.match(path)
@@ -847,6 +929,68 @@ def _assert_typed_path(method: str, path: str) -> None:
     if method == "POST" and (_LOCATION_LIST.match(path) or _CONTACT_LIST.match(path)):
         return
     raise GateError("unknown_operation", method=method, path=path)
+
+
+_SERVICE_KEYS = (
+    "id",
+    "description",
+    "acronym",
+    "start_time",
+    "price",
+    "frequency",
+    "site_time",
+    "created_at",
+    "updated_at",
+    "color",
+    "category",
+    "account_id",
+    "details",
+    "imported_from_code",
+    "imported_from_id",
+    "sf_id",
+    "sf_sync_error",
+    "preferred_materials",
+)
+
+
+def service_active_eligibility(row: dict[str, Any]) -> str:
+    """Catalog membership is not an active flag. An explicit inactive value is rejected later."""
+    for key in ("active", "enabled"):
+        if key not in row:
+            continue
+        flag = row.get(key)
+        if flag is False or (isinstance(flag, str) and flag.strip().lower() in {"false", "inactive", "disabled", "0"}):
+            return "inactive"
+        if flag is True or (isinstance(flag, str) and flag.strip().lower() in {"true", "active", "enabled", "1"}):
+            return "explicit_true_not_proven_selectable"
+    if row.get("inactive") is True or row.get("disabled") is True:
+        return "inactive"
+    return "unverified"
+
+
+def service_catalog_record(row: dict[str, Any], listed: dict[str, Any]) -> dict[str, Any]:
+    fields = {key: row.get(key) for key in _SERVICE_KEYS if key in row}
+    complete = bool(listed.get("complete")) and not listed.get("repeated_page") and not listed.get("truncated") and not listed.get("partial_error")
+    return {
+        "id": row.get("id"),
+        "description": row.get("description"),
+        "price": row.get("price") if "price" in row else None,
+        "fields": fields,
+        "source": "GET /v3.1/services",
+        "get_by_id": "not_in_spec",
+        "list_complete": complete,
+        "active_eligibility": service_active_eligibility(row),
+        "unknowns": {
+            "active": "present" if "active" in row or "enabled" in row else "not_in_response",
+            "taxable": "present" if "taxable" in row else "not_in_response",
+            "production_default": "not_in_response",
+        },
+        "site_time": row.get("site_time") if "site_time" in row else None,
+        "site_time_present": "site_time" in row,
+        "frequency": row.get("frequency") if "frequency" in row else None,
+        "frequency_present": "frequency" in row,
+        "null_is_not_false": True,
+    }
 
 
 def _catalog_service() -> dict[str, Any]:
@@ -1442,9 +1586,9 @@ class TypedFieldworkClient:
         return payload if isinstance(payload, dict) else {}
 
     def list_work_order_statuses(self) -> list[dict[str, Any]]:
-        path = "/statuses/i18n_statuses"
+        path = "/statuses"
         _assert_typed_path("GET", path)
-        status, body = self.transport.request("GET", path, query={"entity_type": "appointment_occurrence"})
+        status, body = self.transport.request("GET", path)
         if status != 200:
             raise GateError("work_order_status_catalog_unverified", status=status)
         return parse_work_order_status_catalog(body)
@@ -1529,6 +1673,40 @@ class TypedFieldworkClient:
 
     def list_services(self) -> dict[str, Any]:
         return self._pages("/services")
+
+    def search_services(self, text: str = "") -> dict[str, Any]:
+        listed = self.list_services()
+        needle = str(text or "").strip().casefold()
+        items = []
+        for row in listed.get("items") or []:
+            if not isinstance(row, dict):
+                continue
+            if needle and needle not in " ".join(str(row.get(key) or "") for key in ("id", "description", "acronym")).casefold():
+                continue
+            items.append(service_catalog_record(row, listed))
+        return {
+            "items": items,
+            "source": "GET /v3.1/services",
+            "get_by_id": "not_in_spec",
+            "complete": bool(listed.get("complete")) and not listed.get("repeated_page") and not listed.get("truncated") and not listed.get("partial_error"),
+            "repeated_page": bool(listed.get("repeated_page")),
+            "truncated": bool(listed.get("truncated")),
+            "partial_error": listed.get("partial_error"),
+            "active_eligibility": "unverified_when_absent",
+            "query": needle,
+        }
+
+    def get_service(self, service_id: str) -> dict[str, Any]:
+        """One row from the already-fetched service list. There is no GET /services/{id}."""
+        service_id = _required_id(service_id)
+        listed = self.list_services()
+        matches = [row for row in listed.get("items") or [] if isinstance(row, dict) and str(row.get("id")) == service_id]
+        complete = bool(listed.get("complete")) and not listed.get("repeated_page") and not listed.get("truncated") and not listed.get("partial_error")
+        if len(matches) != 1:
+            if not complete or listed.get("partial_error"):
+                raise GateError("catalog_disagreement", reason="service_list_incomplete", payable_id=service_id)
+            raise GateError("catalog_disagreement", reason="payable_not_in_services", payable_id=service_id)
+        return service_catalog_record(matches[0], listed)
 
     def list_location_types(self) -> dict[str, Any]:
         return self._pages("/location_types")

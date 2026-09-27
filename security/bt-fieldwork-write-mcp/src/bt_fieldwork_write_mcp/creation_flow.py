@@ -24,6 +24,10 @@ from .allowlist import (
 )
 from .create_contract import response_id
 from .errors import AmbiguousWriteError, GateError
+from .fieldwork import service_active_eligibility, service_catalog_record
+
+PRICE_CATALOG = "catalog/default"
+PRICE_OVERRIDE = "explicit_approved_override"
 
 _WORD = re.compile(r"[a-z0-9]+")
 
@@ -430,6 +434,8 @@ def _configured_service(services: dict[str, Any], payable_id: Any) -> tuple[dict
         raise GateError(GATE_CATALOG, reason="service_id_conflict")
     complete = bool(services.get("complete")) and not services.get("repeated_page") and not services.get("truncated")
     if len(matches) == 1:
+        if service_active_eligibility(matches[0]) == "inactive":
+            raise GateError(GATE_CATALOG, reason="service_inactive", payable_id=matches[0].get("id"), active_eligibility="inactive", active_flag_fabricated=False)
         return matches[0], complete
     if not complete:
         raise GateError(GATE_CATALOG, reason="service_list_incomplete")
@@ -442,23 +448,27 @@ def apply_catalog(appointment: dict[str, Any], catalog: dict[str, Any]) -> dict[
     line = catalog["line"]
     sent_line = dict(line)
     supplied = appointment.get("line_items_attributes")
-    price_source = "template_standard"
+    price_source = PRICE_CATALOG
     standard_price = line["price"]
-    price_basis = "template"
+    inherit_template_defaults = True
     price_resolution = None
+    chosen_service = catalog.get("service")
     if supplied is not None and _is_other_service_line(supplied, line):
         resolved = _resolve_service_catalog_line(supplied[0], catalog, template_price=line["price"])
         sent_line = resolved["sent_line"]
         price_source = resolved["price_source"]
         standard_price = resolved["standard_price"]
-        price_basis = "service_catalog"
+        inherit_template_defaults = False
         price_resolution = resolved["price_resolution"]
+        chosen_service = resolved["service_record"]
     elif supplied is not None:
         if not _line_identity_equal(supplied, sent_line):
             raise GateError(GATE_CATALOG, reason="caller_line_disagrees_with_template")
         sent_line["price"] = money_number(supplied[0]["price"])
-        price_source = "caller"
-        if not money_equal(sent_line["price"], line["price"]):
+        if money_equal(sent_line["price"], line["price"]):
+            price_source = PRICE_CATALOG
+        else:
+            price_source = PRICE_OVERRIDE
             price_resolution = _price_resolution(
                 service_name=line.get("name"),
                 payable_id=line.get("payable_id"),
@@ -466,19 +476,36 @@ def apply_catalog(appointment: dict[str, Any], catalog: dict[str, Any]) -> dict[
                 template_price=line["price"],
                 caller_price=sent_line["price"],
                 final_price=sent_line["price"],
-                price_source="caller",
+                price_source=PRICE_OVERRIDE,
                 override=True,
             )
     source = dict(appointment["appointment_occurrences_attributes"][0])
     starts = source.pop("_starts", None) or {}
-    occurrence = {key: source[key] for key in ("service_route_ids", "starts_at", "duration", "instructions", "production_value") if key in source}
-    if "duration" not in occurrence:
-        occurrence["duration"] = defaults["duration"]
-    if "instructions" not in occurrence:
-        occurrence["instructions"] = defaults["instructions"]
+    occurrence = {key: source[key] for key in ("service_route_ids", "starts_at", "duration", "instructions", "production_value", "callback") if key in source}
+    if inherit_template_defaults:
+        if "duration" not in occurrence:
+            occurrence["duration"] = defaults["duration"]
+        if "instructions" not in occurrence:
+            occurrence["instructions"] = defaults["instructions"]
+        duration_source = "explicit" if "duration" in source else "template_default"
+        instructions_source = "explicit" if "instructions" in source else "template_default"
+    else:
+        missing = [key for key in ("duration", "instructions") if key not in occurrence]
+        if missing:
+            raise GateError("missing_field", fields=missing, reason="generic_service_does_not_inherit_template_defaults")
+        duration_source = "explicit"
+        instructions_source = "explicit"
     schedule_starts = occurrence["starts_at"]
     if starts.get("kind") == "offset_timestamp":
         occurrence["starts_at"] = starts["calendar_date"]
+    if "production_value" in source:
+        production_source = "explicit_approved"
+    elif inherit_template_defaults:
+        occurrence["production_value"] = money_number(defaults["production_value"])
+        production_source = "template_default"
+    else:
+        production_source = "omitted_remote_default_unverified"
+    callback_source = "explicit_approved" if "callback" in source else "not_sent"
     body = {
         "customer_id": appointment["customer_id"],
         "service_location_id": appointment["service_location_id"],
@@ -491,11 +518,6 @@ def apply_catalog(appointment: dict[str, Any], catalog: dict[str, Any]) -> dict[
         raise GateError("unknown_field", fields=["repeat_period"])
     total = money(sent_line["quantity"]) * money(sent_line["price"])
     line_total = int(total) if total == total.to_integral_value() else format(total, "f")
-    if "production_value" not in occurrence:
-        if price_basis == "service_catalog" or (price_source == "caller" and not money_equal(sent_line["price"], line["price"])):
-            occurrence["production_value"] = line_total
-        else:
-            occurrence["production_value"] = money_number(defaults["production_value"])
     return {
         "service_appointment": body,
         "starts": starts,
@@ -505,6 +527,14 @@ def apply_catalog(appointment: dict[str, Any], catalog: dict[str, Any]) -> dict[
         "price_source": price_source,
         "price_resolution": price_resolution,
         "schedule_starts_at": schedule_starts,
+        "production_source": production_source,
+        "production_sent": "production_value" in occurrence,
+        "callback_source": callback_source,
+        "callback_sent": "callback" in occurrence,
+        "duration_source": duration_source,
+        "instructions_source": instructions_source,
+        "service_record": chosen_service,
+        "active_eligibility": ((chosen_service or {}).get("active_eligibility") or "unverified") if isinstance(chosen_service, dict) else "unverified",
     }
 
 
@@ -545,11 +575,12 @@ def _resolve_service_catalog_line(left: dict[str, Any], catalog: dict[str, Any],
         "payable_type": "Service",
         "taxable": False,
     }
-    source = "service_catalog" if matches else "caller"
+    source = PRICE_CATALOG if matches else PRICE_OVERRIDE
     return {
         "sent_line": sent_line,
         "price_source": source,
         "standard_price": catalog_price,
+        "service_record": service_catalog_record(service, catalog.get("services") or {}),
         "price_resolution": _price_resolution(
             service_name=description,
             payable_id=service.get("id"),
@@ -705,6 +736,9 @@ def journal_partial(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 partial["reason"] = result["reason"]
             if result.get("field"):
                 partial["field"] = result["field"]
+            for key in ("mismatches", "unverified", "field_checks"):
+                if result.get(key) is not None:
+                    partial[key] = result[key]
             if result.get("response"):
                 partial["response"] = result["response"]
     partial["recovery"] = "new_exact_approved_proposal"
@@ -974,29 +1008,10 @@ def post_customer_steps(service: Any, proposal: dict[str, Any], attempt_id: str)
     contact = plan.get("contact")
     contact_id = None
     if contact:
-        if not _proposal_current(service, proposal):
-            return stop_creation(store, proposal, attempt_id)
-        already = _one_contact(client, customer_id, contact)
-        if already in {"ambiguous", "conflict"}:
-            if already == "conflict":
-                _stop_unsent(store, proposal, "contact_post", {"contact": contact}, "contact_field_conflict", customer_id=customer_id, location_id=location_id)
-            return stop_creation(store, proposal, attempt_id)
-        if already:
-            contact_id = int(already)
-        else:
-            body = {"contact": contact}
-            step_id = _step(store, proposal["proposal_id"], "contact_post", body, customer_id=customer_id, location_id=location_id)
-            response, diagnostic = _sent_write(lambda: client.create_contact(customer_id, body), client)
-            contact_id = response_id(response) if _id_status_accepted(diagnostic) else None
-            if contact_id is None:
-                found = _one_contact(client, customer_id, contact)
-                if not found or found in {"ambiguous", "conflict"}:
-                    reason = "contact_field_conflict" if found == "conflict" else "contact_post_unresolved"
-                    _ambiguous(store, step_id, customer_id=customer_id, location_id=location_id)
-                    store.finish_creation_step(step_id, "ambiguous", {"retry": False, "reason": reason, "response": _public_diagnostic(diagnostic)}, customer_id=customer_id, location_id=location_id)
-                    return stop_creation(store, proposal, attempt_id)
-                contact_id = int(found)
-            _succeed(store, step_id, {"id": contact_id, "response": _public_diagnostic(diagnostic)}, customer_id=customer_id, contact_id=str(contact_id), location_id=location_id)
+        posted = commit_contact(service, proposal, attempt_id, customer_id, contact, location_id=location_id, reject_existing=False)
+        if not posted["ok"]:
+            return posted["stopped"]
+        contact_id = posted["contact_id"]
     address = None if not plan.get("location_patch") else plan["location_patch"]["address_attributes"]
     readback = customer_readback(
         client,
@@ -1174,6 +1189,57 @@ def _contact_kind(item: dict[str, Any], contact: dict[str, Any], customer_id: st
     return "match"
 
 
+def commit_contact(
+    service: Any,
+    proposal: dict[str, Any],
+    attempt_id: str,
+    customer_id: str,
+    contact: dict[str, Any],
+    *,
+    location_id: str | None,
+    reject_existing: bool,
+) -> dict[str, Any]:
+    """POST one contact, or reconcile one ambiguous response. Never send a second POST."""
+    client = service.client
+    store = service.store
+    ids = {"customer_id": customer_id, "location_id": location_id}
+    if not _proposal_current(service, proposal):
+        return {"ok": False, "stopped": stop_creation(store, proposal, attempt_id)}
+    already = _one_contact(client, customer_id, contact)
+    if already in {"ambiguous", "conflict"}:
+        if already == "conflict":
+            _stop_unsent(store, proposal, "contact_post", {"contact": contact}, "contact_field_conflict", **ids)
+        return {"ok": False, "stopped": stop_creation(store, proposal, attempt_id)}
+    if already:
+        if reject_existing:
+            _stop_unsent(store, proposal, "contact_post", {"contact": contact}, "contact_duplicate", **ids)
+            return {"ok": False, "stopped": stop_creation(store, proposal, attempt_id)}
+        return {"ok": True, "contact_id": int(already), "reused": True, "reconciled": False}
+    body = {"contact": contact}
+    step_id = _step(store, proposal["proposal_id"], "contact_post", body, **ids)
+    response, diagnostic = _sent_write(lambda: client.create_contact(customer_id, body), client)
+    contact_id = response_id(response) if _id_status_accepted(diagnostic) else None
+    reconciled = False
+    if contact_id is None:
+        found = _one_contact(client, customer_id, contact)
+        if not found or found in {"ambiguous", "conflict"}:
+            reason = "contact_field_conflict" if found == "conflict" else "contact_post_unresolved"
+            _ambiguous(store, step_id, **ids)
+            store.finish_creation_step(step_id, "ambiguous", {"retry": False, "reason": reason, "response": _public_diagnostic(diagnostic)}, **ids)
+            return {"ok": False, "stopped": stop_creation(store, proposal, attempt_id)}
+        contact_id = int(found)
+        reconciled = True
+    _succeed(store, step_id, {"id": contact_id, "response": _public_diagnostic(diagnostic), "reconciled": reconciled}, contact_id=str(contact_id), **ids)
+    return {"ok": True, "contact_id": contact_id, "reused": False, "reconciled": reconciled}
+
+
+def verify_contact(client: Any, customer_id: str, contact_id: int, contact: dict[str, Any]) -> dict[str, Any]:
+    found = _one_contact(client, customer_id, contact)
+    if found in {None, "ambiguous", "conflict"} or str(found) != str(contact_id):
+        raise GateError(GATE_READBACK, reason="contact_not_verified", field="contact")
+    return {"contact_id": int(contact_id), "customer_id": str(customer_id), "verified": True}
+
+
 def _one_contact(client: Any, customer_id: str, contact: dict[str, Any]) -> str | None:
     try:
         listed = client.list_contacts(customer_id)
@@ -1311,15 +1377,19 @@ def _instructions_equal(sent: Any, got: Any) -> bool:
     return sent == got
 
 
+def _recurrence_evidence(row: dict[str, Any]) -> dict[str, Any]:
+    from .fieldwork import recurrence_provenance
+
+    return recurrence_provenance(row)
+
+
 def _nonrecurring(row: dict[str, Any]) -> None:
-    repeat = row.get("repeat_type")
-    if repeat is None or str(repeat).strip() == "":
-        raise GateError(GATE_READBACK, reason="repeat_type_unverified")
-    if str(repeat).strip().lower() not in {"none", "one_time"} or row.get("series_id") or row.get("recurring") is True:
+    evidence = _recurrence_evidence(row)
+    if evidence.get("verified") is True:
+        return
+    if evidence.get("reason") == "recurrence_mismatch":
         raise GateError(GATE_READBACK, reason="recurrence_mismatch", field="repeat_type")
-    series = row.get("appointment_occurrences")
-    if isinstance(series, list) and len(series) > 1:
-        raise GateError(GATE_READBACK, reason="recurrence_mismatch", field="repeat_type")
+    raise GateError(GATE_READBACK, reason="repeat_type_unverified", field="repeat_type", recurrence=evidence)
 
 
 def _schedule_pair(schedule: dict[str, Any], occurrence_id: Any, appointment_id: Any) -> Any:
@@ -1391,33 +1461,89 @@ def work_order_readback(client: Any, sent: dict[str, Any], occurrence_id: str, a
         _mismatch("service_route_ids", list(occurrence["service_route_ids"]), list(row.get("service_route_ids") or []))
     if not _instructions_equal(occurrence.get("instructions"), row.get("instructions")):
         _mismatch("instructions", occurrence.get("instructions"), row.get("instructions"))
-    _nonrecurring(row)
-    if not money_equal(occurrence.get("production_value"), row.get("production_value")):
-        _mismatch("production_value", occurrence.get("production_value"), row.get("production_value"))
+    mismatches: list[dict[str, Any]] = []
+    unverified: list[dict[str, Any]] = []
+    checks: dict[str, Any] = {}
+    recurrence = _recurrence_evidence(row)
+    checks["repeat_type"] = recurrence
+    if recurrence["verified"] is not True:
+        if recurrence.get("reason") == "recurrence_mismatch":
+            mismatches.append({"field": "repeat_type", "expected": "none", "actual": recurrence.get("repeat_type"), "verified": False})
+        else:
+            unverified.append({"field": "repeat_type", "reason": "repeat_type_unverified", "verified": False, "provenance": recurrence})
+    if "production_value" in occurrence:
+        if "production_value" not in row or not money_equal(occurrence.get("production_value"), row.get("production_value")):
+            mismatches.append({"field": "production_value", "expected": occurrence.get("production_value"), "actual": row.get("production_value"), "verified": False})
+        else:
+            checks["production_value"] = {"verified": True, "source": "occurrence_field"}
+    else:
+        checks["production_value"] = {
+            "verified": False,
+            "reason": "omitted_remote_default_unverified",
+            "observed": row.get("production_value") if "production_value" in row else None,
+        }
+        unverified.append(checks["production_value"] | {"field": "production_value"})
+    if "callback" in occurrence:
+        if row.get("callback") is not occurrence.get("callback"):
+            mismatches.append({"field": "callback", "expected": occurrence.get("callback"), "actual": row.get("callback"), "verified": False})
+        else:
+            checks["callback"] = {"verified": True}
+    else:
+        checks["callback"] = {"verified": False, "reason": "not_sent", "observed": row.get("callback") if "callback" in row else None}
     sent_lines = sent["line_items_attributes"]
     got_lines = row.get("line_items") or []
     if len(got_lines) != len(sent_lines):
-        raise GateError(GATE_READBACK, reason="line_item_count_mismatch")
+        raise GateError(GATE_READBACK, reason="line_item_count_mismatch", mismatches=mismatches, unverified=unverified, field_checks=checks)
     compared_lines = []
     for sent_line, got_line in zip(sent_lines, got_lines):
         compared = {
-            "payable_id": got_line.get("payable_id") if _same_id(sent_line.get("payable_id"), got_line.get("payable_id")) else _mismatch("payable_id", sent_line.get("payable_id"), got_line.get("payable_id")),
-            "payable_type": _require_equal("payable_type", sent_line.get("payable_type"), got_line.get("payable_type")),
-            "type": _require_equal("type", sent_line.get("type"), got_line.get("type")),
-            "name": _require_equal("name", sent_line.get("name"), got_line.get("name")),
-            "taxable": _require_equal("taxable", sent_line.get("taxable"), got_line.get("taxable")),
+            "payable_id": got_line.get("payable_id"),
+            "payable_type": got_line.get("payable_type"),
+            "type": got_line.get("type"),
+            "name": got_line.get("name"),
+            "taxable": got_line.get("taxable"),
         }
+        for key in ("payable_id", "payable_type", "type", "name", "taxable"):
+            expected = sent_line.get(key)
+            actual = got_line.get(key)
+            same = _same_id(expected, actual) if key == "payable_id" else expected == actual
+            if not same:
+                mismatches.append({"field": key, "expected": expected, "actual": actual, "verified": False})
+                checks[key] = {"verified": False, "reason": "field_mismatch"}
+            else:
+                checks[key] = {"verified": True}
         if not money_equal(sent_line.get("quantity"), got_line.get("quantity")) or not money_equal(sent_line.get("price"), got_line.get("price")):
-            _mismatch("price", sent_line.get("price"), got_line.get("price"))
+            mismatches.append({"field": "price", "expected": sent_line.get("price"), "actual": got_line.get("price"), "verified": False})
+            checks["price"] = {"verified": False, "reason": "field_mismatch"}
+        else:
+            checks["price"] = {"verified": True}
         sent_total = money(sent_line["quantity"]) * money(sent_line["price"])
         got_total = money(got_line["quantity"]) * money(got_line["price"])
         if sent_total != got_total:
-            _mismatch("line_total", sent_total, got_total)
+            mismatches.append({"field": "line_total", "expected": sent_total, "actual": got_total, "verified": False})
         compared["quantity"] = got_line.get("quantity")
         compared["price"] = got_line.get("price")
         compared["total"] = int(got_total) if got_total == got_total.to_integral_value() else format(got_total, "f")
         compared_lines.append(compared)
+    if mismatches or any(item.get("field") == "repeat_type" for item in unverified):
+        first = mismatches[0] if mismatches else unverified[0]
+        reason = "recurrence_mismatch" if first.get("field") == "repeat_type" and first in mismatches else ("repeat_type_unverified" if not mismatches else "field_mismatch")
+        if mismatches and mismatches[0]["field"] == "repeat_type":
+            reason = "recurrence_mismatch"
+        elif not mismatches:
+            reason = "repeat_type_unverified"
+        else:
+            reason = "field_mismatch"
+        raise GateError(
+            GATE_READBACK,
+            reason=reason,
+            field=first.get("field"),
+            mismatches=mismatches,
+            unverified=unverified,
+            field_checks=checks,
+        )
     labels = response_labels(client)
+    production_check = checks["production_value"]
     return {
         "id": row.get("id"),
         "occurrence_id": row.get("id"),
@@ -1428,7 +1554,11 @@ def work_order_readback(client: Any, sent: dict[str, Any], occurrence_id: str, a
         "timezone": "America/New_York",
         "clock_time_sent": "T" in str(occurrence["starts_at"]),
         "duration": row.get("duration"),
-        "production_value": row.get("production_value"),
+        "production_value": row.get("production_value") if production_check.get("verified") else None,
+        "production_verification": production_check,
+        "recurrence": recurrence,
+        "field_checks": checks,
+        "callback": occurrence.get("callback") if "callback" in occurrence else None,
         "service_route_ids": row.get("service_route_ids"),
         "instructions": row.get("instructions"),
         "price": compared_lines[0]["price"],
@@ -1567,8 +1697,9 @@ def _stop_readback(
         "occurrence_id": _stored_id(occurrence_id),
         "service_appointment_id": _stored_id(appointment_id),
     }
-    if exc.detail.get("field"):
-        detail["field"] = exc.detail["field"]
+    for key in ("field", "mismatches", "unverified", "field_checks"):
+        if exc.detail.get(key) is not None:
+            detail[key] = exc.detail[key]
     step_id = _step(store, proposal["proposal_id"], "readback", {"occurrence_id": occurrence_id, "service_appointment_id": appointment_id}, **ids)
     store.finish_creation_step(step_id, "failed", detail, **ids)
     stopped = stop_creation(store, proposal, attempt_id)
@@ -1629,7 +1760,7 @@ def _created_state_matches(row: dict[str, Any], sent: dict[str, Any], occurrence
         return False
     if row.get("instructions") != occurrence.get("instructions"):
         return False
-    if not money_equal(occurrence.get("production_value"), row.get("production_value")):
+    if "production_value" in occurrence and ("production_value" not in row or not money_equal(occurrence.get("production_value"), row.get("production_value"))):
         return False
     sent_lines = sent.get("line_items_attributes") or []
     got_lines = row.get("line_items") or []

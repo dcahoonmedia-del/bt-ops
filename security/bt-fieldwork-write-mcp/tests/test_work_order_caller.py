@@ -90,7 +90,7 @@ class WorkOrderCallerTests(unittest.TestCase):
         proposed = self._mcp(_flat())
         self.assertTrue(proposed["ok"], proposed)
         pricing = proposed["after"]["service_pricing"]
-        self.assertEqual(pricing["price_source"], "template_standard")
+        self.assertEqual(pricing["price_source"], "catalog/default")
         self.assertEqual(pricing["price"], proposed["after"]["catalog"]["line"]["price"])
         self.assertEqual(pricing["total"], pricing["price"])
         self.assertEqual(proposed["after"]["production_value"], pricing["price"])
@@ -107,10 +107,10 @@ class WorkOrderCallerTests(unittest.TestCase):
         standard = self._mcp(_flat())
         quoted = self._mcp(_flat(line_items=[_line(175)], starts_at="2026-10-03"))
         self.assertTrue(quoted["ok"], quoted)
-        self.assertEqual(quoted["after"]["price_source"], "caller")
+        self.assertEqual(quoted["after"]["price_source"], "explicit_approved_override")
         self.assertEqual(quoted["after"]["price"], 175)
         self.assertEqual(quoted["after"]["line_total"], 175)
-        self.assertEqual(quoted["after"]["production_value"], 175)
+        self.assertEqual(quoted["after"]["production_value"], 150)
         self.assertEqual(quoted["after"]["standard_price"], standard["after"]["standard_price"])
         self.assertNotEqual(quoted["digest"], standard["digest"])
         line = quoted["after"]["documented_request"]["service_appointment"]["line_items_attributes"][0]
@@ -120,7 +120,7 @@ class WorkOrderCallerTests(unittest.TestCase):
         self.assertTrue(done["ok"], done)
         self.assertEqual(done["readback"]["price"], 175)
         self.assertEqual(done["readback"]["line_total"], 175)
-        self.assertEqual(done["readback"]["production_value"], 175)
+        self.assertEqual(done["readback"]["production_value"], 150)
         posts = [call for call in self.h.transport.calls if call["method"] == "POST" and call["path"] == "/work_orders"]
         self.assertEqual(len(posts), 1)
         self.assertEqual(posts[0]["body"]["service_appointment"]["line_items_attributes"][0]["price"], 175)

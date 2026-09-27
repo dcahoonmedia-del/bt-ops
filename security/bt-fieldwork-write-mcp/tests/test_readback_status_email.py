@@ -377,8 +377,8 @@ class ReadbackStatusEmailTests(unittest.TestCase):
         self.assertEqual(proposed["after"]["only_change"], "status")
         self.assertNotIn("starts_at", proposed["after"])
         self.assertNotIn("instructions", proposed["after"])
-        catalog = [call for call in self.h.transport.calls if call["path"] == "/statuses/i18n_statuses"]
-        self.assertEqual(catalog[-1]["query"], {"entity_type": "appointment_occurrence"})
+        catalog = [call for call in self.h.transport.calls if call["path"] == "/statuses"]
+        self.assertIsNone(catalog[-1]["query"])
         self.assertEqual(self._status_patches(), [])
         self._drop(proposed)
 
@@ -389,8 +389,15 @@ class ReadbackStatusEmailTests(unittest.TestCase):
         )
         self.assertTrue(missed["ok"], missed)
         self.assertEqual(missed["after"]["status"], "Missed")
-        self.assertEqual(missed["after"]["status_write"], "Missed Appointment")
+        self.assertEqual(missed["after"]["status_write"], "Missed")
         self._drop(missed)
+        labeled = self.h.service.propose(
+            "update_work_order_status",
+            {"work_order_id": 8210, "service_appointment_id": 1501, "status": "Missed Appointment"},
+            IDENTITY,
+        )
+        self.assertEqual(labeled["after"]["status_write"], "Missed")
+        self._drop(labeled)
 
         flagged = self.h.service.propose(
             "update_work_order_status",
@@ -952,14 +959,17 @@ class ReadbackStatusEmailTests(unittest.TestCase):
         self.assertEqual(status["method"], "PATCH")
         self.assertEqual(status["status_value"], "catalog_string")
         self.assertEqual(status["other_fields"], "not_sent")
-        self.assertFalse(status["catalog_response_live_verified"])
+        self.assertTrue(status["catalog_response_live_verified"])
+        self.assertEqual(status["transitions"], "not_in_spec")
+        self.assertEqual(status["catalog"], "GET /v3.1/statuses")
+        self.assertTrue(status["i18n_is_not_the_write_catalog"])
         self.assertEqual(status["readback_reconciliation"], "immediate_plus_two_reads_no_replay")
         phone = gates["update_customer_phone"]
         self.assertFalse(phone["implemented"])
         self.assertEqual(phone["reason"], "no_verified_billing_phone_patch_helper")
         server = build_mcp(self.h.service, self.h.settings, JwtTokenVerifier(self.h.settings))
         tools = asyncio.run(server.list_tools())
-        self.assertEqual(len(tools), 14)
+        self.assertEqual(len(tools), 17)
         propose = next(tool for tool in tools if tool.name == "propose_write")
         self.assertEqual(propose.description, PROPOSE_DESCRIPTION)
         text = propose.description

@@ -30,6 +30,7 @@ from .allowlist import (
     NOTE_TEXT_FIELDS,
     CUSTOMER_EMAIL_FIELDS,
     GATE_STATUS_FAILED,
+    OP_ADD_CUSTOMER_CONTACT,
     OP_CREATE_CUSTOMER,
     OP_CREATE_WORK_ORDER,
     OP_LOCATION_NOTES,
@@ -38,6 +39,7 @@ from .allowlist import (
     OP_WORK_ORDER_NOTES,
     OP_WORK_ORDER_SCHEDULE,
     SCHEDULE_WRITE_FIELDS,
+    CUSTOMER_CONTACT_FIELDS,
     WORK_ORDER_NOTE_FIELDS,
     WORK_ORDER_SCHEDULE_FIELDS,
     WORK_ORDER_STATUS_FIELDS,
@@ -236,6 +238,8 @@ class WriteService:
                 if not self.settings.mapping_verified:
                     return self._fail(GATE_MAPPING_UNVERIFIED, operation=operation)
                 return self._propose_work_order_status(payload, identity)
+            if operation == OP_ADD_CUSTOMER_CONTACT:
+                return self._propose_contact(payload, identity)
         except UnknownFieldError as exc:
             return self._fail(exc.args[0].split(":")[0], fields=exc.fields)
         except GateError as exc:
@@ -409,13 +413,23 @@ class WriteService:
             "schedule": schedule,
             "duration": occurrence.get("duration"),
             "instructions": occurrence.get("instructions"),
-            "production_value": occurrence.get("production_value"),
+            "production_value": occurrence.get("production_value") if applied.get("production_sent") else None,
+            "production_source": applied.get("production_source"),
+            "production_sent": applied.get("production_sent"),
+            "callback": occurrence.get("callback") if applied.get("callback_sent") else None,
+            "callback_source": applied.get("callback_source"),
+            "callback_sent": applied.get("callback_sent"),
+            "duration_source": applied.get("duration_source"),
+            "instructions_source": applied.get("instructions_source"),
+            "service_record": applied.get("service_record"),
+            "active_eligibility": applied.get("active_eligibility"),
+            "active_flag_fabricated": False,
             "line_total": applied.get("line_total"),
             "price": applied.get("price"),
             "standard_price": applied.get("standard_price"),
             "price_source": applied.get("price_source"),
             **({} if applied.get("price_resolution") is None else {"price_resolution": applied["price_resolution"]}),
-            "service_pricing": {"name": sent_line.get("name"), "price": applied.get("price"), "standard_price": applied.get("standard_price"), "price_source": applied.get("price_source"), "quantity": sent_line.get("quantity"), "payable_id": sent_line.get("payable_id"), "payable_type": sent_line.get("payable_type"), "taxable": sent_line.get("taxable"), "total": applied.get("line_total"), "production_value": occurrence.get("production_value")},
+            "service_pricing": {"name": sent_line.get("name"), "price": applied.get("price"), "standard_price": applied.get("standard_price"), "price_source": applied.get("price_source"), "quantity": sent_line.get("quantity"), "payable_id": sent_line.get("payable_id"), "payable_type": sent_line.get("payable_type"), "taxable": sent_line.get("taxable"), "total": applied.get("line_total"), "production_value": occurrence.get("production_value") if applied.get("production_sent") else None, "production_source": applied.get("production_source"), "callback": occurrence.get("callback") if applied.get("callback_sent") else None, "callback_source": applied.get("callback_source")},
             "auto_generates_invoice": catalog.get("auto_generates_invoice"),
             "invoice_generation_disclosed": catalog["invoice_generation_disclosed"],
             "invoice_generation_reason": catalog["invoice_generation_reason"],
@@ -634,6 +648,80 @@ class WriteService:
             body["ambiguity_reconciled"] = True
             body["retry"] = False
         return body
+
+    def _propose_contact(self, payload: dict[str, Any], identity: dict[str, str]) -> dict[str, Any]:
+        from .create_contract import _contact
+        from .creation_flow import _one_contact
+
+        assert_only(payload, CUSTOMER_CONTACT_FIELDS, label="contact")
+        customer_id = str(payload.get("customer_id") or "")
+        if not customer_id.isdigit():
+            return self._fail(GATE_IDENTITY, persisted=False, write_sent=False)
+        contact = _contact(payload.get("contact"))
+        customer = self.client.get_customer(customer_id)
+        self.client.reject_if_lead(customer)
+        if str(customer.get("id")) != customer_id:
+            return self._fail(GATE_IDENTITY, persisted=False, write_sent=False)
+        found = _one_contact(self.client, customer_id, contact)
+        if found == "ambiguous":
+            return self._fail("contact_incomplete", reason="contact_list_incomplete", persisted=False, write_sent=False)
+        if found == "conflict":
+            return self._fail("contact_incomplete", reason="contact_field_conflict", persisted=False, write_sent=False)
+        if found:
+            return self._fail("duplicate_unresolved", reason="contact_duplicate", contact_id=found, persisted=False, write_sent=False)
+        after = {
+            "customer_id": customer_id,
+            "contact": contact,
+            "method": "POST",
+            "path": f"/customers/{customer_id}/contacts",
+            "portal_access": "not_sent",
+            "notification_changes": "not_sent",
+            "live_tested": False,
+        }
+        return self._persist_proposal(
+            OP_ADD_CUSTOMER_CONTACT,
+            payload,
+            identity,
+            f"customer_contact:{customer_id}:{str(contact.get('email') or '').casefold()}",
+            {"exists": False, "customer_id": customer_id},
+            after,
+        )
+
+    def _execute_contact(self, proposal: dict[str, Any], clock: datetime) -> dict[str, Any]:
+        from .creation_flow import commit_contact, verify_contact
+
+        contact = proposal["after"]["contact"]
+        customer_id = str(proposal["after"]["customer_id"])
+        try:
+            attempt_id = self.store.begin_attempt(proposal["proposal_id"], proposal["subject_key"], _iso(clock))
+        except GateError as exc:
+            return self._fail(exc.gate, proposal_id=proposal["proposal_id"], **exc.detail)
+        posted = commit_contact(self, proposal, attempt_id, customer_id, contact, location_id=None, reject_existing=True)
+        if not posted.get("ok"):
+            stopped = posted.get("stopped") or {}
+            extra = {key: stopped.get(key) for key in ("partial", "failed_step", "retry", "recovery") if key in stopped}
+            if posted.get("reason"):
+                extra["reason"] = posted["reason"]
+            return self._fail(stopped.get("gate") or posted.get("gate") or GATE_PARTIAL, proposal_id=proposal["proposal_id"], **extra)
+        try:
+            readback = verify_contact(self.client, customer_id, int(posted["contact_id"]), contact)
+        except GateError as exc:
+            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
+            detail = {key: value for key, value in exc.detail.items() if key != "reason"}
+            return self._fail(GATE_PARTIAL, proposal_id=proposal["proposal_id"], reason=exc.detail.get("reason") or exc.gate, retry=False, contact_id=posted.get("contact_id"), **detail)
+        self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "success")
+        return {
+            "ok": True,
+            "proposal_id": proposal["proposal_id"],
+            "operation": OP_ADD_CUSTOMER_CONTACT,
+            "created_id": posted["contact_id"],
+            "reconciled": bool(posted.get("reconciled")),
+            "readback": readback,
+            "live_tested": False,
+            "portal_access": "not_sent",
+            "notification_changes": "not_sent",
+            "gates": self.gates(),
+        }
 
     def _propose_work_order_status(self, payload: dict[str, Any], identity: dict[str, str]) -> dict[str, Any]:
         assert_only(payload, WORK_ORDER_STATUS_FIELDS, label="work_order_status")
@@ -990,6 +1078,8 @@ class WriteService:
             return self._execute_customer_email(proposal, clock)
         if proposal["operation"] == OP_UPDATE_WORK_ORDER_STATUS:
             return self._execute_work_order_status(proposal, clock)
+        if proposal["operation"] == OP_ADD_CUSTOMER_CONTACT:
+            return self._execute_contact(proposal, clock)
         if proposal["operation"] in {OP_CREATE_WORK_ORDER, OP_CREATE_CUSTOMER}:
             return self._execute_create(proposal, clock)
         return self._fail(GATE_UNKNOWN_OP, proposal_id=proposal_id)

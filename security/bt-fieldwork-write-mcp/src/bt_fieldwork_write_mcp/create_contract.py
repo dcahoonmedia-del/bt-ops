@@ -356,11 +356,14 @@ def _line_item(item: Any) -> dict[str, Any]:
     kind = item.get("type")
     if kind not in LINE_TYPES:
         _unknown("type")
+    price = _int(item.get("price"), "price")
+    if price < 0:
+        raise GateError("unknown_field", fields=["price"], reason="negative_rejected")
     line: dict[str, Any] = {
         "name": name,
         "type": kind,
         "quantity": _int(item.get("quantity"), "quantity"),
-        "price": _int(item.get("price"), "price"),
+        "price": price,
     }
     if kind in PAYABLE_REQUIRED or "payable_id" in item or "payable_type" in item:
         line["payable_id"] = _int(item.get("payable_id"), "payable_id", positive=True)
@@ -442,7 +445,14 @@ def _occurrence(item: dict[str, Any]) -> dict[str, Any]:
             _unknown("instructions")
         occurrence["instructions"] = item["instructions"]
     if "production_value" in item:
-        occurrence["production_value"] = _int(item["production_value"], "production_value")
+        production = _int(item["production_value"], "production_value")
+        if production < 0:
+            raise GateError("unknown_field", fields=["production_value"], reason="negative_rejected")
+        occurrence["production_value"] = production
+    if "callback" in item:
+        if item["callback"] is not True and item["callback"] is not False:
+            _unknown("callback")
+        occurrence["callback"] = item["callback"]
     return occurrence
 
 

@@ -93,6 +93,9 @@ class Harness:
         self.store = WriteStore(self.path)
         self.transport = FakeTransport()
         self.transport.api_role = self.settings.api_role
+        # Live occurrence GETs omit repeat_type. This stamp lets older success
+        # tests reach price and schedule readback. It is not the live shape.
+        self.transport.include_repeat_type_on_occurrence = True
         self.transport.add_customer(_customer(), _location())
         self.client = TypedFieldworkClient(self.transport, mapping_verified=self.settings.mapping_verified)
         self.service = WriteService(self.settings, self.store, self.client)
