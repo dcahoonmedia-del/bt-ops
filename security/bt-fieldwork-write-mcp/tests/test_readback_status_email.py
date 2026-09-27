@@ -1,20 +1,21 @@
-"""Readback reconciliation, disabled status writes, and invoice-email PATCH. Offline only."""
+"""Readback reconciliation, work-order status writes, and invoice-email PATCH. Offline only."""
 
 from __future__ import annotations
 
 import asyncio
 import unittest
+from dataclasses import replace
 
 from bt_fieldwork_write_mcp.allowlist import (
     GATE_IDENTITY,
     GATE_PARTIAL,
     GATE_READBACK,
     GATE_REPLAY,
-    GATE_STATUS_UNVERIFIED,
     GATE_STALE,
+    GATE_STATUS_FAILED,
     GATE_UNKNOWN_OP,
-    STATUS_WRITE_EVIDENCE_GAP,
 )
+from bt_fieldwork_write_mcp.fieldwork import _flatten
 from bt_fieldwork_write_mcp.creation_flow import _same_instant, calendar_day
 from bt_fieldwork_write_mcp.errors import AmbiguousWriteError, GateError
 from bt_fieldwork_write_mcp.oauth_rs import JwtTokenVerifier
@@ -36,7 +37,7 @@ def _order(**occurrence: object) -> dict:
 
 class ReadbackStatusEmailTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.h = Harness(writes_enabled=True, api_role="writer")
+        self.h = Harness(writes_enabled=True, api_role="writer", mapping_verified=True)
         self.h.transport.users = [{
             "id": 10, "first_name": "Sam", "last_name": "Lee", "email": "sam@example.test",
             "service_route_id": 1, "service_route_name": "North", "is_technician": True, "branches": [],
@@ -335,35 +336,86 @@ class ReadbackStatusEmailTests(unittest.TestCase):
             "starts_at": "2026-09-28T11:30:00-04:00",
             "duration": 60,
             "service_route_ids": [2557],
+            "service_routes": [{"id": 2557, "name": "Route #3"}],
             "status": "Scheduled",
             "instructions": "gate",
             "private_notes": "keep",
             "repeat_type": "none",
+            "production_value": "150.0",
+            "line_items": [{"name": "PestGuard - Set-up", "price": "150.0", "quantity": 1, "payable_id": 38814, "payable_type": "Service"}],
             "arrival_time_window_str": "11:30 AM-12:30 PM",
         }
 
-    def test_status_transition_stays_disabled(self) -> None:
+    def _drop(self, proposed: dict) -> None:
+        stored = self.h.store.get_proposal(proposed["proposal_id"])
+        self.h.store.release_open_guard(stored["subject_key"], proposed["proposal_id"])
+        self.h.store.set_status(proposed["proposal_id"], "expired")
+
+    def _status_patches(self) -> list:
+        return [call for call in self.h.transport.calls if call["method"] == "PATCH" and call["path"] == "/work_orders/1501"]
+
+    def test_known_status_resolves_and_unknown_or_mismatched_ids_do_not_write(self) -> None:
         self._status_row()
-        before = len(self.h.transport.calls)
-        for label in ("Today - Anytime", "Scheduled", "Mystery"):
-            refused = self.h.service.propose(
-                "update_work_order_status",
-                {"work_order_id": 8210, "service_appointment_id": 1501, "status": label},
-                IDENTITY,
-            )
-            self.assertEqual(refused["gate"], GATE_STATUS_UNVERIFIED, label)
-            self.assertFalse(refused.get("persisted"))
-            self.assertFalse(refused.get("execute"))
-            self.assertEqual(refused["changed_fields"], ["status"])
-            self.assertEqual(refused["evidence_gap"], STATUS_WRITE_EVIDENCE_GAP)
-            self.assertEqual(refused["before"]["work_order_id"], 8210)
-            self.assertEqual(refused["before"]["service_appointment_id"], 1501)
-            self.assertEqual(refused["before"]["customer_id"], 41)
-            self.assertEqual(refused["before"]["location_id"], 77)
-            self.assertEqual(refused["before"]["status"], "Scheduled")
-            self.assertEqual(refused["before"]["starts_at"], "2026-09-28T11:30:00-04:00")
-            self.assertEqual(refused["before"]["service_route_ids"], [2557])
-            self.assertNotIn("proposal_id", refused)
+        proposed = self.h.service.propose(
+            "update_work_order_status",
+            {"work_order_id": 8210, "service_appointment_id": 1501, "status": "Today - Anytime"},
+            IDENTITY,
+        )
+        self.assertTrue(proposed["ok"], proposed)
+        self.assertEqual(proposed["changed_fields"], ["status"])
+        self.assertFalse(proposed["live_tested"])
+        self.assertEqual(proposed["other_fields"], "not_sent")
+        self.assertEqual(proposed["before"]["customer_name"], "Existing")
+        self.assertEqual(proposed["before"]["location"], "House")
+        self.assertEqual(proposed["before"]["work_order_id"], "8210")
+        self.assertEqual(proposed["before"]["service_appointment_id"], "1501")
+        self.assertEqual(proposed["before"]["status"], "Scheduled")
+        self.assertEqual(proposed["before"]["starts_at"], "2026-09-28T11:30:00-04:00")
+        self.assertEqual(proposed["before"]["route"], [{"id": 2557, "name": "Route #3"}])
+        self.assertEqual(proposed["after"]["status"], "Today - Anytime")
+        self.assertEqual(proposed["after"]["status_write"], "Today - Anytime")
+        self.assertEqual(proposed["after"]["only_change"], "status")
+        self.assertNotIn("starts_at", proposed["after"])
+        self.assertNotIn("instructions", proposed["after"])
+        catalog = [call for call in self.h.transport.calls if call["path"] == "/statuses/i18n_statuses"]
+        self.assertEqual(catalog[-1]["query"], {"entity_type": "appointment_occurrence"})
+        self.assertEqual(self._status_patches(), [])
+        self._drop(proposed)
+
+        missed = self.h.service.propose(
+            "update_work_order_status",
+            {"work_order_id": 8210, "service_appointment_id": 1501, "status": "Missed"},
+            IDENTITY,
+        )
+        self.assertTrue(missed["ok"], missed)
+        self.assertEqual(missed["after"]["status"], "Missed")
+        self.assertEqual(missed["after"]["status_write"], "Missed Appointment")
+        self._drop(missed)
+
+        flagged = self.h.service.propose(
+            "update_work_order_status",
+            {"work_order_id": 8210, "service_appointment_id": 1501, "status": "Left Message with Customer"},
+            IDENTITY,
+        )
+        self.assertEqual(flagged["after"]["status_write"], "Left Message with Customer")
+        self._drop(flagged)
+
+        self.h.transport.work_order_statuses = ["Scheduled", "Flagged", "Today - Anytime"]
+        strings = self.h.service.propose(
+            "update_work_order_status",
+            {"work_order_id": 8210, "service_appointment_id": 1501, "status": "Flagged"},
+            IDENTITY,
+        )
+        self.assertEqual(strings["after"]["status_write"], "Flagged")
+        self._drop(strings)
+
+        unknown = self.h.service.propose(
+            "update_work_order_status",
+            {"work_order_id": 8210, "service_appointment_id": 1501, "status": "Mystery"},
+            IDENTITY,
+        )
+        self.assertEqual(unknown["gate"], "unknown_status")
+        self.assertNotIn("proposal_id", unknown)
         wrong = self.h.service.propose(
             "update_work_order_status",
             {"work_order_id": 8210, "service_appointment_id": 999, "status": "Today - Anytime"},
@@ -377,9 +429,186 @@ class ReadbackStatusEmailTests(unittest.TestCase):
         )
         self.assertEqual(extra["gate"], "unknown_field")
         self.assertEqual(extra["fields"], ["starts_at"])
-        self.assertFalse(any(call["method"] == "PATCH" for call in self.h.transport.calls[before:]))
+        self.h.transport.work_order_statuses = {"scheduled": "Scheduled"}
+        unverified = self.h.service.propose(
+            "update_work_order_status",
+            {"work_order_id": 8210, "service_appointment_id": 1501, "status": "Scheduled"},
+            IDENTITY,
+        )
+        self.assertEqual(unverified["gate"], "work_order_status_catalog_unverified")
+        self.assertEqual(self._status_patches(), [])
+        created = self.h.service.propose(
+            "create_work_order",
+            {"customer_id": 41, "service_location_id": 77, "repeat_type": "none", "occurrences": [{"starts_at": "2026-10-02", "service_route_ids": [1], "status": "Scheduled"}]},
+            IDENTITY,
+        )
+        self.assertEqual(created["gate"], "unknown_field")
+        self.assertIn("status", created["fields"])
         phone = self.h.service.propose("update_customer_phone", {"customer_id": 41, "billing_phone": "7165550100"}, IDENTITY)
         self.assertEqual(phone["gate"], GATE_UNKNOWN_OP)
+
+    def test_status_write_is_one_approved_patch_and_readback_preserves_other_fields(self) -> None:
+        self._status_row()
+        proposed = self.h.service.propose(
+            "update_work_order_status",
+            {"work_order_id": 8210, "service_appointment_id": 1501, "status": "Today - Anytime"},
+            IDENTITY,
+        )
+        missing = self.h.service.execute(proposed["proposal_id"], IDENTITY)
+        self.assertEqual(missing["gate"], "operator_approval_required")
+        self.assertEqual(self._status_patches(), [])
+        token = self.h.approve(proposed["proposal_id"])
+        self.h.store._conn.execute("UPDATE proposals SET payload_json = '{}' WHERE proposal_id = ?", (proposed["proposal_id"],))
+        altered = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=token)
+        self.assertEqual(altered["gate"], "operator_approval_required")
+        self.assertEqual(altered["reason"], "stored_proposal_digest_mismatch")
+        self.assertEqual(self._status_patches(), [])
+        stored = self.h.store.get_proposal(proposed["proposal_id"])
+        self.h.store.release_open_guard(stored["subject_key"], proposed["proposal_id"])
+        self.h.store.set_status(proposed["proposal_id"], "expired")
+
+        fresh = self.h.service.propose(
+            "update_work_order_status",
+            {"work_order_id": 8210, "service_appointment_id": 1501, "status": "Today - Anytime"},
+            IDENTITY,
+        )
+        self.h.transport.work_orders["8210"]["starts_at"] = "2026-09-28T12:00:00-04:00"
+        stale = self._execute(fresh)
+        self.assertEqual(stale["gate"], GATE_STALE)
+        self.assertEqual(self._status_patches(), [])
+        self.h.transport.work_orders["8210"]["starts_at"] = "2026-09-28T11:30:00-04:00"
+
+        done = self._execute(self.h.service.propose(
+            "update_work_order_status",
+            {"work_order_id": 8210, "service_appointment_id": 1501, "status": "Today - Anytime"},
+            IDENTITY,
+        ))
+        self.assertTrue(done["ok"], done)
+        self.assertEqual(done["readback"]["status"], "Today - Anytime")
+        self.assertFalse(done["live_tested"])
+        self.assertEqual(len(self._status_patches()), 1)
+        body = self._status_patches()[0]["body"]
+        occurrence = body["service_appointment"]["appointment_occurrences_attributes"][0]
+        self.assertEqual(set(body), {"service_appointment"})
+        self.assertEqual(set(occurrence), {"id", "status"})
+        self.assertEqual(occurrence["id"], "8210")
+        self.assertEqual(occurrence["status"], "Today - Anytime")
+        self.assertEqual(
+            _flatten(body),
+            [
+                ("service_appointment[appointment_occurrences_attributes][][id]", "8210"),
+                ("service_appointment[appointment_occurrences_attributes][][status]", "Today - Anytime"),
+            ],
+        )
+        row = self.h.transport.work_orders["8210"]
+        self.assertEqual(row["instructions"], "gate")
+        self.assertEqual(row["private_notes"], "keep")
+        self.assertEqual(row["starts_at"], "2026-09-28T11:30:00-04:00")
+        self.assertEqual(row["duration"], 60)
+        self.assertEqual(row["service_route_ids"], [2557])
+        self.assertEqual(row["arrival_time_window_str"], "11:30 AM-12:30 PM")
+        self.assertEqual(row["production_value"], "150.0")
+        self.assertEqual(row["line_items"][0]["price"], "150.0")
+        self.assertEqual(row["repeat_type"], "none")
+        replay = self.h.service.execute(done["proposal_id"], IDENTITY, operator_approval="unused")
+        self.assertEqual(replay["gate"], GATE_REPLAY)
+        self.assertEqual(len(self._status_patches()), 1)
+
+        chatgpt = self.h.service.propose(
+            "update_work_order_status",
+            {"work_order_id": 8210, "service_appointment_id": 1501, "status": "Flagged"},
+            IDENTITY,
+        )
+        self.h.service.settings = replace(self.h.settings, approval_mode="chatgpt_confirmation")
+        wrong_digest = self.h.service.execute(chatgpt["proposal_id"], IDENTITY, approved=True, expected_digest="0" * 64)
+        self.assertEqual(wrong_digest["gate"], "operator_approval_required")
+        self.assertEqual(len(self._status_patches()), 1)
+        self.h.service.settings = self.h.settings
+
+    def test_ambiguous_status_reconciles_or_fails_without_a_second_patch(self) -> None:
+        self._status_row()
+        self.h.transport.write_mode = "timeout_after_apply"
+        proposed = self.h.service.propose(
+            "update_work_order_status",
+            {"work_order_id": 8210, "service_appointment_id": 1501, "status": "Today - Anytime"},
+            IDENTITY,
+        )
+        reconciled = self._execute(proposed)
+        self.assertTrue(reconciled["ok"], reconciled)
+        self.assertTrue(reconciled["ambiguity_reconciled"])
+        self.assertEqual(reconciled["retry"], False)
+        self.assertEqual(reconciled["readback"]["status"], "Today - Anytime")
+        self.assertEqual(len(self._status_patches()), 1)
+        self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval="unused")
+        self.assertEqual(len(self._status_patches()), 1)
+
+        self.h.transport.work_orders["8210"]["status"] = "Scheduled"
+        self.h.transport.write_mode = "ambiguous"
+        unchanged = self.h.service.propose(
+            "update_work_order_status",
+            {"work_order_id": 8210, "service_appointment_id": 1501, "status": "Flagged"},
+            IDENTITY,
+        )
+        failed = self._execute(unchanged)
+        self.assertEqual(failed["gate"], GATE_STATUS_FAILED)
+        self.assertEqual(failed["retry"], False)
+        self.assertEqual(self.h.transport.work_orders["8210"]["status"], "Scheduled")
+        patches = len(self._status_patches())
+        self.h.service.execute(unchanged["proposal_id"], IDENTITY, operator_approval="unused")
+        self.assertEqual(len(self._status_patches()), patches)
+
+        original = self.h.transport.request
+
+        seen = {"patch": False}
+
+        def hide_readback(method, path, body=None, query=None):
+            if method == "PATCH" and path == "/work_orders/1501":
+                seen["patch"] = True
+            if method == "GET" and path == "/work_orders/8210" and seen["patch"]:
+                raise GateError("transport_error")
+            return original(method, path, body, query)
+
+        self.h.transport.write_mode = "timeout_after_apply"
+        self.h.transport.work_orders["8210"]["status"] = "Scheduled"
+        hidden = self.h.service.propose(
+            "update_work_order_status",
+            {"work_order_id": 8210, "service_appointment_id": 1501, "status": "Today - Anytime"},
+            IDENTITY,
+        )
+        before_patches = len(self._status_patches())
+        self.h.transport.request = hide_readback
+        ambiguous = self._execute(hidden)
+        self.assertEqual(ambiguous["gate"], "ambiguous_remote_write_no_retry")
+        self.assertEqual(ambiguous["retry"], False)
+        self.assertEqual(len(self._status_patches()), before_patches + 1)
+        self.h.transport.request = original
+        self.h.service.execute(hidden["proposal_id"], IDENTITY, operator_approval="unused")
+        self.assertEqual(len(self._status_patches()), before_patches + 1)
+
+    def test_status_api_rejection_is_not_retried(self) -> None:
+        self._status_row()
+        original = self.h.transport.request
+
+        def reject(method, path, body=None, query=None):
+            if method == "PATCH" and path == "/work_orders/1501":
+                self.h.transport.calls.append({"method": method, "path": path, "body": body, "query": query})
+                return 422, {"error": "transition_rejected"}
+            return original(method, path, body, query)
+
+        self.h.transport.request = reject
+        proposed = self.h.service.propose(
+            "update_work_order_status",
+            {"work_order_id": 8210, "service_appointment_id": 1501, "status": "Today - Anytime"},
+            IDENTITY,
+        )
+        refused = self._execute(proposed)
+        self.assertEqual(refused["gate"], "work_order_patch_rejected")
+        self.assertEqual(refused["status"], 422)
+        self.assertEqual(refused["retry"], False)
+        self.assertEqual(self.h.transport.work_orders["8210"]["status"], "Scheduled")
+        self.assertEqual(len(self._status_patches()), 1)
+        self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval="unused")
+        self.assertEqual(len(self._status_patches()), 1)
 
     def test_primary_email_patch_is_one_customer_write_and_verified(self) -> None:
         customer = self.h.transport.customers["41"]
@@ -522,9 +751,13 @@ class ReadbackStatusEmailTests(unittest.TestCase):
         self.assertEqual(email["sole_field"], "invoice_email")
         self.assertEqual(email["location_email_patch"], "not_sent")
         status = gates["update_work_order_status"]
-        self.assertFalse(status["propose"])
-        self.assertFalse(status["execute"])
-        self.assertEqual(status["evidence_gap"], STATUS_WRITE_EVIDENCE_GAP)
+        self.assertTrue(status["propose"])
+        self.assertEqual(status["execute_blocked_by"], [])
+        self.assertFalse(status["live_tested"])
+        self.assertEqual(status["changed_fields"], ["status"])
+        self.assertEqual(status["method"], "PATCH")
+        self.assertEqual(status["status_value"], "catalog_string")
+        self.assertEqual(status["other_fields"], "not_sent")
         phone = gates["update_customer_phone"]
         self.assertFalse(phone["implemented"])
         self.assertEqual(phone["reason"], "no_verified_billing_phone_patch_helper")
@@ -536,10 +769,12 @@ class ReadbackStatusEmailTests(unittest.TestCase):
         text = propose.description
         self.assertIn("at most two more reads", text)
         self.assertIn("update_customer_primary_email", text)
-        self.assertIn("does not execute", text)
+        self.assertIn("update_work_order_status", text)
+        self.assertIn("catalog status string", text)
         self.assertIn("update_customer_phone is not implemented", text)
         self.assertIn("not live-tested", text)
-        self.assertIn("update_work_order_status does not execute", server.instructions)
+        self.assertIn("one PATCH /v3.1/work_orders/{service_appointment_id}", server.instructions)
+        self.assertNotIn("update_work_order_status does not execute", server.instructions)
         self.assertIn("no verified billing-phone PATCH", server.instructions)
 
 

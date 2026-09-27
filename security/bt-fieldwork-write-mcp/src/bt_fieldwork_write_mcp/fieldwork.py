@@ -234,6 +234,66 @@ def snapshot_hash(snapshot: dict[str, Any]) -> str:
     return sha256_hex(canonical(snapshot))
 
 
+def parse_work_order_status_catalog(body: Any) -> list[dict[str, Any]]:
+    """Turn a statuses catalog body into write strings. Unknown shapes fail closed.
+
+    The swagger response model is null. A list of strings uses each string as the
+    PATCH value. An object uses the first present string among value, status, name,
+    and label. acts_as and id are never the write value. A bare string map is rejected.
+    """
+    rows = _status_catalog_rows(body)
+    entries: list[dict[str, Any]] = []
+    for row in rows:
+        if isinstance(row, str):
+            text = row.strip()
+            if not text:
+                raise GateError("work_order_status_catalog_unverified")
+            entries.append({"write": text, "label": text, "labels": [text]})
+            continue
+        if not isinstance(row, dict):
+            raise GateError("work_order_status_catalog_unverified")
+        write = _status_write_value(row)
+        if write is None:
+            raise GateError("work_order_status_catalog_unverified")
+        labels = [write]
+        for key in ("label", "name", "status", "value"):
+            item = row.get(key)
+            if isinstance(item, str) and item.strip() and item.strip() not in labels:
+                labels.append(item.strip())
+        label = row.get("label") if isinstance(row.get("label"), str) and row.get("label").strip() else write
+        entries.append({"write": write, "label": label.strip(), "labels": labels})
+    if not entries:
+        raise GateError("work_order_status_catalog_unverified")
+    return entries
+
+
+def resolve_work_order_status(entries: list[dict[str, Any]], requested: str) -> dict[str, Any]:
+    text = requested.strip()
+    matches = [entry for entry in entries if text == entry["write"] or text in entry["labels"]]
+    if len(matches) != 1:
+        raise GateError("unknown_status")
+    return matches[0]
+
+
+def _status_catalog_rows(body: Any) -> list[Any]:
+    if isinstance(body, list):
+        return body
+    if isinstance(body, dict):
+        for key in ("statuses", "data", "i18n_statuses", "appointment_occurrence"):
+            value = body.get(key)
+            if isinstance(value, list):
+                return value
+    raise GateError("work_order_status_catalog_unverified")
+
+
+def _status_write_value(row: dict[str, Any]) -> str | None:
+    for key in ("value", "status", "name", "label"):
+        item = row.get(key)
+        if isinstance(item, str) and item.strip():
+            return item.strip()
+    return None
+
+
 class Transport(Protocol):
     def request(
         self,
@@ -282,6 +342,8 @@ class HttpTransport:
             allowed = LOCATION_LIST_QUERY
         elif clean == "/users":
             allowed = frozenset()
+        elif clean == "/statuses/i18n_statuses":
+            allowed = frozenset({"entity_type"})
         else:
             allowed = frozenset({"page", "per_page"})
         for key, value in (query or {}).items():
@@ -433,6 +495,14 @@ class FakeTransport:
         self.services = [_catalog_service()]
         self.templates = [_catalog_template()]
         self.readback_line_price = None
+        # Stand-in for GET /statuses/i18n_statuses. Not the live account enum.
+        self.work_order_statuses: Any = [
+            {"label": "Scheduled", "value": "Scheduled"},
+            {"label": "Today - Anytime", "value": "Today - Anytime"},
+            {"label": "Flagged", "value": "Flagged"},
+            {"label": "Left Message with Customer", "value": "Left Message with Customer"},
+            {"label": "Missed", "value": "Missed Appointment"},
+        ]
 
     def add_customer(self, customer: dict[str, Any], location: dict[str, Any]) -> None:
         cid = str(customer["id"])
@@ -485,6 +555,10 @@ class FakeTransport:
             phone = str((query or {}).get("phone") or "")
             found = [row for row in self.customers.values() if phone and phone in json.dumps(row)]
             return 200, {"data": found}
+        if method == "GET" and path == "/statuses/i18n_statuses":
+            if str((query or {}).get("entity_type") or "") != "appointment_occurrence":
+                return 400, {"error": "entity_type"}
+            return 200, self.work_order_statuses
         if method == "GET" and path == "/users":
             if self.users is None:
                 return 503, {"error": "users_unavailable"}
@@ -593,6 +667,10 @@ class FakeTransport:
             for field in ("instructions", "private_notes", "starts_at", "duration", "service_route_ids"):
                 if field in occ:
                     match[field] = occ[field]
+            if "status" in occ:
+                if not isinstance(occ.get("status"), str) or not str(occ.get("status")).strip():
+                    return 422, {"error": "invalid_status"}
+                match["status"] = occ["status"]
             if "starts_at" in occ or "duration" in occ:
                 from .schedule import apply_fixed_window_double
 
@@ -747,7 +825,7 @@ class FakeTransport:
         return self._next_id
 
 def _assert_typed_path(method: str, path: str) -> None:
-    if method == "GET" and path in {"/profile", "/service_routes", "/customers/search", "/customers/search_by_phone", "/customers", "/users", "/work_order_templates", "/services", "/location_types"}:
+    if method == "GET" and path in {"/profile", "/service_routes", "/customers/search", "/customers/search_by_phone", "/customers", "/users", "/work_order_templates", "/services", "/location_types", "/statuses/i18n_statuses"}:
         return
     if method == "GET" and (
         _CUSTOMER.match(path)
@@ -1359,6 +1437,36 @@ class TypedFieldworkClient:
         status, payload = self.transport.request("PATCH", path, body)
         if status >= 500:
             raise AmbiguousWriteError(f"remote_{status}")
+        if status != 200:
+            raise GateError("work_order_patch_rejected", status=status)
+        return payload if isinstance(payload, dict) else {}
+
+    def list_work_order_statuses(self) -> list[dict[str, Any]]:
+        path = "/statuses/i18n_statuses"
+        _assert_typed_path("GET", path)
+        status, body = self.transport.request("GET", path, query={"entity_type": "appointment_occurrence"})
+        if status != 200:
+            raise GateError("work_order_status_catalog_unverified", status=status)
+        return parse_work_order_status_catalog(body)
+
+    def patch_work_order_status(self, service_appointment_id: Any, work_order_id: Any, status_value: str) -> dict[str, Any]:
+        """One status string on the nested occurrence. No other occurrence fields."""
+        if not isinstance(status_value, str) or not status_value.strip():
+            raise GateError("unknown_status")
+        path = f"/work_orders/{_required_id(service_appointment_id)}"
+        _assert_typed_path("PATCH", path)
+        body = {
+            "service_appointment": {
+                "appointment_occurrences_attributes": [
+                    {"id": _required_id(work_order_id), "status": status_value},
+                ]
+            }
+        }
+        status, payload = self.transport.request("PATCH", path, body)
+        if status >= 500:
+            raise AmbiguousWriteError(f"remote_{status}")
+        if status == 204:
+            raise AmbiguousWriteError("empty_status_response")
         if status != 200:
             raise GateError("work_order_patch_rejected", status=status)
         return payload if isinstance(payload, dict) else {}
