@@ -1195,23 +1195,35 @@ def _nonrecurring(row: dict[str, Any]) -> None:
         raise GateError(GATE_READBACK, reason="recurrence_mismatch", field="repeat_type")
 
 
-def _schedule_has_pair(schedule: dict[str, Any], occurrence_id: Any, appointment_id: Any) -> bool:
+def _schedule_pair(schedule: dict[str, Any], occurrence_id: Any, appointment_id: Any) -> Any:
+    """Return 'match', a disagreeing appointment id, or None when the occurrence is absent."""
+    disagreeing = None
     for item in schedule.get("conflicts") or []:
         item_id = item.get("id")
         if item_id is None:
             item_id = item.get("work_order_id")
-        if str(item_id) != str(occurrence_id):
+        if not _same_id(item_id, occurrence_id):
             continue
         paired = item.get("service_appointment_id")
-        if paired is not None and str(paired) != str(appointment_id):
-            continue
-        return True
-    return False
+        if _same_id(paired, appointment_id):
+            return "match"
+        disagreeing = paired
+    return disagreeing
 
 
-_READBACK_RETRY_GATES = frozenset({GATE_READBACK, GATE_SCHEDULE, GATE_DISTINCT_IDS, "work_order_shape_unverified"})
+_READBACK_RETRY_GATES = frozenset(
+    {GATE_READBACK, GATE_SCHEDULE, GATE_DISTINCT_IDS, "work_order_shape_unverified", "transport_error", "unreadable_response"}
+)
 _READBACK_DELAY_REASONS = frozenset(
-    {"occurrence_not_on_schedule", "schedule_incomplete", "work_order_shape_unverified", "repeat_type_unverified", "ids_missing"}
+    {
+        "occurrence_not_on_schedule",
+        "schedule_incomplete",
+        "work_order_shape_unverified",
+        "repeat_type_unverified",
+        "ids_missing",
+        "transport_error",
+        "unreadable_response",
+    }
 )
 
 
@@ -1220,19 +1232,25 @@ def _delay_readback(exc: GateError) -> bool:
     return reason in _READBACK_DELAY_REASONS or exc.gate in {GATE_SCHEDULE, "work_order_shape_unverified"}
 
 
-def work_order_readback(client: Any, sent: dict[str, Any], occurrence_id: str) -> dict[str, Any]:
+def work_order_readback(client: Any, sent: dict[str, Any], occurrence_id: str, appointment_id: Any) -> dict[str, Any]:
+    """Read the persisted occurrence and require that same service-appointment id."""
     row = client.get_work_order(occurrence_id)
-    appointment_id = row.get("service_appointment_id")
-    if response_id({"id": row.get("id")}) is None or response_id({"id": appointment_id}) is None:
+    got_appointment = row.get("service_appointment_id")
+    if response_id({"id": row.get("id")}) is None or response_id({"id": got_appointment}) is None or response_id({"id": appointment_id}) is None:
         raise GateError(GATE_READBACK, reason="ids_missing")
-    if str(row.get("id")) == str(appointment_id):
+    if str(row.get("id")) == str(got_appointment):
         raise GateError(GATE_DISTINCT_IDS)
-    if str(row.get("id")) != str(occurrence_id):
+    if not _same_id(row.get("id"), occurrence_id):
         _mismatch("occurrence_id", occurrence_id, row.get("id"))
+    if not _same_id(got_appointment, appointment_id):
+        _mismatch("service_appointment_id", appointment_id, got_appointment)
     occurrence = sent["appointment_occurrences_attributes"][0]
     schedule = schedule_view(client, str(occurrence["starts_at"]), list(occurrence["service_route_ids"]))
-    if not _schedule_has_pair(schedule, row.get("id"), appointment_id):
+    scheduled = _schedule_pair(schedule, occurrence_id, appointment_id)
+    if scheduled is None:
         raise GateError(GATE_READBACK, reason="occurrence_not_on_schedule")
+    if scheduled != "match":
+        _mismatch("service_appointment_id", appointment_id, scheduled)
     if not _same_id(sent["customer_id"], row.get("customer_id")):
         _mismatch("customer_id", sent["customer_id"], row.get("customer_id"))
     if not _same_id(sent["service_location_id"], row.get("service_location_id")):
@@ -1292,7 +1310,7 @@ def work_order_readback(client: Any, sent: dict[str, Any], occurrence_id: str) -
         "service_name": compared_lines[0]["name"],
         "after_state": {
             "occurrence_id": row.get("id"),
-            "service_appointment_id": appointment_id,
+            "service_appointment_id": got_appointment,
             "starts_at": actual_start,
             "duration": row.get("duration"),
             "production_value": row.get("production_value"),
@@ -1347,7 +1365,7 @@ def post_work_order(service: Any, proposal: dict[str, Any], attempt_id: str) -> 
         if not finished["ok"]:
             return finished["stopped"]
         sent = finished["sent"]
-        return _finish_readback(service, proposal, attempt_id, sent, reconciled, reconciled_post=True)
+        return _finish_readback(service, proposal, attempt_id, sent, reconciled, appointment_id, reconciled_post=True)
     created = response_id(response)
     appointment_id = response.get("service_appointment_id") if isinstance(response, dict) else None
     if created is None or response_id({"id": appointment_id}) is None or str(created) == str(appointment_id):
@@ -1363,18 +1381,32 @@ def post_work_order(service: Any, proposal: dict[str, Any], attempt_id: str) -> 
     if not finished["ok"]:
         return finished["stopped"]
     sent = finished["sent"]
-    return _finish_readback(service, proposal, attempt_id, sent, str(created), reconciled_post=False)
+    return _finish_readback(service, proposal, attempt_id, sent, str(created), appointment_id, reconciled_post=False)
 
 
-def _finish_readback(service: Any, proposal: dict[str, Any], attempt_id: str, sent: dict[str, Any], occurrence_id: str, *, reconciled_post: bool) -> dict[str, Any]:
-    """One immediate read, then at most two more reads. Never POST or PATCH again."""
+def _stored_id(value: Any) -> Any:
+    text = str(value or "")
+    return int(text) if text.isdigit() else value
+
+
+def _finish_readback(
+    service: Any,
+    proposal: dict[str, Any],
+    attempt_id: str,
+    sent: dict[str, Any],
+    occurrence_id: str,
+    appointment_id: Any,
+    *,
+    reconciled_post: bool,
+) -> dict[str, Any]:
+    """One immediate read, then at most two more reads of the same id pair. Never POST or PATCH again."""
     client = service.client
     last: GateError | None = None
     for attempt in range(3):
         if attempt and last is not None and _delay_readback(last):
             time.sleep(0.05)
         try:
-            readback = work_order_readback(client, sent, str(occurrence_id))
+            readback = work_order_readback(client, sent, str(occurrence_id), appointment_id)
         except GateError as exc:
             if exc.gate not in _READBACK_RETRY_GATES:
                 raise
@@ -1388,22 +1420,25 @@ def _finish_readback(service: Any, proposal: dict[str, Any], attempt_id: str, se
             "readback_attempts": attempt + 1,
         }
     assert last is not None
-    return _stop_readback(service.store, proposal, attempt_id, sent, occurrence_id, last)
+    return _stop_readback(service.store, proposal, attempt_id, sent, occurrence_id, appointment_id, last)
 
 
-def _stop_readback(store: Any, proposal: dict[str, Any], attempt_id: str, sent: dict[str, Any], occurrence_id: str, exc: GateError) -> dict[str, Any]:
-    appointment_id = None
-    for row in store.creation_journal(proposal["proposal_id"]):
-        result = row.get("result") if isinstance(row.get("result"), dict) else {}
-        if result.get("service_appointment_id") is not None:
-            appointment_id = result["service_appointment_id"]
+def _stop_readback(
+    store: Any,
+    proposal: dict[str, Any],
+    attempt_id: str,
+    sent: dict[str, Any],
+    occurrence_id: str,
+    appointment_id: Any,
+    exc: GateError,
+) -> dict[str, Any]:
     ids = {"customer_id": str(sent["customer_id"]), "location_id": str(sent["service_location_id"])}
     detail: dict[str, Any] = {
         "gate": GATE_READBACK,
         "reason": exc.detail.get("reason") or exc.gate,
         "retry": False,
-        "occurrence_id": int(occurrence_id) if str(occurrence_id).isdigit() else occurrence_id,
-        "service_appointment_id": appointment_id,
+        "occurrence_id": _stored_id(occurrence_id),
+        "service_appointment_id": _stored_id(appointment_id),
     }
     if exc.detail.get("field"):
         detail["field"] = exc.detail["field"]

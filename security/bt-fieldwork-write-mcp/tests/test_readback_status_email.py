@@ -16,7 +16,7 @@ from bt_fieldwork_write_mcp.allowlist import (
     STATUS_WRITE_EVIDENCE_GAP,
 )
 from bt_fieldwork_write_mcp.creation_flow import _same_instant, calendar_day
-from bt_fieldwork_write_mcp.errors import AmbiguousWriteError
+from bt_fieldwork_write_mcp.errors import AmbiguousWriteError, GateError
 from bt_fieldwork_write_mcp.oauth_rs import JwtTokenVerifier
 from bt_fieldwork_write_mcp.server import PROPOSE_DESCRIPTION, build_mcp
 from tests.test_write_mcp import IDENTITY, OTHER, Harness
@@ -227,6 +227,104 @@ class ReadbackStatusEmailTests(unittest.TestCase):
         self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval="unused")
         self.assertEqual(len(self._posts()), 1)
         self.assertEqual(len(self._patches()), 1)
+
+    def test_readback_rejects_a_substituted_appointment_pair(self) -> None:
+        proposed = self.h.service.propose("create_work_order", _order(starts_at="2026-10-20T11:30:00-04:00", duration=60), IDENTITY)
+        original = self.h.transport.request
+        gets = {"n": 0}
+        lists = {"n": 0}
+
+        def request(method, path, body=None, query=None):
+            status, payload = original(method, path, body, query)
+            if method == "GET" and path == "/work_orders" and isinstance(payload, list):
+                lists["n"] += 1
+                if lists["n"] >= 2:
+                    payload = [dict(row, service_appointment_id=999999) for row in payload]
+            if method == "GET" and path.startswith("/work_orders/") and path.count("/") == 2 and isinstance(payload, dict):
+                gets["n"] += 1
+                if gets["n"] >= 2 and isinstance(payload.get("appointment_occurrence"), dict):
+                    occ = dict(payload["appointment_occurrence"])
+                    occ["service_appointment_id"] = 999999
+                    payload = {"appointment_occurrence": occ}
+            return status, payload
+
+        self.h.transport.request = request
+        failed = self._execute(proposed)
+        self.assertFalse(failed["ok"])
+        self.assertEqual(failed["gate"], GATE_PARTIAL)
+        self.assertEqual(failed["reason"], GATE_READBACK)
+        self.assertEqual(failed["partial"]["occurrence_id"], 900001)
+        self.assertEqual(failed["partial"]["service_appointment_id"], 900002)
+        self.assertEqual(failed["partial"]["field"], "service_appointment_id")
+        self.assertEqual(failed["partial"]["reason"], "field_mismatch")
+        self.assertEqual(failed["retry"], False)
+        self.assertEqual(len(self._posts()), 1)
+        self.assertEqual(len(self._patches()), 1)
+        self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval="unused")
+        self.assertEqual(len(self._posts()), 1)
+        self.assertEqual(len(self._patches()), 1)
+
+    def test_transient_read_errors_recover_or_keep_the_pair(self) -> None:
+        original = self.h.transport.request
+
+        def run(day: str, gate: str, *, exhaust: bool) -> dict:
+            proposed = self.h.service.propose(
+                "create_work_order",
+                _order(starts_at=f"2026-10-{day}T11:30:00-04:00", duration=60),
+                IDENTITY,
+            )
+            gets = {"n": 0}
+
+            def request(method, path, body=None, query=None):
+                if method == "GET" and path.startswith("/work_orders/") and path.count("/") == 2:
+                    gets["n"] += 1
+                    if gets["n"] >= 2 and (exhaust or gets["n"] == 2):
+                        raise GateError(gate)
+                return original(method, path, body, query)
+
+            self.h.transport.request = request
+            return self._execute(proposed)
+
+        recovered = run("21", "transport_error", exhaust=False)
+        self.assertTrue(recovered["ok"], recovered)
+        self.assertEqual(recovered["readback_attempts"], 2)
+        self.assertEqual(recovered["readback"]["occurrence_id"], 900001)
+        self.assertEqual(recovered["readback"]["service_appointment_id"], 900002)
+        self.assertEqual(len(self._posts()), 1)
+        self.assertEqual(len(self._patches()), 1)
+
+        unread = run("22", "unreadable_response", exhaust=False)
+        self.assertTrue(unread["ok"], unread)
+        self.assertEqual(unread["readback_attempts"], 2)
+        self.assertEqual(len(self._posts()), 2)
+        self.assertEqual(len(self._patches()), 2)
+
+        posts = len(self._posts())
+        patches = len(self._patches())
+        exhausted = run("23", "transport_error", exhaust=True)
+        self.assertEqual(exhausted["gate"], GATE_PARTIAL)
+        self.assertEqual(exhausted["reason"], GATE_READBACK)
+        self.assertEqual(exhausted["partial"]["reason"], "transport_error")
+        self.assertEqual(exhausted["partial"]["occurrence_id"], 900005)
+        self.assertEqual(exhausted["partial"]["service_appointment_id"], 900006)
+        self.assertEqual(exhausted["retry"], False)
+        self.assertEqual(len(self._posts()), posts + 1)
+        self.assertEqual(len(self._patches()), patches + 1)
+        again = self.h.service.execute(exhausted["proposal_id"], IDENTITY, operator_approval="unused")
+        self.assertEqual(again["gate"], "ambiguous_remote_write_no_retry")
+        self.assertEqual(len(self._posts()), posts + 1)
+        self.assertEqual(len(self._patches()), patches + 1)
+
+        unread_exhausted = run("24", "unreadable_response", exhaust=True)
+        self.assertEqual(unread_exhausted["gate"], GATE_PARTIAL)
+        self.assertEqual(unread_exhausted["partial"]["reason"], "unreadable_response")
+        self.assertEqual(unread_exhausted["partial"]["occurrence_id"], 900007)
+        self.assertEqual(unread_exhausted["partial"]["service_appointment_id"], 900008)
+        self.assertEqual(len(self._posts()), posts + 2)
+        self.assertEqual(len(self._patches()), patches + 2)
+        self.h.service.execute(unread_exhausted["proposal_id"], IDENTITY, operator_approval="unused")
+        self.assertEqual(len(self._posts()), posts + 2)
+        self.assertEqual(len(self._patches()), patches + 2)
 
     def _status_row(self) -> None:
         self.h.transport.work_orders["8210"] = {
