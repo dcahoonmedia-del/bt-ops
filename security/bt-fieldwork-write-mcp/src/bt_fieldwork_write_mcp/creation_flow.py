@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -102,8 +103,12 @@ def calendar_day(starts_at: str) -> str:
     if len(starts_at) >= 10 and starts_at[4] == "-" and starts_at[7] == "-" and "T" not in starts_at:
         return starts_at[:10]
     from datetime import datetime
+    from zoneinfo import ZoneInfo
 
-    return datetime.fromisoformat(starts_at).date().isoformat()
+    parsed = datetime.fromisoformat(str(starts_at).replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        return parsed.date().isoformat()
+    return parsed.astimezone(ZoneInfo("America/New_York")).date().isoformat()
 
 
 def _search_pages(client: Any, path: str, query: dict[str, Any]) -> dict[str, Any]:
@@ -571,6 +576,8 @@ def journal_partial(rows: list[dict[str, Any]]) -> dict[str, Any]:
             partial["failed_step"] = row.get("step")
             if result.get("reason"):
                 partial["reason"] = result["reason"]
+            if result.get("field"):
+                partial["field"] = result["field"]
             if result.get("response"):
                 partial["response"] = result["response"]
     partial["recovery"] = "new_exact_approved_proposal"
@@ -1145,14 +1152,72 @@ def _same_instant(sent: str, got: Any) -> bool:
         return True
     if "T" not in str(sent):
         return str(got) == str(sent) or str(got).startswith(str(sent))
-    from datetime import datetime
+    from .schedule import same_instant
 
-    try:
-        left = datetime.fromisoformat(str(sent))
-        right = datetime.fromisoformat(str(got).replace("Z", "+00:00"))
-    except ValueError:
+    return same_instant(str(sent), got)
+
+
+def _same_id(left: Any, right: Any) -> bool:
+    from .schedule import same_id
+
+    return same_id(left, right)
+
+
+def _duration_equal(sent: Any, got: Any) -> bool:
+    if isinstance(sent, bool) or isinstance(got, bool):
         return False
-    return left.tzinfo is not None and right.tzinfo is not None and left == right
+    try:
+        return money(sent) == money(got)
+    except GateError:
+        return False
+
+
+def _routes_equal(sent: Any, got: Any) -> bool:
+    from .schedule import same_routes
+
+    return same_routes(list(sent or []), list(got or []))
+
+
+def _instructions_equal(sent: Any, got: Any) -> bool:
+    if sent in {None, ""} and got in {None, ""}:
+        return True
+    return sent == got
+
+
+def _nonrecurring(row: dict[str, Any]) -> None:
+    repeat = row.get("repeat_type")
+    if repeat is None or str(repeat).strip() == "":
+        raise GateError(GATE_READBACK, reason="repeat_type_unverified")
+    if str(repeat).strip().lower() not in {"none", "one_time"} or row.get("series_id") or row.get("recurring") is True:
+        raise GateError(GATE_READBACK, reason="recurrence_mismatch", field="repeat_type")
+    series = row.get("appointment_occurrences")
+    if isinstance(series, list) and len(series) > 1:
+        raise GateError(GATE_READBACK, reason="recurrence_mismatch", field="repeat_type")
+
+
+def _schedule_has_pair(schedule: dict[str, Any], occurrence_id: Any, appointment_id: Any) -> bool:
+    for item in schedule.get("conflicts") or []:
+        item_id = item.get("id")
+        if item_id is None:
+            item_id = item.get("work_order_id")
+        if str(item_id) != str(occurrence_id):
+            continue
+        paired = item.get("service_appointment_id")
+        if paired is not None and str(paired) != str(appointment_id):
+            continue
+        return True
+    return False
+
+
+_READBACK_RETRY_GATES = frozenset({GATE_READBACK, GATE_SCHEDULE, GATE_DISTINCT_IDS, "work_order_shape_unverified"})
+_READBACK_DELAY_REASONS = frozenset(
+    {"occurrence_not_on_schedule", "schedule_incomplete", "work_order_shape_unverified", "repeat_type_unverified", "ids_missing"}
+)
+
+
+def _delay_readback(exc: GateError) -> bool:
+    reason = str(exc.detail.get("reason") or exc.gate)
+    return reason in _READBACK_DELAY_REASONS or exc.gate in {GATE_SCHEDULE, "work_order_shape_unverified"}
 
 
 def work_order_readback(client: Any, sent: dict[str, Any], occurrence_id: str) -> dict[str, Any]:
@@ -1166,16 +1231,22 @@ def work_order_readback(client: Any, sent: dict[str, Any], occurrence_id: str) -
         _mismatch("occurrence_id", occurrence_id, row.get("id"))
     occurrence = sent["appointment_occurrences_attributes"][0]
     schedule = schedule_view(client, str(occurrence["starts_at"]), list(occurrence["service_route_ids"]))
-    if str(row.get("id")) not in {str(item.get("id")) for item in schedule["conflicts"]}:
+    if not _schedule_has_pair(schedule, row.get("id"), appointment_id):
         raise GateError(GATE_READBACK, reason="occurrence_not_on_schedule")
-    _require_equal("customer_id", sent["customer_id"], row.get("customer_id"))
-    _require_equal("service_location_id", sent["service_location_id"], row.get("service_location_id"))
+    if not _same_id(sent["customer_id"], row.get("customer_id")):
+        _mismatch("customer_id", sent["customer_id"], row.get("customer_id"))
+    if not _same_id(sent["service_location_id"], row.get("service_location_id")):
+        _mismatch("service_location_id", sent["service_location_id"], row.get("service_location_id"))
     actual_start = row.get("starts_at")
     if not _same_instant(str(occurrence["starts_at"]), actual_start) and str(row.get("starts_at_date") or "") != str(occurrence["starts_at"]):
         _mismatch("starts_at", occurrence["starts_at"], actual_start)
-    _require_equal("duration", occurrence.get("duration"), row.get("duration"))
-    _require_equal("service_route_ids", list(occurrence["service_route_ids"]), list(row.get("service_route_ids") or []))
-    _require_equal("instructions", occurrence.get("instructions"), row.get("instructions"))
+    if not _duration_equal(occurrence.get("duration"), row.get("duration")):
+        _mismatch("duration", occurrence.get("duration"), row.get("duration"))
+    if not _routes_equal(occurrence.get("service_route_ids"), row.get("service_route_ids")):
+        _mismatch("service_route_ids", list(occurrence["service_route_ids"]), list(row.get("service_route_ids") or []))
+    if not _instructions_equal(occurrence.get("instructions"), row.get("instructions")):
+        _mismatch("instructions", occurrence.get("instructions"), row.get("instructions"))
+    _nonrecurring(row)
     if not money_equal(occurrence.get("production_value"), row.get("production_value")):
         _mismatch("production_value", occurrence.get("production_value"), row.get("production_value"))
     sent_lines = sent["line_items_attributes"]
@@ -1185,7 +1256,7 @@ def work_order_readback(client: Any, sent: dict[str, Any], occurrence_id: str) -
     compared_lines = []
     for sent_line, got_line in zip(sent_lines, got_lines):
         compared = {
-            "payable_id": _require_equal("payable_id", sent_line.get("payable_id"), got_line.get("payable_id")),
+            "payable_id": got_line.get("payable_id") if _same_id(sent_line.get("payable_id"), got_line.get("payable_id")) else _mismatch("payable_id", sent_line.get("payable_id"), got_line.get("payable_id")),
             "payable_type": _require_equal("payable_type", sent_line.get("payable_type"), got_line.get("payable_type")),
             "type": _require_equal("type", sent_line.get("type"), got_line.get("type")),
             "name": _require_equal("name", sent_line.get("name"), got_line.get("name")),
@@ -1276,8 +1347,7 @@ def post_work_order(service: Any, proposal: dict[str, Any], attempt_id: str) -> 
         if not finished["ok"]:
             return finished["stopped"]
         sent = finished["sent"]
-        readback = work_order_readback(client, sent, reconciled)
-        return {"ok": True, "readback": readback, "created_id": readback["occurrence_id"], "reconciled": True}
+        return _finish_readback(service, proposal, attempt_id, sent, reconciled, reconciled_post=True)
     created = response_id(response)
     appointment_id = response.get("service_appointment_id") if isinstance(response, dict) else None
     if created is None or response_id({"id": appointment_id}) is None or str(created) == str(appointment_id):
@@ -1293,8 +1363,55 @@ def post_work_order(service: Any, proposal: dict[str, Any], attempt_id: str) -> 
     if not finished["ok"]:
         return finished["stopped"]
     sent = finished["sent"]
-    readback = work_order_readback(client, sent, str(created))
-    return {"ok": True, "readback": readback, "created_id": created}
+    return _finish_readback(service, proposal, attempt_id, sent, str(created), reconciled_post=False)
+
+
+def _finish_readback(service: Any, proposal: dict[str, Any], attempt_id: str, sent: dict[str, Any], occurrence_id: str, *, reconciled_post: bool) -> dict[str, Any]:
+    """One immediate read, then at most two more reads. Never POST or PATCH again."""
+    client = service.client
+    last: GateError | None = None
+    for attempt in range(3):
+        if attempt and last is not None and _delay_readback(last):
+            time.sleep(0.05)
+        try:
+            readback = work_order_readback(client, sent, str(occurrence_id))
+        except GateError as exc:
+            if exc.gate not in _READBACK_RETRY_GATES:
+                raise
+            last = exc
+            continue
+        return {
+            "ok": True,
+            "readback": readback,
+            "created_id": readback["occurrence_id"],
+            "reconciled": reconciled_post,
+            "readback_attempts": attempt + 1,
+        }
+    assert last is not None
+    return _stop_readback(service.store, proposal, attempt_id, sent, occurrence_id, last)
+
+
+def _stop_readback(store: Any, proposal: dict[str, Any], attempt_id: str, sent: dict[str, Any], occurrence_id: str, exc: GateError) -> dict[str, Any]:
+    appointment_id = None
+    for row in store.creation_journal(proposal["proposal_id"]):
+        result = row.get("result") if isinstance(row.get("result"), dict) else {}
+        if result.get("service_appointment_id") is not None:
+            appointment_id = result["service_appointment_id"]
+    ids = {"customer_id": str(sent["customer_id"]), "location_id": str(sent["service_location_id"])}
+    detail: dict[str, Any] = {
+        "gate": GATE_READBACK,
+        "reason": exc.detail.get("reason") or exc.gate,
+        "retry": False,
+        "occurrence_id": int(occurrence_id) if str(occurrence_id).isdigit() else occurrence_id,
+        "service_appointment_id": appointment_id,
+    }
+    if exc.detail.get("field"):
+        detail["field"] = exc.detail["field"]
+    step_id = _step(store, proposal["proposal_id"], "readback", {"occurrence_id": occurrence_id, "service_appointment_id": appointment_id}, **ids)
+    store.finish_creation_step(step_id, "failed", detail, **ids)
+    stopped = stop_creation(store, proposal, attempt_id)
+    stopped["reason"] = GATE_READBACK
+    return stopped
 
 
 def _finish_schedule_patch(service: Any, proposal: dict[str, Any], attempt_id: str, sent: dict[str, Any], occurrence_id: str, appointment_id: Any) -> dict[str, Any]:

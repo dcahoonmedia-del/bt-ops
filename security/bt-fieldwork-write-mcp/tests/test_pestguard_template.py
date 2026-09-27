@@ -115,7 +115,7 @@ class PestGuardTemplateTests(unittest.TestCase):
         self.assertFalse(any(call["method"] in {"POST", "PATCH"} for call in self.h.transport.calls))
 
     def test_same_permit_list_accepts_a_verified_email_and_does_not_invent_a_subject(self) -> None:
-        permitted = ("daniel@btpestcontrol.com", "joshua1740@icloud.com")
+        permitted = ("daniel@btpestcontrol.com", "josh@btpestcontrol.com")
         subject_map = {"auth0|daniel": "daniel@btpestcontrol.com"}
         daniel = resolve_human_identity(
             {"sub": "auth0|daniel", "email": "daniel@btpestcontrol.com", "email_verified": True},
@@ -123,17 +123,36 @@ class PestGuardTemplateTests(unittest.TestCase):
             subject_map=subject_map,
         )
         josh = resolve_human_identity(
-            {"sub": "auth0|from-verified-token", "email": "joshua1740@icloud.com", "email_verified": True},
+            {"sub": "auth0|from-verified-token", "email": "Josh@btpestcontrol.com", "email_verified": True},
+            permitted=permitted,
+            subject_map=subject_map,
+        )
+        unverified = resolve_human_identity(
+            {"sub": "auth0|from-verified-token", "email": "josh@btpestcontrol.com", "email_verified": False},
+            permitted=permitted,
+            subject_map=subject_map,
+        )
+        obsolete = resolve_human_identity(
+            {"sub": "auth0|old-josh", "email": "joshua1740@icloud.com", "email_verified": True},
+            permitted=permitted,
+            subject_map=subject_map,
+        )
+        mismatch = resolve_human_identity(
+            {"sub": "auth0|daniel", "email": "josh@btpestcontrol.com", "email_verified": True},
             permitted=permitted,
             subject_map=subject_map,
         )
         inferred = resolve_human_identity(
-            {"sub": "auth0|from-verified-token", "preferred_username": "joshua1740@icloud.com"},
+            {"sub": "auth0|from-verified-token", "preferred_username": "josh@btpestcontrol.com"},
             permitted=permitted,
             subject_map=subject_map,
         )
         self.assertEqual(daniel["email"], "daniel@btpestcontrol.com")
-        self.assertEqual(josh["email"], "joshua1740@icloud.com")
+        self.assertEqual(josh["email"], "josh@btpestcontrol.com")
         self.assertEqual(josh["sub"], "auth0|from-verified-token")
+        self.assertIsNone(unverified)
+        self.assertIsNone(obsolete)
+        self.assertIsNone(mismatch)
         self.assertIsNone(inferred)
         self.assertNotIn("joshua1740@icloud.com", subject_map.values())
+        self.assertNotIn("josh@btpestcontrol.com", subject_map.values())
