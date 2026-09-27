@@ -155,17 +155,18 @@ GATE_CONTACT = "contact_incomplete"
 GATE_PARTIAL = "creation_partial"
 GATE_ADDRESS = "address_id_unverified"
 GATE_DISTINCT_IDS = "occurrence_appointment_not_distinct"
-GATE_STATUS_UNVERIFIED = "work_order_status_write_unverified"
+GATE_STATUS_UNVERIFIED = "work_order_status_catalog_unverified"
+GATE_STATUS_FAILED = "status_write_failed"
 
-STATUS_WRITE_EVIDENCE_GAP = (
-    "No saved request proves a work-order status write. "
-    "patch_work_order_fields accepts only instructions, private_notes, starts_at, duration, and service_route_ids. "
-    "Create rejects status. GET filter[status] and work_pool are list query parameters, not a request body. "
-    "A GET label such as Scheduled or Today - Anytime, including the observed label on occurrence 8210560, "
-    "does not prove a PATCH field, an allowed value, or that changing status preserves starts_at, duration, route, "
-    "price, service, instructions, private notes, arrival window, and recurrence, or that it sends no notice. "
-    "Execution stays disabled until a live response verifies that contract."
-)
+# Public Swagger 1.2 (api.fieldworkhq.com/apidocs, base https://api3.fieldworkhq.com):
+# PATCH /v3.1/work_orders/{id} path id is "Service Appointment ID".
+# service_appointment[appointment_occurrences_attributes][][id] is "Work Order ID".
+# service_appointment[appointment_occurrences_attributes][][status] is an optional string, "Status of WO", with no enum.
+# Allowed strings come from GET /v3.1/statuses/i18n_statuses?entity_type=appointment_occurrence.
+# That response model is not in the spec. The parser accepts only a list of strings or objects
+# that carry value, status, name, or label. It does not send acts_as or a numeric id.
+# No transition list is documented. create_work_order still rejects caller status.
+# patch_work_order_fields stays limited to instructions, private_notes, starts_at, duration, and service_route_ids.
 
 LEAD_STATUSES = frozenset({"lead", "leads"})
 
@@ -261,7 +262,20 @@ def current_gates(
             "create_customer": {"propose": True, "schema_ready": True, "live_tested": False, "execute_blocked_by": list(write_blocks), "caller_location_key": "service_locations", "caller_location_shape": "one_object_or_one_item_list", "fieldwork_location_key": "service_locations_attributes", "nested_location_fields": ["name", "same_as_billing_address"], "missing_location_gate": "nested_location_required", "address_patch_when_distinct": True, "response_schema_verified": False, "post_response_body_retained": False, "ambiguous_customer_post": "authoritative_get_no_retry"},
             "create_work_order": {"propose": True, "schema_ready": True, "live_tested": False, "execute_blocked_by": list(write_blocks), "repeat_type": "none", "caller_schedule_keys": ["starts_at", "duration", "service_route_ids", "instructions"], "missing_schedule_gate": "missing_field", "starts_at_date_only": "YYYY-MM-DD", "offset_starts_at": "date_post_plus_one_schedule_patch", "timed_create_ready": False, "starts_at_post_clock_live_tested": False, "starts_at_datetime_format_unverified": True, "price": "caller_line_price_or_template_standard", "use_time_window_sent": False, "promised_window_enforced": False, "initial_treatment_only": True, "response_schema_verified": False, "first_live_creation_approval_required": True, "readback_reconciliation": "immediate_plus_two_reads_no_replay"},
             "update_customer_primary_email": {"propose": True, "live_tested": False, "execute_blocked_by": list(write_blocks), "caller_field": "primary_email", "sole_field": "invoice_email", "location_email_patch": "not_sent", "same_as_billing_location_email_propagation": "observed_once_not_proven_for_other_locations", "notice_delivery": "not_audited"},
-            "update_work_order_status": {"propose": False, "execute": False, "persisted": False, "live_tested": False, "recognized": True, "changed_fields": ["status"], "write_sent": False, "evidence_gap": STATUS_WRITE_EVIDENCE_GAP},
+            "update_work_order_status": {
+                "propose": bool(mapping_verified),
+                "execute_blocked_by": list(work_order_blocks),
+                "live_tested": False,
+                "changed_fields": ["status"],
+                "method": "PATCH",
+                "path": "/v3.1/work_orders/{service_appointment_id}",
+                "nested_id": "work_order_id",
+                "status_field": "service_appointment[appointment_occurrences_attributes][][status]",
+                "status_value": "catalog_string",
+                "catalog": "GET /v3.1/statuses/i18n_statuses?entity_type=appointment_occurrence",
+                "transitions": "not_in_spec",
+                "other_fields": "not_sent",
+            },
             "update_customer_phone": {"implemented": False, "propose": False, "execute": False, "reason": "no_verified_billing_phone_patch_helper", "billing_phone_is_customer_post_field_only": True},
             "schedule_or_arrival_window_write": {"propose": False, "execute_blocked_by": [GATE_ARRIVAL_WINDOW]},
             "list_users": {"read": True, "endpoint": "GET /v3.1/users", "projection": "staff_and_branch_fields", "stripe_pk": False},
