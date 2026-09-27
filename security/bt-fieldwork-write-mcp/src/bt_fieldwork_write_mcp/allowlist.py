@@ -9,12 +9,26 @@ OP_WORK_ORDER_NOTES = "update_work_order_notes"
 OP_WORK_ORDER_SCHEDULE = "update_work_order_schedule"
 OP_CREATE_WORK_ORDER = "create_work_order"
 OP_CREATE_CUSTOMER = "create_customer"
+OP_UPDATE_CUSTOMER_PRIMARY_EMAIL = "update_customer_primary_email"
+OP_UPDATE_WORK_ORDER_STATUS = "update_work_order_status"
 
-ALLOWED_OPS = frozenset({OP_LOCATION_NOTES, OP_WORK_ORDER_NOTES, OP_WORK_ORDER_SCHEDULE, OP_CREATE_WORK_ORDER, OP_CREATE_CUSTOMER})
+ALLOWED_OPS = frozenset(
+    {
+        OP_LOCATION_NOTES,
+        OP_WORK_ORDER_NOTES,
+        OP_WORK_ORDER_SCHEDULE,
+        OP_CREATE_WORK_ORDER,
+        OP_CREATE_CUSTOMER,
+        OP_UPDATE_CUSTOMER_PRIMARY_EMAIL,
+        OP_UPDATE_WORK_ORDER_STATUS,
+    }
+)
 
 LOCATION_NOTE_FIELDS = frozenset({"customer_id", "location_id", "notes"})
 WORK_ORDER_NOTE_FIELDS = frozenset({"work_order_id", "service_appointment_id", "instructions", "private_notes"})
 WORK_ORDER_SCHEDULE_FIELDS = frozenset({"work_order_id", "service_appointment_id", "starts_at", "duration", "service_route_ids"})
+CUSTOMER_EMAIL_FIELDS = frozenset({"customer_id", "primary_email"})
+WORK_ORDER_STATUS_FIELDS = frozenset({"work_order_id", "service_appointment_id", "status"})
 NOTE_TEXT_FIELDS = ("instructions", "private_notes")
 SCHEDULE_WRITE_FIELDS = ("starts_at", "duration", "service_route_ids")
 ARRIVAL_FIELDS = ("arrival_time_window", "arrival_time_window_start", "arrival_time_window_end", "arrival_time_window_str")
@@ -141,6 +155,17 @@ GATE_CONTACT = "contact_incomplete"
 GATE_PARTIAL = "creation_partial"
 GATE_ADDRESS = "address_id_unverified"
 GATE_DISTINCT_IDS = "occurrence_appointment_not_distinct"
+GATE_STATUS_UNVERIFIED = "work_order_status_write_unverified"
+
+STATUS_WRITE_EVIDENCE_GAP = (
+    "No saved request proves a work-order status write. "
+    "patch_work_order_fields accepts only instructions, private_notes, starts_at, duration, and service_route_ids. "
+    "Create rejects status. GET filter[status] and work_pool are list query parameters, not a request body. "
+    "A GET label such as Scheduled or Today - Anytime, including the observed label on occurrence 8210560, "
+    "does not prove a PATCH field, an allowed value, or that changing status preserves starts_at, duration, route, "
+    "price, service, instructions, private notes, arrival window, and recurrence, or that it sends no notice. "
+    "Execution stays disabled until a live response verifies that contract."
+)
 
 LEAD_STATUSES = frozenset({"lead", "leads"})
 
@@ -234,7 +259,10 @@ def current_gates(
             "update_work_order_notes": {"propose": bool(mapping_verified), "execute_role": "client.get_api_role", "execute_blocked_by": list(work_order_blocks), "fields": ["instructions", "private_notes"]},
             "update_work_order_schedule": {"propose": bool(mapping_verified), "single_occurrence": True, "execute_role": "client.get_api_role", "execute_blocked_by": list(work_order_blocks), "fields": ["starts_at", "duration", "service_route_ids"], "arrival_window_preserved": False, "arrival_coupling": "fixed_window_selected_by_start_when_occurrence_evidence_is_fresh", "explicit_arrival_window_edit": False},
             "create_customer": {"propose": True, "schema_ready": True, "live_tested": False, "execute_blocked_by": list(write_blocks), "caller_location_key": "service_locations", "caller_location_shape": "one_object_or_one_item_list", "fieldwork_location_key": "service_locations_attributes", "nested_location_fields": ["name", "same_as_billing_address"], "missing_location_gate": "nested_location_required", "address_patch_when_distinct": True, "response_schema_verified": False, "post_response_body_retained": False, "ambiguous_customer_post": "authoritative_get_no_retry"},
-            "create_work_order": {"propose": True, "schema_ready": True, "live_tested": False, "execute_blocked_by": list(write_blocks), "repeat_type": "none", "caller_schedule_keys": ["starts_at", "duration", "service_route_ids", "instructions"], "missing_schedule_gate": "missing_field", "starts_at_date_only": "YYYY-MM-DD", "offset_starts_at": "date_post_plus_one_schedule_patch", "timed_create_ready": False, "starts_at_post_clock_live_tested": False, "starts_at_datetime_format_unverified": True, "price": "caller_line_price_or_template_standard", "use_time_window_sent": False, "promised_window_enforced": False, "initial_treatment_only": True, "response_schema_verified": False, "first_live_creation_approval_required": True},
+            "create_work_order": {"propose": True, "schema_ready": True, "live_tested": False, "execute_blocked_by": list(write_blocks), "repeat_type": "none", "caller_schedule_keys": ["starts_at", "duration", "service_route_ids", "instructions"], "missing_schedule_gate": "missing_field", "starts_at_date_only": "YYYY-MM-DD", "offset_starts_at": "date_post_plus_one_schedule_patch", "timed_create_ready": False, "starts_at_post_clock_live_tested": False, "starts_at_datetime_format_unverified": True, "price": "caller_line_price_or_template_standard", "use_time_window_sent": False, "promised_window_enforced": False, "initial_treatment_only": True, "response_schema_verified": False, "first_live_creation_approval_required": True, "readback_reconciliation": "immediate_plus_two_reads_no_replay"},
+            "update_customer_primary_email": {"propose": True, "live_tested": False, "execute_blocked_by": list(write_blocks), "caller_field": "primary_email", "sole_field": "invoice_email", "location_email_patch": "not_sent", "same_as_billing_location_email_propagation": "observed_once_not_proven_for_other_locations", "notice_delivery": "not_audited"},
+            "update_work_order_status": {"propose": False, "execute": False, "persisted": False, "live_tested": False, "recognized": True, "changed_fields": ["status"], "write_sent": False, "evidence_gap": STATUS_WRITE_EVIDENCE_GAP},
+            "update_customer_phone": {"implemented": False, "propose": False, "execute": False, "reason": "no_verified_billing_phone_patch_helper", "billing_phone_is_customer_post_field_only": True},
             "schedule_or_arrival_window_write": {"propose": False, "execute_blocked_by": [GATE_ARRIVAL_WINDOW]},
             "list_users": {"read": True, "endpoint": "GET /v3.1/users", "projection": "staff_and_branch_fields", "stripe_pk": False},
             "list_service_locations": {"read": True, "endpoint": "GET /v3.1/customers/{customer_id}/service_locations", "customer_required": True, "global_endpoint": False},

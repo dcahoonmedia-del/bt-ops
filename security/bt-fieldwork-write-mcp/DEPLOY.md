@@ -31,7 +31,10 @@ FW_WRITE_OAUTH_AUDIENCE=
 FW_WRITE_OAUTH_RESOURCE=
 FW_WRITE_OAUTH_JWKS_URL=
 FW_WRITE_REQUIRED_SCOPES=fieldwork.write
-FW_WRITE_PERMITTED_USERS=daniel@btpestcontrol.com
+# Pending, not applied. Production still lists only daniel@btpestcontrol.com until a human installs this.
+# Obsolete and must not remain: joshua1740@icloud.com
+# Do not set FW_WRITE_AUTH0_SUBJECT_MAP for Josh and do not transfer an old subject.
+FW_WRITE_PERMITTED_USERS=daniel@btpestcontrol.com,josh@btpestcontrol.com
 FW_PESTGUARD_INITIAL_TEMPLATE_ID=8835901
 FW_PESTGUARD_INITIAL_SERVICE_ID=38814
 FW_RESIDENTIAL_LOCATION_TYPE_ID=8736

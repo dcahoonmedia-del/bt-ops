@@ -26,14 +26,20 @@ from .allowlist import (
     LOCATION_NOTE_FIELDS,
     ARRIVAL_FIELDS,
     NOTE_TEXT_FIELDS,
+    CUSTOMER_EMAIL_FIELDS,
+    GATE_STATUS_UNVERIFIED,
     OP_CREATE_CUSTOMER,
     OP_CREATE_WORK_ORDER,
     OP_LOCATION_NOTES,
+    OP_UPDATE_CUSTOMER_PRIMARY_EMAIL,
+    OP_UPDATE_WORK_ORDER_STATUS,
     OP_WORK_ORDER_NOTES,
     OP_WORK_ORDER_SCHEDULE,
     SCHEDULE_WRITE_FIELDS,
+    STATUS_WRITE_EVIDENCE_GAP,
     WORK_ORDER_NOTE_FIELDS,
     WORK_ORDER_SCHEDULE_FIELDS,
+    WORK_ORDER_STATUS_FIELDS,
     UnknownFieldError,
     assert_only,
     current_gates,
@@ -223,6 +229,10 @@ class WriteService:
                 return self._propose_create(payload, identity)
             if operation == OP_CREATE_CUSTOMER:
                 return self._propose_customer(payload, identity)
+            if operation == OP_UPDATE_CUSTOMER_PRIMARY_EMAIL:
+                return self._propose_customer_email(payload, identity)
+            if operation == OP_UPDATE_WORK_ORDER_STATUS:
+                return self._propose_work_order_status(payload, identity)
         except UnknownFieldError as exc:
             return self._fail(exc.args[0].split(":")[0], fields=exc.fields)
         except GateError as exc:
@@ -496,6 +506,171 @@ class WriteService:
             result["live_tested"] = False
         return result
 
+    def _location_email_disclosure(self, customer_id: str) -> list[dict[str, Any]]:
+        try:
+            listed = self.client.list_service_locations(customer_id)
+        except GateError:
+            return []
+        shown = []
+        for item in listed.get("items") or []:
+            location_id = item.get("id")
+            if location_id is None:
+                continue
+            try:
+                location = self.client.get_location(customer_id, str(location_id))
+            except GateError:
+                continue
+            shown.append(
+                {
+                    "location_id": location.get("id"),
+                    "email": location.get("email"),
+                    "same_as_billing_address": location.get("same_as_billing_address"),
+                }
+            )
+        return shown
+
+    def _propose_customer_email(self, payload: dict[str, Any], identity: dict[str, str]) -> dict[str, Any]:
+        assert_only(payload, CUSTOMER_EMAIL_FIELDS, label="customer_email")
+        customer_id = str(payload.get("customer_id") or "")
+        email = payload.get("primary_email")
+        if not customer_id.isdigit():
+            return self._fail(GATE_IDENTITY)
+        if not isinstance(email, str) or not email.strip():
+            return self._fail("unknown_field", fields=["primary_email"])
+        customer = self.client.get_customer(customer_id)
+        self.client.reject_if_lead(customer)
+        if str(customer.get("id")) != customer_id:
+            return self._fail(GATE_IDENTITY)
+        requested = email.strip()
+        before = {"customer_id": customer.get("id"), "name": customer.get("name"), "invoice_email": customer.get("invoice_email")}
+        after = {
+            "customer_id": customer.get("id"),
+            "name": customer.get("name"),
+            "invoice_email": requested,
+            "location_email_patch": "not_sent",
+            "same_as_billing_location_email_propagation": "observed_once_not_proven_for_other_locations",
+            "notice_delivery": "not_audited",
+            "observed_location_emails": self._location_email_disclosure(customer_id),
+        }
+        result = self._persist_proposal(
+            OP_UPDATE_CUSTOMER_PRIMARY_EMAIL,
+            {"customer_id": int(customer_id), "primary_email": requested},
+            identity,
+            f"customer_invoice_email:{customer_id}",
+            before,
+            after,
+        )
+        if result.get("ok"):
+            result["live_tested"] = False
+            result["changed_fields"] = ["invoice_email"]
+        return result
+
+    def _customer_email_stale(self, proposal: dict[str, Any]) -> dict[str, Any] | None:
+        customer_id = str(proposal["payload"]["customer_id"])
+        try:
+            customer = self.client.get_customer(customer_id)
+            self.client.reject_if_lead(customer)
+        except GateError as exc:
+            return self._fail(exc.gate, proposal_id=proposal["proposal_id"], **exc.detail)
+        if customer.get("invoice_email") != proposal["before"].get("invoice_email") or str(customer.get("id")) != customer_id:
+            self.store.release_open_guard(proposal["subject_key"], proposal["proposal_id"])
+            self.store.set_status(proposal["proposal_id"], "stale")
+            return self._fail(GATE_STALE, proposal_id=proposal["proposal_id"])
+        return None
+
+    def _execute_customer_email(self, proposal: dict[str, Any], clock: datetime) -> dict[str, Any]:
+        customer_id = str(proposal["payload"]["customer_id"])
+        requested = str(proposal["after"]["invoice_email"])
+        try:
+            attempt_id = self.store.begin_attempt(proposal["proposal_id"], proposal["subject_key"], _iso(clock))
+        except GateError as exc:
+            return self._fail(exc.gate, proposal_id=proposal["proposal_id"], **exc.detail)
+        stale = self._customer_email_stale(proposal)
+        if stale is not None:
+            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "failed_no_write")
+            return stale
+        ambiguous = False
+        try:
+            self.client.patch_customer_invoice_email(customer_id, requested)
+        except AmbiguousWriteError:
+            ambiguous = True
+        except GateError as exc:
+            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "failed_no_write")
+            return self._fail(exc.gate, proposal_id=proposal["proposal_id"], retry=False, **exc.detail)
+        except Exception:
+            ambiguous = True
+        try:
+            customer = self.client.get_customer(customer_id)
+        except Exception:
+            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
+            return self._fail("ambiguous_remote_write_no_retry", proposal_id=proposal["proposal_id"], retry=False)
+        if customer.get("invoice_email") != requested or str(customer.get("id")) != customer_id:
+            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
+            gate = "ambiguous_remote_write_no_retry" if ambiguous else GATE_READBACK
+            return self._fail(gate, proposal_id=proposal["proposal_id"], retry=False, customer_id=customer.get("id"), invoice_email=customer.get("invoice_email"))
+        self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "success")
+        body = {
+            "ok": True,
+            "proposal_id": proposal["proposal_id"],
+            "operation": OP_UPDATE_CUSTOMER_PRIMARY_EMAIL,
+            "live_tested": False,
+            "readback": {
+                "customer_id": customer.get("id"),
+                "name": customer.get("name"),
+                "invoice_email": customer.get("invoice_email"),
+                "location_email_patch": "not_sent",
+                "same_as_billing_location_email_propagation": "observed_once_not_proven_for_other_locations",
+                "notice_delivery": "not_audited",
+                "observed_location_emails": self._location_email_disclosure(customer_id),
+            },
+            "gates": self.gates(),
+        }
+        if ambiguous:
+            body["ambiguity_reconciled"] = True
+            body["retry"] = False
+        return body
+
+    def _propose_work_order_status(self, payload: dict[str, Any], identity: dict[str, str]) -> dict[str, Any]:
+        del identity
+        assert_only(payload, WORK_ORDER_STATUS_FIELDS, label="work_order_status")
+        work_order_id = str(payload.get("work_order_id") or "")
+        appointment_id = str(payload.get("service_appointment_id") or "")
+        status = payload.get("status")
+        if not work_order_id.isdigit() or not appointment_id.isdigit():
+            return self._fail(GATE_IDENTITY, persisted=False, write_sent=False)
+        if not isinstance(status, str) or not status.strip():
+            return self._fail("unknown_field", fields=["status"], persisted=False, write_sent=False)
+        row = self.client.get_work_order(work_order_id)
+        if str(row.get("id")) != work_order_id or str(row.get("service_appointment_id")) != appointment_id:
+            return self._fail(GATE_IDENTITY, persisted=False, write_sent=False)
+        before = {
+            "work_order_id": row.get("id"),
+            "service_appointment_id": row.get("service_appointment_id"),
+            "customer_id": row.get("customer_id"),
+            "location_id": row.get("service_location_id"),
+            "status": row.get("status"),
+            "starts_at": row.get("starts_at"),
+            "duration": row.get("duration"),
+            "service_route_ids": list(row.get("service_route_ids") or []),
+            "instructions": row.get("instructions"),
+            "private_notes": row.get("private_notes"),
+            "repeat_type": row.get("repeat_type"),
+        }
+        for key in ARRIVAL_FIELDS:
+            before[key] = row.get(key)
+        return self._fail(
+            GATE_STATUS_UNVERIFIED,
+            persisted=False,
+            execute=False,
+            write_sent=False,
+            live_tested=False,
+            changed_fields=["status"],
+            requested_status=status.strip(),
+            evidence_gap=STATUS_WRITE_EVIDENCE_GAP,
+            before=before,
+            protected_fields=["starts_at", "duration", "service_route_ids", "price", "service", "instructions", "private_notes", "arrival_window", "repeat_type"],
+        )
+
     def _persist_proposal(
         self,
         operation: str,
@@ -611,6 +786,8 @@ class WriteService:
             stale = self._work_order_stale(proposal)
         elif proposal["operation"] == OP_LOCATION_NOTES:
             stale = self._location_stale(proposal)
+        elif proposal["operation"] == OP_UPDATE_CUSTOMER_PRIMARY_EMAIL:
+            stale = self._customer_email_stale(proposal)
         else:
             stale = None
         if stale is not None:
@@ -630,6 +807,10 @@ class WriteService:
             return self._execute_work_order(proposal, clock, [key for key in NOTE_TEXT_FIELDS if key in proposal["payload"]])
         if proposal["operation"] == OP_WORK_ORDER_SCHEDULE:
             return self._execute_work_order(proposal, clock, list(SCHEDULE_WRITE_FIELDS))
+        if proposal["operation"] == OP_UPDATE_CUSTOMER_PRIMARY_EMAIL:
+            return self._execute_customer_email(proposal, clock)
+        if proposal["operation"] == OP_UPDATE_WORK_ORDER_STATUS:
+            return self._fail(GATE_STATUS_UNVERIFIED, proposal_id=proposal_id, execute=False, write_sent=False, evidence_gap=STATUS_WRITE_EVIDENCE_GAP)
         if proposal["operation"] in {OP_CREATE_WORK_ORDER, OP_CREATE_CUSTOMER}:
             return self._execute_create(proposal, clock)
         return self._fail(GATE_UNKNOWN_OP, proposal_id=proposal_id)
@@ -741,9 +922,12 @@ class WriteService:
             stopped = stop_creation(self.store, proposal, attempt_id)
             return self._fail(stopped["gate"], proposal_id=proposal["proposal_id"], retry=False, **{key: stopped[key] for key in ("partial", "failed_step", "recovery")})
         if not result.get("ok"):
-            return self._fail(result.get("gate") or GATE_PARTIAL, proposal_id=proposal["proposal_id"], **{key: result.get(key) for key in ("partial", "failed_step", "retry", "recovery")})
+            extra = {key: result.get(key) for key in ("partial", "failed_step", "retry", "recovery")}
+            if result.get("reason"):
+                extra["reason"] = result["reason"]
+            return self._fail(result.get("gate") or GATE_PARTIAL, proposal_id=proposal["proposal_id"], **extra)
         self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "success")
-        return {
+        body = {
             "ok": True,
             "proposal_id": proposal["proposal_id"],
             "operation": proposal["operation"],
@@ -754,6 +938,9 @@ class WriteService:
             "live_tested": False,
             "gates": self.gates(),
         }
+        if result.get("readback_attempts"):
+            body["readback_attempts"] = result["readback_attempts"]
+        return body
 
     def _execute_location_notes(self, proposal: dict[str, Any], clock: datetime) -> dict[str, Any]:
         payload = proposal["payload"]
