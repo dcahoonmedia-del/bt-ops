@@ -172,8 +172,22 @@ def customer_request(payload: dict[str, Any]) -> dict[str, Any]:
     same = loc.get("same_as_billing_address")
     if not isinstance(same, bool):
         _unknown("same_as_billing_address")
-    customer["service_locations_attributes"] = [{"name": name, "same_as_billing_address": same}]
-    plan: dict[str, Any] = {"customer": customer, "contact": None, "location_patch": None, "additional_location": None}
+    nested_location: dict[str, Any] = {"name": name, "same_as_billing_address": same}
+    creation_time_reminders = False
+    if "reminders_type" in loc:
+        reminder = loc["reminders_type"]
+        if isinstance(reminder, bool) or not isinstance(reminder, int) or reminder != 0:
+            _unknown("reminders_type")
+        nested_location["reminders_type"] = 0
+        creation_time_reminders = True
+    customer["service_locations_attributes"] = [nested_location]
+    plan: dict[str, Any] = {
+        "customer": customer,
+        "contact": None,
+        "location_patch": None,
+        "additional_location": None,
+        "creation_time_reminders_experiment": creation_time_reminders,
+    }
     if same:
         if "service_address" in payload or "location_tax_rate_id" in payload:
             _unknown("service_address" if "service_address" in payload else "location_tax_rate_id")
@@ -250,12 +264,21 @@ def _caller_location(payload: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+CREATION_TIME_REMINDERS_DISPLAY = "creation-time reminders requested: Inactive; persistence unverified."
+
+
+def without_experimental_reminders(plan: dict[str, Any], service_location: dict[str, Any]) -> dict[str, Any]:
+    """Later location writes in the opted-in experiment do not resend reminders_type."""
+    body = dict(service_location)
+    if plan.get("creation_time_reminders_experiment"):
+        body.pop("reminders_type", None)
+    return body
+
+
 def _customer_api_steps(plan: dict[str, Any]) -> list[dict[str, Any]]:
     steps = [{"method": "POST", "path": "/customers", "body": {"customer": plan["customer"]}}]
     if plan.get("main_location") or plan.get("location_patch"):
-        service_location = dict(plan.get("main_location") or {})
-        if plan.get("location_patch"):
-            service_location.update(plan["location_patch"])
+        service_location = without_experimental_reminders(plan, {**(plan.get("main_location") or {}), **(plan.get("location_patch") or {})})
         steps.append(
             {
                 "method": "PATCH",

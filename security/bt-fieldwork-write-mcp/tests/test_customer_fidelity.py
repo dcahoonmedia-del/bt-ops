@@ -473,3 +473,166 @@ class CustomerFidelityTests(unittest.TestCase):
             self.h.transport.request = original
             self.assertEqual(failed["reason"], "reminders_type_not_integer", label)
             self.assertEqual(failed["partial"]["field"], "reminders_type")
+
+
+EXPERIMENT_PAYLOAD = {
+    "customer_type": "Residential",
+    "status": "active",
+    "name": "B&T Reminder Creation Test 2026-09-28",
+    "last_name": "B&T Reminder Creation Test 2026-09-28",
+    "billing_phone": "910-555-0147",
+    "billing_phone_kind": "Mobile",
+    "primary_email": "bt-reminder-creation-20260928@example.invalid",
+    "billing_street": "111 Thorn Tree Ct",
+    "billing_city": "Jacksonville",
+    "billing_state": "NC",
+    "billing_zip": "28540",
+    "service_locations": {"name": "Main Location", "same_as_billing_address": True, "reminders_type": 0},
+    "acknowledge_duplicate_coverage": ["address", "email"],
+}
+
+
+class CreationTimeReminderExperimentTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.h = Harness(writes_enabled=True, api_role="writer")
+
+    def tearDown(self) -> None:
+        self.h.close()
+
+    def test_opt_in_sends_initial_zero_and_later_patches_omit_it(self) -> None:
+        from bt_fieldwork_write_mcp.create_contract import CREATION_TIME_REMINDERS_DISPLAY
+
+        ordinary = self.h.service.propose("create_customer", _home(last_name="Ordinary"), IDENTITY)
+        nested_ordinary = ordinary["after"]["documented_request"]["customer"]["service_locations_attributes"][0]
+        self.assertEqual(set(nested_ordinary), {"name", "same_as_billing_address"})
+        self.assertEqual(ordinary["after"]["documented_request"]["main_location"]["reminders_type"], 0)
+        self.assertFalse(ordinary["after"]["creation_time_reminders_experiment"])
+        rejected = []
+        for value in (1, -1, 2, 3, "0", True, False):
+            failed = self.h.service.propose(
+                "create_customer",
+                _home(last_name=f"Bad{value}", service_locations={"name": "Main Location", "same_as_billing_address": True, "reminders_type": value}),
+                IDENTITY,
+            )
+            rejected.append(failed["fields"])
+        self.assertEqual(rejected, [["reminders_type"]] * 7)
+        extra = self.h.service.propose(
+            "create_customer",
+            _home(last_name="Extra", service_locations={"name": "Main Location", "same_as_billing_address": True, "reminders_type": 0, "send_report_email": False}),
+            IDENTITY,
+        )
+        self.assertEqual(extra["fields"], ["send_report_email"])
+        proposed = self.h.service.propose("create_customer", EXPERIMENT_PAYLOAD, IDENTITY)
+        self.assertTrue(proposed["ok"], proposed)
+        self.assertEqual(proposed["after"]["creation_time_reminders_display"], CREATION_TIME_REMINDERS_DISPLAY)
+        self.assertTrue(proposed["after"]["creation_time_reminders_experiment"])
+        self.assertFalse(proposed["after"]["notification_effects"]["documented_on_customer_post"])
+        self.assertEqual(proposed["after"]["notification_effects"]["appointment_reminders"], "not_claimed")
+        plan = proposed["after"]["documented_request"]
+        nested = plan["customer"]["service_locations_attributes"][0]
+        self.assertEqual(nested["reminders_type"], 0)
+        self.assertEqual(nested["name"], "Main Location")
+        self.assertIs(nested["same_as_billing_address"], True)
+        self.assertNotIn("reminders_type", plan["main_location"])
+        self.assertEqual(plan["main_location"]["location_type_id"], 8736)
+        self.assertEqual(plan["property_type"], "Residential")
+        self.assertIsNone(plan["contact"])
+        self.assertEqual(plan["customer"]["billing_phone_kind"], "Mobile")
+        self.assertEqual(plan["customer"]["status"], "active")
+        posts = [step for step in plan["api_steps"] if step["method"] == "POST" and step["path"] == "/customers"]
+        self.assertEqual(posts[0]["body"]["customer"]["service_locations_attributes"][0]["reminders_type"], 0)
+        for step in plan["api_steps"]:
+            if step["method"] == "PATCH":
+                self.assertNotIn("reminders_type", step["body"].get("service_location") or {})
+                self.assertNotIn("reminders_type", step["body"].get("customer") or {})
+        done = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=self.h.approve(proposed["proposal_id"]))
+        self.assertTrue(done["ok"], done)
+        self.assertEqual(done["readback"]["reminders_type"]["status"], "unverified")
+        self.assertEqual(done["readback"]["reminders_type"]["display"], CREATION_TIME_REMINDERS_DISPLAY)
+        self.assertEqual(done["readback"]["reminders_type"]["appointment_reminders"], "not_claimed")
+        self.assertTrue(done["readback"]["reminders_type"]["ui_verification_required"])
+        self.assertFalse(done["readback"]["reminders_type"]["http_success_proves_persistence"])
+        self.assertIsNone(done["readback"]["reminders_type"]["value"])
+        self.assertEqual(done["readback"]["location_type_id"]["value"], 8736)
+        self.assertEqual(done["readback"]["primary_email"]["value"], EXPERIMENT_PAYLOAD["primary_email"])
+        self.assertIsNone(done["readback"]["contact_id"])
+        customer_posts = [call for call in self.h.transport.calls if call["method"] == "POST" and call["path"] == "/customers"]
+        self.assertEqual(len(customer_posts), 1)
+        self.assertEqual(customer_posts[0]["body"]["customer"]["service_locations_attributes"][0]["reminders_type"], 0)
+        for call in self.h.transport.calls:
+            if call["method"] == "PATCH":
+                self.assertNotIn("reminders_type", (call.get("body") or {}).get("service_location") or {})
+        again = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval="unused")
+        self.assertNotEqual(again.get("ok"), True)
+        self.assertEqual(len([call for call in self.h.transport.calls if call["method"] == "POST" and call["path"] == "/customers"]), 1)
+
+    def test_later_email_and_property_remain_and_recovery_does_not_resend_reminders(self) -> None:
+        from bt_fieldwork_write_mcp.errors import AmbiguousWriteError
+
+        payload = {
+            **EXPERIMENT_PAYLOAD,
+            "last_name": "Email Stay",
+            "location_email": "bt-reminder-creation-20260928@example.invalid",
+            "primary_email": "bt-reminder-creation-20260928@example.invalid",
+            "acknowledge_duplicate_coverage": ["address", "email"],
+        }
+        proposed = self.h.service.propose("create_customer", payload, IDENTITY)
+        self.assertTrue(proposed["ok"], proposed)
+        steps = proposed["after"]["documented_request"]["api_steps"]
+        location_steps = [step for step in steps if step["method"] == "PATCH" and "service_locations" in step["path"]]
+        self.assertEqual(location_steps[0]["body"]["service_location"]["email"], payload["location_email"])
+        self.assertEqual(location_steps[0]["body"]["service_location"]["location_type_id"], 8736)
+        self.assertNotIn("reminders_type", location_steps[0]["body"]["service_location"])
+        split = {
+            **payload,
+            "last_name": "Split Email",
+            "location_email": "reports-reminder-20260928@example.invalid",
+            "primary_email": "billing-reminder-20260928@example.invalid",
+        }
+        split_plan = self.h.service.propose("create_customer", split, IDENTITY)
+        self.assertTrue(split_plan["ok"], split_plan)
+        split_locations = [step for step in split_plan["after"]["documented_request"]["api_steps"] if step["method"] == "PATCH" and "service_locations" in step["path"]]
+        self.assertEqual(split_locations[0]["body"]["service_location"], {"location_type_id": 8736})
+        self.assertEqual(split_locations[1]["body"], {"service_location": {"email": split["location_email"]}})
+        original = self.h.transport.request
+        seen = []
+
+        def recover(method, path, body=None, query=None):
+            if method == "PATCH" and "/service_locations/" in path and "email" in ((body or {}).get("service_location") or {}) and "location_type_id" in (body or {}).get("service_location", {}):
+                seen.append(body)
+                self.assertNotIn("reminders_type", body["service_location"])
+                parts = path.split("/")
+                location = self.h.transport.locations[f"{parts[2]}:{parts[4]}"]
+                location["location_type_id"] = body["service_location"]["location_type_id"]
+                location["email"] = body["service_location"]["email"]
+                raise AmbiguousWriteError(
+                    "location_patch_unresolved",
+                    diagnostic={"status": 500, "content_type": "unknown", "top_level_keys": [], "parser_stage": "test", "response_body_retained": False},
+                )
+            return original(method, path, body, query)
+
+        self.h.transport.request = recover
+        done = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=self.h.approve(proposed["proposal_id"]))
+        self.h.transport.request = original
+        self.assertTrue(done["ok"], done)
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(done["readback"]["location_email"]["value"], payload["location_email"])
+        self.assertEqual(done["readback"]["location_type_id"]["value"], 8736)
+        self.assertEqual(done["readback"]["reminders_type"]["appointment_reminders"], "not_claimed")
+
+    def test_digest_binds_the_nested_reminder_and_alteration_does_not_post(self) -> None:
+        import json
+
+        proposed = self.h.service.propose("create_customer", {**EXPERIMENT_PAYLOAD, "last_name": "Bound"}, IDENTITY)
+        self.assertTrue(proposed["ok"], proposed)
+        stored = self.h.store.get_proposal(proposed["proposal_id"])
+        after = stored["after"]
+        after["documented_request"]["customer"]["service_locations_attributes"][0]["reminders_type"] = 2
+        self.h.store._conn.execute(
+            "UPDATE proposals SET after_json = ? WHERE proposal_id = ?",
+            (json.dumps(after), proposed["proposal_id"]),
+        )
+        token = self.h.approve(proposed["proposal_id"])
+        altered = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=token)
+        self.assertEqual(altered["reason"], "stored_proposal_digest_mismatch")
+        self.assertFalse(any(call["method"] == "POST" and call["path"] == "/customers" for call in self.h.transport.calls))
