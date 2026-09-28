@@ -34,13 +34,17 @@ PRICE_OVERRIDE = "explicit_approved_override"
 # Public swagger 1.2, fetched 2026-09-28 from api3.fieldworkhq.com/apidocs:
 # GET /v3.1/services is only "Fetches all Services", with no parameters and no response model.
 # POST /v3.1/work_orders requires payable_id for type service and does not say that id is selectable.
-# Observed list rows omit active, enabled, deleted, and archived. Membership is not that proof.
+# The public work-order bundle reads server-rendered #autocomplete_lists data-services.
+# That selector copies value, type, and price and does not check an active flag.
+# The bundle does not request GET /v3.1/services, so the UI list is not that API.
 GENERIC_SELECTABILITY_MISSING = (
     "GET /v3.1/services summary is only Fetches all Services",
     "GET /v3.1/services has no parameters and no response schema",
     "no GET /services/{id}",
     "POST /v3.1/work_orders payable_id does not document catalog selectability",
     "list membership is not an active flag",
+    "work-order autocomplete reads server-rendered #autocomplete_lists data-services and does not check an active flag",
+    "that UI list is not proven identical to GET /v3.1/services",
 )
 
 _WORD = re.compile(r"[a-z0-9]+")
@@ -306,14 +310,20 @@ def bind_residential_location(plan: dict[str, Any], client: Any, configured_type
         "reminders_api_description": "Type of reminder",
         "reminders_api_enum_labels": "not_in_spec",
         "intended_office_state": "inactive",
-        "intended_label_source": "prior_location_ui_maps_integer_0_to_inactive",
+        "intended_label_source": "location_edit_select_option_0_text_is_Inactive",
+        "web_form_field": "service_location[reminders_type]",
+        "web_form_option_0": "Inactive",
+        "web_form_options": [-1, 0, 1, 2, 3],
+        "web_form_is_not_the_api_contract": True,
         "ui_values_absent_from_api_enum": [1, 3],
         "later_invoice_email_patch_includes_reminders_type": False,
         "later_location_email_patch_includes_reminders_type": False,
         "later_step_reset_observed": False,
         "write_position": "main_location_patch_before_invoice_email",
         "reorder": "not_supported_no_reset_evidence",
-        "persistence": "unresolved_until_get_returns_integer",
+        "persistence": "unresolved_api_get_omits_field",
+        "api_get_can_settle_persistence": False,
+        "persistence_diagnostic": "not_run_web_form_select_before_and_after_one_api_patch_not_brian",
         "http_success_proves_persistence": False,
         "send_report_email": "not_sent",
         "completion_report": "inherited_send_report_email_true_may_send_once_location_email_is_added",
@@ -745,6 +755,7 @@ def _prepare_generic_service(client: Any, appointment: dict[str, Any], line: dic
         "list_membership_proves_active": False,
         "catalog_membership": "one_current_id_and_description" if complete else "list_incomplete",
         "work_order_selectability": "not_established",
+        "ui_list_membership_proves_public_api_eligibility": False,
         "missing_evidence": list(GENERIC_SELECTABILITY_MISSING),
         "path": "generic_service",
     }
@@ -951,7 +962,9 @@ def _reminder_readback(location: dict[str, Any]) -> dict[str, Any]:
         "api_enum": [-1, 0, 2],
         "api_enum_labels": "not_in_spec",
         "intended_office_state": "inactive",
-        "intended_label_source": "prior_location_ui_maps_integer_0_to_inactive",
+        "intended_label_source": "location_edit_select_option_0_text_is_Inactive",
+        "web_form_option_0": "Inactive",
+        "api_get_can_settle_persistence": False,
         "http_success_proves_persistence": False,
     }
     if "reminders_type" not in location or location.get("reminders_type") is None:
@@ -1931,6 +1944,7 @@ def post_work_order(service: Any, proposal: dict[str, Any], attempt_id: str) -> 
             missing_evidence=list(prepared.get("missing_evidence") or GENERIC_SELECTABILITY_MISSING),
             catalog_membership=prepared.get("catalog_membership"),
             work_order_selectability=prepared.get("work_order_selectability") or "not_established",
+            ui_list_membership_proves_public_api_eligibility=False,
             retry=False,
             write_sent=False,
         )

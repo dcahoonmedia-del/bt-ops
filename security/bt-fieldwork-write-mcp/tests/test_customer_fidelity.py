@@ -400,6 +400,11 @@ class CustomerFidelityTests(unittest.TestCase):
         self.assertEqual(steps[3]["body"]["service_location"], {"email": "reports@example.test"})
         effects = proposed["after"]["notification_effects"]
         self.assertEqual(effects["reorder"], "not_supported_no_reset_evidence")
+        self.assertEqual(effects["web_form_option_0"], "Inactive")
+        self.assertEqual(effects["persistence"], "unresolved_api_get_omits_field")
+        self.assertFalse(effects["api_get_can_settle_persistence"])
+        self.assertEqual(effects["persistence_diagnostic"], "not_run_web_form_select_before_and_after_one_api_patch_not_brian")
+        self.assertEqual(effects["reminders_type_sent"], 0)
         self.assertFalse(effects["later_invoice_email_patch_includes_reminders_type"])
         self.assertFalse(effects["later_location_email_patch_includes_reminders_type"])
         self.assertEqual(effects["send_report_email"], "not_sent")

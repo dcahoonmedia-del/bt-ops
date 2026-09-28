@@ -463,6 +463,8 @@ class OneTimeGeneralTests(unittest.TestCase):
         self.assertEqual(proposed["after"]["catalog_membership"], "one_current_id_and_description")
         self.assertEqual(proposed["after"]["work_order_selectability"], "not_established")
         self.assertIn("GET /v3.1/services summary is only Fetches all Services", proposed["after"]["missing_evidence"])
+        self.assertIn("that UI list is not proven identical to GET /v3.1/services", proposed["after"]["missing_evidence"])
+        self.assertFalse(proposed["after"]["ui_list_membership_proves_public_api_eligibility"])
         self.assertFalse(proposed["after"]["template_consulted"])
         done = self._execute(proposed)
         self.assertEqual(done["reason"], "service_selectability_unverified")
