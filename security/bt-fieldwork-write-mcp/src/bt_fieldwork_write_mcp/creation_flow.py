@@ -1070,6 +1070,8 @@ def customer_readback(client: Any, customer_id: str, *, sent_customer: dict[str,
         _require_equal("invoice_email", expected_invoice_email, customer.get("invoice_email"))
     compared: dict[str, Any] = {}
     fields = sent_customer if wrote_customer else {}
+    # Same rule as reconciliation: only fields in the approved body are identity.
+    # A canonical Residential body has no customer name, so name="" is not a mismatch.
     for key, value in fields.items():
         if key == "service_locations_attributes":
             continue
@@ -1377,6 +1379,12 @@ def _proposal_current(service: Any, proposal: dict[str, Any]) -> bool:
 
 
 def _customer_matches(customer: dict[str, Any], sent: dict[str, Any]) -> bool:
+    """Compare the approved customer body. Residential name is absent unless it was sent.
+
+    A new Residential proposal keeps identity in first_name and last_name. An empty
+    Fieldwork name then agrees. A sent name, including every Commercial name, still
+    has to match exactly. Phone, address, type, and active status stay strict.
+    """
     if customer.get("customer_type") != sent.get("customer_type"):
         return False
     status = str(customer.get("status") or customer.get("customer_status") or "").strip().lower()

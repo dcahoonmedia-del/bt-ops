@@ -89,6 +89,50 @@ def _optional_str(payload: dict[str, Any], field: str, target: dict[str, Any]) -
     target[field] = value
 
 
+def _collapsed_text(value: str) -> str:
+    return " ".join(value.split())
+
+
+def residential_display_name(customer: dict[str, Any]) -> str:
+    """Display built from the Residential fields Fieldwork actually keeps."""
+    parts: list[str] = []
+    first = customer.get("first_name")
+    if isinstance(first, str) and first.strip():
+        parts.append(_collapsed_text(first))
+    last = customer.get("last_name")
+    if isinstance(last, str) and last.strip():
+        parts.append(_collapsed_text(last))
+    return " ".join(parts)
+
+
+def _bind_new_residential_name(payload: dict[str, Any], customer: dict[str, Any]) -> dict[str, Any]:
+    """Drop a redundant Residential name before the proposal digest is sealed.
+
+    Fieldwork keeps Residential identity in first_name and last_name and returns
+    customer name as an empty string. A caller name is accepted only when it is
+    that same display. It is not posted and is not a separately verified field.
+    """
+    display = residential_display_name(customer)
+    persisted = [key for key in ("first_name", "last_name") if key in customer]
+    record: dict[str, Any] = {
+        "persisted_fields": persisted,
+        "customer_name_sent": False,
+        "caller_name": None,
+        "intended_display_name": display,
+        "reason": "residential_identity_is_first_and_last_name",
+    }
+    if "name" not in payload:
+        return record
+    supplied = payload["name"]
+    if not isinstance(supplied, str):
+        _unknown("name")
+    if not supplied.strip() or _collapsed_text(supplied) != display:
+        raise GateError("residential_name_conflict", fields=["name"], write_sent=False)
+    record["caller_name"] = supplied
+    record["reason"] = "redundant_residential_name_not_independently_persisted"
+    return record
+
+
 def _int(value: Any, field: str, *, positive: bool = False) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         _unknown(field)
@@ -105,6 +149,7 @@ def customer_request(payload: dict[str, Any]) -> dict[str, Any]:
     if customer_type not in CUSTOMER_TYPES:
         _unknown("customer_type")
     customer: dict[str, Any] = {"customer_type": customer_type}
+    residential_name: dict[str, Any] | None = None
     if customer_type == "Commercial":
         name = payload.get("name")
         if not isinstance(name, str) or not name.strip():
@@ -122,7 +167,11 @@ def customer_request(payload: dict[str, Any]) -> dict[str, Any]:
             if not isinstance(payload["first_name"], str):
                 _unknown("first_name")
             customer["first_name"] = payload["first_name"]
-        _optional_str(payload, "name", customer)
+        if "existing_customer_id" in payload:
+            _optional_str(payload, "name", customer)
+            residential_name = None
+        else:
+            residential_name = _bind_new_residential_name(payload, customer)
     if "status" in payload:
         status = payload["status"]
         if isinstance(status, str) and is_lead_status({"status": status}):
@@ -188,6 +237,9 @@ def customer_request(payload: dict[str, Any]) -> dict[str, Any]:
         "additional_location": None,
         "creation_time_reminders_experiment": creation_time_reminders,
     }
+    if residential_name is not None:
+        plan["intended_display_name"] = residential_name["intended_display_name"]
+        plan["residential_name"] = residential_name
     if same:
         if "service_address" in payload or "location_tax_rate_id" in payload:
             _unknown("service_address" if "service_address" in payload else "location_tax_rate_id")
