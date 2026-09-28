@@ -524,6 +524,8 @@ class WriteService:
             "billing_phone_kind_source": plan.get("billing_phone_kind_source"),
             "property_type": plan.get("property_type"),
             "location_type_id": plan.get("location_type_id"),
+            "intended_display_name": plan.get("intended_display_name"),
+            "residential_name": plan.get("residential_name"),
             "reminders_type": 0,
             "creation_time_reminders_experiment": bool(plan.get("creation_time_reminders_experiment")),
             "creation_time_reminders_display": plan.get("creation_time_reminders_display"),

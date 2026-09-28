@@ -571,6 +571,7 @@ class CreationTimeReminderExperimentTests(unittest.TestCase):
 
         payload = {
             **EXPERIMENT_PAYLOAD,
+            "name": "Email Stay",
             "last_name": "Email Stay",
             "location_email": "bt-reminder-creation-20260928@example.invalid",
             "primary_email": "bt-reminder-creation-20260928@example.invalid",
@@ -585,6 +586,7 @@ class CreationTimeReminderExperimentTests(unittest.TestCase):
         self.assertNotIn("reminders_type", location_steps[0]["body"]["service_location"])
         split = {
             **payload,
+            "name": "Split Email",
             "last_name": "Split Email",
             "location_email": "reports-reminder-20260928@example.invalid",
             "primary_email": "billing-reminder-20260928@example.invalid",
@@ -623,7 +625,7 @@ class CreationTimeReminderExperimentTests(unittest.TestCase):
     def test_digest_binds_the_nested_reminder_and_alteration_does_not_post(self) -> None:
         import json
 
-        proposed = self.h.service.propose("create_customer", {**EXPERIMENT_PAYLOAD, "last_name": "Bound"}, IDENTITY)
+        proposed = self.h.service.propose("create_customer", {**EXPERIMENT_PAYLOAD, "name": "Bound", "last_name": "Bound"}, IDENTITY)
         self.assertTrue(proposed["ok"], proposed)
         stored = self.h.store.get_proposal(proposed["proposal_id"])
         after = stored["after"]

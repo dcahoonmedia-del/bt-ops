@@ -9,7 +9,7 @@ Swagger create responses are null. A successful readback is a test double that e
 Accepted:
 
 - `customer_type`: `Residential` or `Commercial` (case-sensitive)
-- Commercial requires `name`. Residential requires `last_name`. `first_name` is optional once `last_name` is filled.
+- Commercial requires `name`. That name is posted and verified exactly. Residential requires `last_name`. `first_name` is optional once `last_name` is filled. Those two fields are the Residential identity. A new Residential `name` is accepted only when it is the same display (`first_name` plus `last_name`, or `last_name` alone). It is omitted from the customer POST and from reconciliation and readback before the proposal digest is sealed. The proposal shows that display as `intended_display_name`. A different Residential `name` is `residential_name_conflict` and nothing is written. An already stored proposal is not rewritten.
 - `service_locations`: one object, or a list of exactly one object, with only `name` and `same_as_billing_address`. The customer POST sends that as `service_locations_attributes`, not as `service_locations`. Omitting the location is `nested_location_required`.
 - `status` when present: `active`, `inactive`, `financial_hold`, `sent_to_collections`. Omitted status is sent as `active`.
 - Optional billing fields from the create spec: `billing_name`, `billing_attention`, `billing_street`, `billing_street2`, `billing_city`, `billing_state`, `billing_zip`, `billing_county`, `billing_term_id`, `billing_phone`, `billing_phone_ext`, `billing_phone_note`, `billing_phone_kind` (`Home`, `Office`, `Mobile`, `Fax`, `Other`), and the billing phone arrays
