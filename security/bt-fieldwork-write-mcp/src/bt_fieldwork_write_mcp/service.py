@@ -434,11 +434,9 @@ class WriteService:
             "selectability_source": prepared.get("selectability_source"),
             "catalog_membership": prepared.get("catalog_membership"),
             "work_order_selectability": prepared.get("work_order_selectability"),
-            **(
-                {"ui_list_membership_proves_public_api_eligibility": False}
-                if "ui_list_membership_proves_public_api_eligibility" in prepared
-                else {}
-            ),
+            "catalog_equivalence": prepared.get("catalog_equivalence"),
+            "universal_api_guarantee": prepared.get("universal_api_guarantee"),
+            "eligibility_evidence": list(prepared["eligibility_evidence"]) if prepared.get("eligibility_evidence") else None,
             "missing_evidence": list(prepared["missing_evidence"]) if prepared.get("missing_evidence") else None,
             "line_total": applied.get("line_total"),
             "price": applied.get("price"),

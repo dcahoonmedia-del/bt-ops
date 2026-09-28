@@ -119,18 +119,18 @@ class CatalogPriceTests(unittest.TestCase):
         self.assertEqual(proposed["after"]["documented_request"]["service_appointment"]["repeat_type"], "none")
         self.assertFalse(proposed["after"]["recurrence"])
         self.assertFalse(proposed["after"]["agreement"])
-        self.assertTrue(proposed["after"]["execution_blocked"])
-        self.assertEqual(proposed["after"]["execution_block_reason"], "service_selectability_unverified")
+        self.assertFalse(proposed["after"]["execution_blocked"])
+        self.assertEqual(proposed["after"]["work_order_selectability"], "current_complete_catalog_member")
         self.assertFalse(proposed["after"]["list_membership_proves_active"])
+        self.assertEqual(proposed["after"]["active_eligibility"], "unverified")
         self.assertEqual(proposed["after"]["invoice_generation_reason"], "not_in_service_catalog")
         self.assertIsNone(proposed["after"]["auto_generates_invoice"])
         done = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=self.h.approve(proposed["proposal_id"]))
-        self.assertFalse(done["ok"])
-        self.assertEqual(done["reason"], "service_selectability_unverified")
-        self.assertFalse(done["active_flag_fabricated"])
-        self.assertFalse(done["list_membership_proves_active"])
+        self.assertTrue(done["ok"], done)
+        self.assertFalse(done["live_tested"])
         posts = [call for call in self.h.transport.calls if call["method"] == "POST" and call["path"] == "/work_orders"]
-        self.assertEqual(len(posts), 0)
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(posts[0]["body"]["service_appointment"]["line_items_attributes"][0]["price"], 225)
         self.assertEqual(self.h.transport.work_orders["49965490"]["line_items"][0]["price"], "350.0")
 
     def test_caller_price_above_catalog_stays_an_explicit_override(self) -> None:
@@ -150,10 +150,11 @@ class CatalogPriceTests(unittest.TestCase):
         self.assertIsNone(proposed["after"]["production_value"])
         self.assertEqual(proposed["after"]["production_source"], "omitted_remote_default_unverified")
         done = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=self.h.approve(proposed["proposal_id"]))
-        self.assertFalse(done["ok"])
-        self.assertEqual(done["reason"], "service_selectability_unverified")
+        self.assertTrue(done["ok"], done)
         posts = [call for call in self.h.transport.calls if call["method"] == "POST" and call["path"] == "/work_orders"]
-        self.assertEqual(len(posts), 0)
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(posts[0]["body"]["service_appointment"]["line_items_attributes"][0]["price"], 200)
+        self.assertEqual(self.h.transport.work_orders["49965490"]["line_items"][0]["price"], "350.0")
 
     def test_missing_catalog_price_does_not_use_historical_line(self) -> None:
         self.h.transport.services[1].pop("price")
