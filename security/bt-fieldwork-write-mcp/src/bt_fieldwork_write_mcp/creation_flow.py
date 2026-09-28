@@ -292,7 +292,10 @@ def bind_residential_location(plan: dict[str, Any], client: Any, configured_type
         raise GateError("location_type_unverified", reason="configured_type_is_not_residential")
     plan["location_type_id"] = int(matches[0]["id"])
     plan["property_type"] = matches[0].get("name")
-    fields = {"location_type_id": plan["location_type_id"], "reminders_type": 0}
+    experimental = bool(plan.get("creation_time_reminders_experiment"))
+    fields = {"location_type_id": plan["location_type_id"]}
+    if not experimental:
+        fields["reminders_type"] = 0
     primary = plan.get("primary_email")
     location_email = plan.get("location_email")
     same_as_billing = plan["customer"]["service_locations_attributes"][0]["same_as_billing_address"] is True
@@ -303,35 +306,62 @@ def bind_residential_location(plan: dict[str, Any], client: Any, configured_type
     plan["main_location"] = fields
     plan["expected_location_email"] = location_email or (primary if same_as_billing and primary else None)
     plan["reminders_type"] = 0
-    plan["notification_effects"] = {
-        "reminders_type_sent": 0,
-        "appointment_reminders": "inactive_does_not_disable_every_notice",
-        "reminders_api_field": "service_location[reminders_type]",
-        "reminders_api_enum": [-1, 0, 2],
-        "reminders_api_description": "Type of reminder",
-        "reminders_api_enum_labels": "not_in_spec",
-        "intended_office_state": "inactive",
-        "intended_label_source": "location_edit_select_option_0_text_is_Inactive",
-        "web_form_field": "service_location[reminders_type]",
-        "web_form_option_0": "Inactive",
-        "web_form_options": [-1, 0, 1, 2, 3],
-        "web_form_is_not_the_api_contract": True,
-        "ui_values_absent_from_api_enum": [1, 3],
-        "later_invoice_email_patch_includes_reminders_type": False,
-        "later_location_email_patch_includes_reminders_type": False,
-        "later_step_reset_observed": False,
-        "write_position": "main_location_patch_before_invoice_email",
-        "reorder": "not_supported_no_reset_evidence",
-        "persistence": "unresolved_api_get_omits_field",
-        "api_get_can_settle_persistence": False,
-        "persistence_diagnostic": "not_run_web_form_select_before_and_after_one_api_patch_not_brian",
-        "http_success_proves_persistence": False,
-        "send_report_email": "not_sent",
-        "completion_report": "inherited_send_report_email_true_may_send_once_location_email_is_added",
-        "customer_creation_notice": "unknown",
-        "invoice_email_notice_delivery": "not_audited",
-        "same_as_billing_invoice_email_propagation": "observed_once_not_proven_for_other_locations" if primary and same_as_billing else "not_assumed",
-    }
+    if experimental:
+        plan["creation_time_reminders_display"] = "creation-time reminders requested: Inactive; persistence unverified."
+        plan["notification_effects"] = {
+            "experiment": "creation_time_nested_reminders_type_0",
+            "display": plan["creation_time_reminders_display"],
+            "requested_label": "Inactive",
+            "reminders_type_sent": 0,
+            "sent_on": "customer.service_locations_attributes[0].reminders_type",
+            "documented_on_customer_post": False,
+            "documented_on_service_location_post_and_patch": True,
+            "appointment_reminders": "not_claimed",
+            "later_location_patch_includes_reminders_type": False,
+            "later_invoice_email_patch_includes_reminders_type": False,
+            "later_location_email_patch_includes_reminders_type": False,
+            "write_position": "initial_nested_main_location_only",
+            "persistence": "unverified",
+            "ui_verification_required": True,
+            "http_success_proves_persistence": False,
+            "web_form_option_0": "Inactive",
+            "send_report_email": "not_sent",
+            "completion_report": "inherited_send_report_email_true_may_send_once_location_email_is_added",
+            "customer_creation_notice": "unknown",
+            "invoice_email_notice_delivery": "not_audited",
+            "same_as_billing_invoice_email_propagation": "observed_once_not_proven_for_other_locations" if primary and same_as_billing else "not_assumed",
+        }
+    else:
+        plan["creation_time_reminders_display"] = None
+        plan["notification_effects"] = {
+            "reminders_type_sent": 0,
+            "appointment_reminders": "inactive_does_not_disable_every_notice",
+            "reminders_api_field": "service_location[reminders_type]",
+            "reminders_api_enum": [-1, 0, 2],
+            "reminders_api_description": "Type of reminder",
+            "reminders_api_enum_labels": "not_in_spec",
+            "intended_office_state": "inactive",
+            "intended_label_source": "location_edit_select_option_0_text_is_Inactive",
+            "web_form_field": "service_location[reminders_type]",
+            "web_form_option_0": "Inactive",
+            "web_form_options": [-1, 0, 1, 2, 3],
+            "web_form_is_not_the_api_contract": True,
+            "ui_values_absent_from_api_enum": [1, 3],
+            "later_invoice_email_patch_includes_reminders_type": False,
+            "later_location_email_patch_includes_reminders_type": False,
+            "later_step_reset_observed": False,
+            "write_position": "main_location_patch_before_invoice_email",
+            "reorder": "not_supported_no_reset_evidence",
+            "persistence": "unresolved_api_get_omits_field",
+            "api_get_can_settle_persistence": False,
+            "persistence_diagnostic": "not_run_web_form_select_before_and_after_one_api_patch_not_brian",
+            "http_success_proves_persistence": False,
+            "send_report_email": "not_sent",
+            "completion_report": "inherited_send_report_email_true_may_send_once_location_email_is_added",
+            "customer_creation_notice": "unknown",
+            "invoice_email_notice_delivery": "not_audited",
+            "same_as_billing_invoice_email_propagation": "observed_once_not_proven_for_other_locations" if primary and same_as_billing else "not_assumed",
+        }
     from .create_contract import _customer_api_steps
 
     plan["api_steps"] = _customer_api_steps(plan)
@@ -964,8 +994,35 @@ def _require_equal(field: str, sent: Any, got: Any) -> Any:
     return got
 
 
-def _reminder_readback(location: dict[str, Any]) -> dict[str, Any]:
+def _experimental_reminder_readback(location: dict[str, Any]) -> dict[str, Any]:
+    """Nested customer-post reminders are undocumented. HTTP success is not inactive."""
+    shown = {
+        "write_sent": True,
+        "sent_value": 0,
+        "sent_on": "customer.service_locations_attributes[0].reminders_type",
+        "experiment": "creation_time_nested_reminders_type_0",
+        "display": "creation-time reminders requested: Inactive; persistence unverified.",
+        "requested_label": "Inactive",
+        "documented_on_customer_post": False,
+        "appointment_reminders": "not_claimed",
+        "http_success_proves_persistence": False,
+        "ui_verification_required": True,
+        "persistence": "unverified",
+    }
+    if "reminders_type" not in location or location.get("reminders_type") is None:
+        return {**shown, "status": "unverified", "reason": "get_omits_reminders_type", "value": None}
+    value = location.get("reminders_type")
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise GateError(GATE_READBACK, reason="reminders_type_not_integer", field="reminders_type", sent=0, got=value)
+    if value != 0:
+        _mismatch("reminders_type", 0, value)
+    return {**shown, "status": "unverified", "reason": "nested_customer_post_field_undocumented", "matches_sent_integer": True, "value": 0}
+
+
+def _reminder_readback(location: dict[str, Any], *, experiment: bool = False) -> dict[str, Any]:
     """Integer 0 matches the sent API value. Omission and booleans are not that integer."""
+    if experiment:
+        return _experimental_reminder_readback(location)
     shown = {
         "write_sent": True,
         "sent_value": 0,
@@ -1002,7 +1059,7 @@ def _reminder_readback(location: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def customer_readback(client: Any, customer_id: str, *, sent_customer: dict[str, Any], contact: dict[str, Any] | None, location_id: str, address: dict[str, Any] | None, wrote_customer: bool = True, main_location: dict[str, Any] | None = None, expected_invoice_email: str | None = None, expected_location_email: str | None = None) -> dict[str, Any]:
+def customer_readback(client: Any, customer_id: str, *, sent_customer: dict[str, Any], contact: dict[str, Any] | None, location_id: str, address: dict[str, Any] | None, wrote_customer: bool = True, main_location: dict[str, Any] | None = None, expected_invoice_email: str | None = None, expected_location_email: str | None = None, reminders_experiment: bool = False) -> dict[str, Any]:
     customer = client.get_customer(customer_id)
     status = str(customer.get("status") or customer.get("customer_status") or "").strip().lower()
     if status != "active":
@@ -1074,7 +1131,7 @@ def customer_readback(client: Any, customer_id: str, *, sent_customer: dict[str,
         "discoverable": True,
         "matched_sent_fields": True,
         "billing_phone_kind": {"status": "verified" if "billing_phone_kind" in fields else "not_sent", "value": customer.get("billing_phone_kind")},
-        "reminders_type": _reminder_readback(location),
+        "reminders_type": _reminder_readback(location, experiment=reminders_experiment),
         "location_email": {"status": "verified" if expected_location_email is not None or (main_location and "email" in main_location) else "not_sent", "value": location.get("email")},
         "location_type_id": {"status": "verified" if main_location and "location_type_id" in main_location else "not_sent", "value": location.get("location_type_id")},
         "primary_email": {"status": "verified" if expected_invoice_email else "not_sent", "value": customer.get("invoice_email")},
@@ -1091,6 +1148,8 @@ def _invoice_email_matches(client: Any, customer_id: str, email: str) -> bool:
 
 
 def post_customer_steps(service: Any, proposal: dict[str, Any], attempt_id: str) -> dict[str, Any]:
+    from .create_contract import without_experimental_reminders
+
     plan = proposal["after"]["documented_request"]
     client = service.client
     store = service.store
@@ -1160,6 +1219,7 @@ def post_customer_steps(service: Any, proposal: dict[str, Any], attempt_id: str)
                 raise GateError(GATE_ADDRESS)
             service_location.update(plan["location_patch"])
             service_location["address_attributes"] = {"id": address_id, **plan["location_patch"]["address_attributes"]}
+        service_location = without_experimental_reminders(plan, service_location)
         patch = {"service_location": service_location}
         step_id = _step(store, proposal["proposal_id"], "location_patch", patch, customer_id=customer_id, location_id=location_id)
         response, diagnostic = _sent_write(lambda: client.patch_service_location(customer_id, location_id, patch), client)
@@ -1186,7 +1246,7 @@ def post_customer_steps(service: Any, proposal: dict[str, Any], attempt_id: str)
     if plan.get("deferred_location_email"):
         if not _proposal_current(service, proposal):
             return stop_creation(store, proposal, attempt_id)
-        patch = {"service_location": {"email": plan["deferred_location_email"]}}
+        patch = {"service_location": without_experimental_reminders(plan, {"email": plan["deferred_location_email"]})}
         step_id = _step(store, proposal["proposal_id"], "location_email_patch", patch, customer_id=customer_id, location_id=nested_location_id)
         response, diagnostic = _sent_write(lambda: client.patch_service_location(customer_id, nested_location_id, patch), client)
         if response is None or _public_diagnostic(diagnostic).get("status") not in {200, 204, "unknown"}:
@@ -1240,6 +1300,7 @@ def post_customer_steps(service: Any, proposal: dict[str, Any], attempt_id: str)
             main_location=plan.get("main_location"),
             expected_invoice_email=plan.get("primary_email"),
             expected_location_email=plan.get("expected_location_email"),
+            reminders_experiment=bool(plan.get("creation_time_reminders_experiment")),
         )
     except GateError as exc:
         step_id = _step(store, proposal["proposal_id"], "customer_readback", {"gate": exc.gate}, customer_id=customer_id, location_id=nested_location_id)
