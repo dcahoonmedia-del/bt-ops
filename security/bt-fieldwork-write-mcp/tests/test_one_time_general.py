@@ -86,15 +86,21 @@ class OneTimeGeneralTests(unittest.TestCase):
         self.assertEqual(proposed["after"]["service_record"]["unknowns"]["production_default"], "not_in_response")
         self.assertIsNone(proposed["after"]["service_record"]["site_time"])
         self.assertTrue(proposed["after"]["service_record"]["site_time_present"])
-        self.assertTrue(proposed["after"]["execution_blocked"])
+        self.assertFalse(proposed["after"]["execution_blocked"])
+        self.assertEqual(proposed["after"]["selectability_source"], "bt_services_index_matched_work_order_selector")
+        self.assertFalse(proposed["after"]["list_membership_proves_active"])
+        self.assertFalse(proposed["after"]["universal_api_guarantee"])
         self.assertIsNone(proposed["after"]["price_resolution"]["template_price"])
         self.assertFalse(proposed["after"]["template_consulted"])
         done = self._execute(proposed)
-        self.assertFalse(done["ok"])
-        self.assertEqual(done["reason"], "service_selectability_unverified")
-        self.assertFalse(done["list_membership_proves_active"])
+        self.assertTrue(done["ok"], done)
+        self.assertFalse(done["live_tested"])
         posts = [call for call in self.h.transport.calls if call["method"] == "POST" and call["path"] == "/work_orders"]
-        self.assertEqual(len(posts), 0)
+        self.assertEqual(len(posts), 1)
+        sent = posts[0]["body"]["service_appointment"]["line_items_attributes"][0]
+        self.assertEqual(sent["price"], 1275)
+        self.assertEqual(sent["payable_id"], 38853)
+        self.assertEqual(posts[0]["body"]["service_appointment"]["appointment_occurrences_attributes"][0]["production_value"], 400)
 
     def test_zero_price_callback_and_separate_production(self) -> None:
         callback = self._propose(_order(
@@ -121,9 +127,13 @@ class OneTimeGeneralTests(unittest.TestCase):
         self.assertEqual(priced_occurrence["production_value"], 35)
         self.assertIs(priced_occurrence["callback"], False)
         done = self._execute(priced)
-        self.assertFalse(done["ok"])
-        self.assertEqual(done["reason"], "service_selectability_unverified")
-        self.assertEqual(len([call for call in self.h.transport.calls if call["method"] == "POST" and call["path"] == "/work_orders"]), 0)
+        self.assertTrue(done["ok"], done)
+        posts = [call for call in self.h.transport.calls if call["method"] == "POST" and call["path"] == "/work_orders"]
+        self.assertEqual(len(posts), 1)
+        sent_occurrence = posts[0]["body"]["service_appointment"]["appointment_occurrences_attributes"][0]
+        self.assertEqual(sent_occurrence["production_value"], 35)
+        self.assertIs(sent_occurrence["callback"], False)
+        self.assertEqual(posts[0]["body"]["service_appointment"]["line_items_attributes"][0]["price"], 0)
 
     def test_omitted_production_is_not_manufactured_and_generic_defaults_are_required(self) -> None:
         omitted = self._propose(_order(starts_at="2026-11-06", line_items=[_line(TERMITE, 38853, 900)]))
@@ -160,6 +170,19 @@ class OneTimeGeneralTests(unittest.TestCase):
         self.assertEqual(service_active_eligibility({"active": True}), "explicit_true_not_proven_selectable")
         self.assertEqual(service_active_eligibility({}), "unverified")
         self.assertEqual(service_active_eligibility({"inactive": True, "active": False}), "inactive")
+        self.assertEqual(service_active_eligibility({"deleted": False}), "unverified")
+        self.assertEqual(service_active_eligibility({"archived": False}), "unverified")
+        self.assertEqual(service_active_eligibility({"deleted": True}), "inactive")
+        self.assertEqual(service_active_eligibility({"deleted": True, "active": True}), "contradictory")
+        self.h.transport.services.append({"id": 38902, "description": "Deleted Service", "price": "10.0", "deleted": True})
+        deleted = self._propose(_order(starts_at="2026-11-09T12:00:00-04:00", line_items=[_line("Deleted Service", 38902, 10)], duration=30, instructions="no"))
+        self.assertEqual(deleted["reason"], "service_inactive")
+        self.h.transport.services.append({"id": 38903, "description": "Archived Service", "price": "10.0", "archived": True})
+        archived = self._propose(_order(starts_at="2026-11-09T13:00:00-04:00", line_items=[_line("Archived Service", 38903, 10)], duration=30, instructions="no"))
+        self.assertEqual(archived["reason"], "service_inactive")
+        self.h.transport.services.append({"id": 38904, "description": "Both Flags", "price": "10.0", "deleted": True, "active": True})
+        both = self._propose(_order(starts_at="2026-11-09T14:00:00-04:00", line_items=[_line("Both Flags", 38904, 10)], duration=30, instructions="no"))
+        self.assertEqual(both["reason"], "service_eligibility_contradictory")
         negative = self._propose(_order(line_items=[_line(TERMITE, 38853, -5)], starts_at="2026-11-10"))
         self.assertEqual(negative["fields"], ["price"])
         floated = self._propose(_order(line_items=[_line(TERMITE, 38853, 1.5)], starts_at="2026-11-11"))  # type: ignore[list-item]
@@ -272,6 +295,7 @@ class OneTimeGeneralTests(unittest.TestCase):
         self.assertEqual(done["readback"]["authoritative_source"], "GET /v3.1/customers/{customer_id}/contacts")
         posts = [call for call in self.h.transport.calls if call["method"] == "POST" and call["path"] == "/customers/41/contacts"]
         self.assertEqual(len(posts), 1)
+        self.assertNotIn("phone_kind", posts[0]["body"]["contact"])
         duplicate = self.h.service.propose("add_customer_contact", {"customer_id": 41, "contact": contact}, IDENTITY)
         self.assertEqual(duplicate["reason"], "contact_duplicate")
         self.assertEqual(len(posts), 1)
@@ -423,6 +447,115 @@ class OneTimeGeneralTests(unittest.TestCase):
         one = self.h.client.get_service("38853")
         self.assertEqual(one["price"], "900.0")
         self.assertEqual(one["active_eligibility"], "unverified")
+
+    def test_current_service_without_an_active_flag_uses_catalog_membership(self) -> None:
+        invaders = "Pest Control - Occasional Invaders"
+        self.h.transport.services.append({"id": 131844, "description": invaders, "price": "225.0"})
+        proposed = self._propose(_order(
+            starts_at="2026-11-22",
+            duration=60,
+            instructions="One visit.",
+            line_items=[_line(invaders, 131844, 225)],
+        ))
+        self.assertTrue(proposed["ok"], proposed)
+        self.assertEqual(proposed["after"]["price"], 225)
+        self.assertEqual(proposed["after"]["price_source"], "catalog/default")
+        self.assertEqual(proposed["after"]["standard_price"], 225)
+        self.assertIsNone(proposed["after"]["price_resolution"]["observed_existing_work_order_price"])
+        self.assertEqual(proposed["after"]["price_resolution"]["historical_work_order_price_role"], "not_catalog_evidence")
+        self.assertEqual(proposed["after"]["active_eligibility"], "unverified")
+        self.assertFalse(proposed["after"]["active_flag_fabricated"])
+        self.assertFalse(proposed["after"]["execution_blocked"])
+        self.assertIsNone(proposed["after"]["execution_block_reason"])
+        self.assertEqual(proposed["after"]["catalog_membership"], "one_current_id_and_description")
+        self.assertEqual(proposed["after"]["work_order_selectability"], "current_complete_catalog_member")
+        self.assertEqual(proposed["after"]["catalog_equivalence"], "bt_account_180_ids_not_universal_api_guarantee")
+        self.assertFalse(proposed["after"]["universal_api_guarantee"])
+        self.assertFalse(proposed["after"]["list_membership_proves_active"])
+        self.assertIn("neither source returned active, enabled, deleted, archived, or selectable", proposed["after"]["eligibility_evidence"])
+        self.assertFalse(proposed["after"]["template_consulted"])
+        done = self._execute(proposed)
+        self.assertTrue(done["ok"], done)
+        posts = [call for call in self.h.transport.calls if call["method"] == "POST" and call["path"] == "/work_orders"]
+        self.assertEqual(len(posts), 1)
+        sent = posts[0]["body"]["service_appointment"]["line_items_attributes"][0]
+        self.assertEqual(sent["payable_id"], 131844)
+        self.assertEqual(sent["name"], invaders)
+        self.assertEqual(sent["price"], 225)
+        self.assertEqual(sent["payable_type"], "Service")
+
+    def test_name_mismatch_wrong_type_and_catalog_change_do_not_post(self) -> None:
+        mismatch = self._propose(_order(starts_at="2026-11-23", line_items=[_line("Wrong Name", 38853, 900)]))
+        self.assertEqual(mismatch["reason"], "caller_line_disagrees_with_service_catalog")
+        material = _line(TERMITE, 38853, 900)
+        material["payable_type"] = "Material"
+        wrong_type = self._propose(_order(starts_at="2026-11-24", line_items=[material]))
+        self.assertEqual(wrong_type["reason"], "caller_line_disagrees_with_template")
+        unknown_type = _line(TERMITE, 38853, 900)
+        unknown_type["payable_type"] = "Widget"
+        rejected = self._propose(_order(starts_at="2026-11-25", line_items=[unknown_type]))
+        self.assertEqual(rejected["gate"], "unknown_field")
+        self.assertEqual(rejected["fields"], ["payable_type"])
+        proposed = self._propose(_order(starts_at="2026-11-26", line_items=[_line(TERMITE, 38853, 900)]))
+        self.assertTrue(proposed["ok"], proposed)
+        for row in self.h.transport.services:
+            if row.get("id") == 38853:
+                row["price"] = "901.0"
+        changed = self._execute(proposed)
+        self.assertEqual(changed["gate"], "stale_state")
+        self.assertEqual(changed["reason"], "service_catalog_changed")
+        self.assertEqual(len([call for call in self.h.transport.calls if call["method"] == "POST" and call["path"] == "/work_orders"]), 0)
+
+    def test_incomplete_duplicate_and_failed_catalogs_do_not_post(self) -> None:
+        self.h.transport.services.append({"id": 38853, "description": TERMITE, "price": "900.0"})
+        duplicate = self._propose(_order(starts_at="2026-11-27", line_items=[_line(TERMITE, 38853, 900)]))
+        self.assertEqual(duplicate["reason"], "service_id_conflict")
+        self.h.transport.services.pop()
+        original = self.h.client.list_services
+
+        def incomplete():
+            listed = original()
+            listed["complete"] = False
+            listed["truncated"] = True
+            return listed
+
+        self.h.client.list_services = incomplete
+        partial = self._propose(_order(starts_at="2026-11-28", line_items=[_line(TERMITE, 38853, 900)]))
+        self.assertEqual(partial["reason"], "service_list_incomplete")
+        self.h.client.list_services = original
+        request = self.h.transport.request
+
+        def fail_catalog(method, path, body=None, query=None):
+            if method == "GET" and path == "/services":
+                return 500, {"error": "down"}
+            return request(method, path, body, query)
+
+        self.h.transport.request = fail_catalog
+        failed = self._propose(_order(starts_at="2026-11-29", line_items=[_line(TERMITE, 38853, 900)]))
+        self.h.transport.request = request
+        self.assertFalse(failed["ok"])
+        self.assertNotEqual(failed.get("reason"), "service_selectability_unverified")
+
+        def malformed(method, path, body=None, query=None):
+            if method == "GET" and path == "/services":
+                return 200, {"not_a_list": True}
+            return request(method, path, body, query)
+
+        self.h.transport.request = malformed
+        shape = self._propose(_order(starts_at="2026-11-30", line_items=[_line(TERMITE, 38853, 900)]))
+        self.h.transport.request = request
+        self.assertEqual(shape["gate"], "read_shape_unverified")
+        self.h.transport.services.append({"id": 38910, "description": "Flagged True", "price": "10.0", "active": True})
+        flagged = self._propose(_order(starts_at="2026-12-01", line_items=[_line("Flagged True", 38910, 10)], duration=30, instructions="no"))
+        self.assertTrue(flagged["ok"], flagged)
+        self.assertEqual(flagged["after"]["active_eligibility"], "explicit_true_not_proven_selectable")
+        self.assertFalse(flagged["after"]["execution_blocked"])
+        self.assertFalse(flagged["after"]["active_flag_fabricated"])
+        proposed = self._propose(_order(starts_at="2026-12-02", line_items=[_line(TERMITE, 38853, 900)]))
+        self.h.transport.services[:] = [row for row in self.h.transport.services if row.get("id") != 38853]
+        removed = self._execute(proposed)
+        self.assertEqual(removed["reason"], "payable_not_in_services")
+        self.assertEqual(len([call for call in self.h.transport.calls if call["method"] == "POST" and call["path"] == "/work_orders"]), 0)
 
 
 if __name__ == "__main__":

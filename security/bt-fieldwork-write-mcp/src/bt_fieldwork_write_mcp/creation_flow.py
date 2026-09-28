@@ -31,6 +31,22 @@ from .fieldwork import service_active_eligibility, service_catalog_record
 PRICE_CATALOG = "catalog/default"
 PRICE_OVERRIDE = "explicit_approved_override"
 
+# One authenticated GET /v3.1/services for this account returned 180 unique services
+# and matched #autocomplete_lists data-services by id, trimmed name, normalized price,
+# and category, with no extra or missing ids. The selector filters labels and does not
+# check an active flag. Neither source returned active, enabled, deleted, archived, or
+# selectable. That is B&T catalog equivalence, not a universal API guarantee.
+BT_SELECTABILITY_SOURCE = "bt_services_index_matched_work_order_selector"
+BT_CATALOG_EQUIVALENCE = "bt_account_180_ids_not_universal_api_guarantee"
+BT_CATALOG_EVIDENCE = (
+    "one authenticated GET /v3.1/services returned HTTP 200 and 180 unique services",
+    "all 180 matched #autocomplete_lists data-services by id, trimmed name, normalized price, and category",
+    "no missing or extra ids and every UI entry type was Service",
+    "neither source returned active, enabled, deleted, archived, or selectable",
+    "autocomplete filters by label and does not check an active flag",
+    "not a universal API guarantee",
+)
+
 _WORD = re.compile(r"[a-z0-9]+")
 
 
@@ -289,6 +305,26 @@ def bind_residential_location(plan: dict[str, Any], client: Any, configured_type
     plan["notification_effects"] = {
         "reminders_type_sent": 0,
         "appointment_reminders": "inactive_does_not_disable_every_notice",
+        "reminders_api_field": "service_location[reminders_type]",
+        "reminders_api_enum": [-1, 0, 2],
+        "reminders_api_description": "Type of reminder",
+        "reminders_api_enum_labels": "not_in_spec",
+        "intended_office_state": "inactive",
+        "intended_label_source": "location_edit_select_option_0_text_is_Inactive",
+        "web_form_field": "service_location[reminders_type]",
+        "web_form_option_0": "Inactive",
+        "web_form_options": [-1, 0, 1, 2, 3],
+        "web_form_is_not_the_api_contract": True,
+        "ui_values_absent_from_api_enum": [1, 3],
+        "later_invoice_email_patch_includes_reminders_type": False,
+        "later_location_email_patch_includes_reminders_type": False,
+        "later_step_reset_observed": False,
+        "write_position": "main_location_patch_before_invoice_email",
+        "reorder": "not_supported_no_reset_evidence",
+        "persistence": "unresolved_api_get_omits_field",
+        "api_get_can_settle_persistence": False,
+        "persistence_diagnostic": "not_run_web_form_select_before_and_after_one_api_patch_not_brian",
+        "http_success_proves_persistence": False,
         "send_report_email": "not_sent",
         "completion_report": "inherited_send_report_email_true_may_send_once_location_email_is_added",
         "customer_creation_notice": "unknown",
@@ -641,6 +677,14 @@ def _prepare_generic_service(client: Any, appointment: dict[str, Any], line: dic
     """Build one generic Service body from the caller and GET /services. The PestGuard template is not read."""
     services = client.list_services()
     service, complete = _configured_service(services, line.get("payable_id"))
+    if not complete:
+        raise GateError(
+            GATE_CATALOG,
+            reason="service_list_incomplete",
+            payable_id=service.get("id"),
+            active_flag_fabricated=False,
+            list_membership_proves_active=False,
+        )
     if "repeat_period" not in appointment:
         raise GateError("missing_field", fields=["repeat_period"], reason="generic_service_repeat_period_required")
     period = appointment.get("repeat_period")
@@ -713,10 +757,16 @@ def _prepare_generic_service(client: Any, appointment: dict[str, Any], line: dic
             "auto_generates_invoice": None,
         },
         "template_consulted": False,
-        "execution_blocked": True,
-        "execution_block_reason": "service_selectability_unverified",
-        "selectability_source": "not_in_get_services",
+        "execution_blocked": False,
+        "execution_block_reason": None,
+        "selectability_source": BT_SELECTABILITY_SOURCE,
         "list_membership_proves_active": False,
+        "catalog_membership": "one_current_id_and_description",
+        "work_order_selectability": "current_complete_catalog_member",
+        "catalog_equivalence": BT_CATALOG_EQUIVALENCE,
+        "universal_api_guarantee": False,
+        "eligibility_evidence": list(BT_CATALOG_EVIDENCE),
+        "active_flag_fabricated": False,
         "path": "generic_service",
     }
 
@@ -914,11 +964,41 @@ def _require_equal(field: str, sent: Any, got: Any) -> Any:
 
 
 def _reminder_readback(location: dict[str, Any]) -> dict[str, Any]:
-    if "reminders_type" not in location:
-        return {"status": "unverified", "reason": "get_omits_reminders_type", "manual_check": True}
-    if location.get("reminders_type") != 0:
-        _mismatch("reminders_type", 0, location.get("reminders_type"))
-    return {"status": "verified", "value": location.get("reminders_type")}
+    """Integer 0 matches the sent API value. Omission and booleans are not that integer."""
+    shown = {
+        "write_sent": True,
+        "sent_value": 0,
+        "api_field": "service_location[reminders_type]",
+        "api_enum": [-1, 0, 2],
+        "api_enum_labels": "not_in_spec",
+        "intended_office_state": "inactive",
+        "intended_label_source": "location_edit_select_option_0_text_is_Inactive",
+        "web_form_option_0": "Inactive",
+        "api_get_can_settle_persistence": False,
+        "http_success_proves_persistence": False,
+    }
+    if "reminders_type" not in location or location.get("reminders_type") is None:
+        return {
+            **shown,
+            "status": "unverified",
+            "reason": "get_omits_reminders_type",
+            "persistence": "write_sent_readback_unverified",
+            "manual_check": True,
+            "value": None,
+        }
+    value = location.get("reminders_type")
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise GateError(GATE_READBACK, reason="reminders_type_not_integer", field="reminders_type", sent=0, got=value)
+    if value != 0:
+        _mismatch("reminders_type", 0, value)
+    return {
+        **shown,
+        "status": "verified",
+        "persistence": "present_integer_matches_sent",
+        "value": 0,
+        "appointment_reminders": "inactive",
+        "inactive_label": "ui_mapping_not_api_label",
+    }
 
 
 def customer_readback(client: Any, customer_id: str, *, sent_customer: dict[str, Any], contact: dict[str, Any] | None, location_id: str, address: dict[str, Any] | None, wrote_customer: bool = True, main_location: dict[str, Any] | None = None, expected_invoice_email: str | None = None, expected_location_email: str | None = None) -> dict[str, Any]:
@@ -1147,18 +1227,31 @@ def post_customer_steps(service: Any, proposal: dict[str, Any], attempt_id: str)
             return posted["stopped"]
         contact_id = posted["contact_id"]
     address = None if not plan.get("location_patch") else plan["location_patch"]["address_attributes"]
-    readback = customer_readback(
-        client,
-        customer_id,
-        sent_customer=plan["customer"],
-        contact=contact,
-        location_id=nested_location_id,
-        address=address,
-        wrote_customer=not plan.get("existing_customer_id"),
-        main_location=plan.get("main_location"),
-        expected_invoice_email=plan.get("primary_email"),
-        expected_location_email=plan.get("expected_location_email"),
-    )
+    try:
+        readback = customer_readback(
+            client,
+            customer_id,
+            sent_customer=plan["customer"],
+            contact=contact,
+            location_id=nested_location_id,
+            address=address,
+            wrote_customer=not plan.get("existing_customer_id"),
+            main_location=plan.get("main_location"),
+            expected_invoice_email=plan.get("primary_email"),
+            expected_location_email=plan.get("expected_location_email"),
+        )
+    except GateError as exc:
+        step_id = _step(store, proposal["proposal_id"], "customer_readback", {"gate": exc.gate}, customer_id=customer_id, location_id=nested_location_id)
+        store.finish_creation_step(
+            step_id,
+            "failed",
+            {"gate": exc.gate, "reason": exc.detail.get("reason"), "field": exc.detail.get("field"), "retry": False},
+            customer_id=customer_id,
+            location_id=nested_location_id,
+        )
+        stopped = stop_creation(store, proposal, attempt_id)
+        stopped["reason"] = exc.detail.get("reason") or exc.gate
+        return stopped
     if plan.get("additional_location"):
         extra = client.get_location(customer_id, location_id)
         if str(extra.get("id")) != str(location_id) or str(extra.get("customer_id")) != str(customer_id):
@@ -1844,7 +1937,11 @@ def post_work_order(service: Any, proposal: dict[str, Any], attempt_id: str) -> 
         configured_service_id=service.settings.pestguard_initial_service_id,
     )
     rebuilt = prepared["applied"]["service_appointment"]
-    if rebuilt != sent:
+    catalog_price_changed = (
+        not prepared["template_consulted"]
+        and proposal["after"].get("standard_price") != prepared["applied"].get("standard_price")
+    )
+    if rebuilt != sent or catalog_price_changed:
         raise GateError("stale_state", reason="template_changed" if prepared["template_consulted"] else "service_catalog_changed")
     if prepared["execution_blocked"]:
         raise GateError(
@@ -1854,6 +1951,9 @@ def post_work_order(service: Any, proposal: dict[str, Any], attempt_id: str) -> 
             active_flag_fabricated=False,
             list_membership_proves_active=False,
             selectability_source=prepared.get("selectability_source") or "not_in_get_services",
+            missing_evidence=list(prepared.get("missing_evidence") or []),
+            catalog_membership=prepared.get("catalog_membership"),
+            work_order_selectability=prepared.get("work_order_selectability"),
             retry=False,
             write_sent=False,
         )
