@@ -44,6 +44,7 @@ BT_CATALOG_EVIDENCE = (
     "no missing or extra ids and every UI entry type was Service",
     "neither source returned active, enabled, deleted, archived, or selectable",
     "autocomplete filters by label and does not check an active flag",
+    "completeness is the documented all-services response, not row count 180 or a short page",
     "not a universal API guarantee",
 )
 
@@ -464,7 +465,7 @@ def load_catalog(client: Any, template_id: int | None, *, configured_template_id
 
 
 def _configured_service(services: dict[str, Any], payable_id: Any) -> tuple[dict[str, Any], bool]:
-    """One observed service id. A repeated full page is not a complete catalog."""
+    """One service id from a complete catalog. Incomplete input still fails closed."""
     if not isinstance(services, dict) or services.get("partial_error"):
         raise GateError(GATE_CATALOG, reason="service_list_incomplete")
     matches = [row for row in services.get("items") or [] if isinstance(row, dict) and str(row.get("id")) == str(payable_id)]

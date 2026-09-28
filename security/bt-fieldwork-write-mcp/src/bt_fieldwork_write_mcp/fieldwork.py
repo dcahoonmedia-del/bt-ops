@@ -14,6 +14,7 @@ from urllib.request import Request
 
 from .allowlist import (
     GATE_AUTH_UNRESOLVED,
+    GATE_CATALOG,
     GATE_LIVE_PATCH_UNTESTED,
     is_lead_status,
 )
@@ -554,6 +555,8 @@ class FakeTransport:
         self.raise_after_exact: set[str] = set()
         self.contacts: dict[str, dict[str, Any]] = {}
         self.services = [_catalog_service()]
+        self.services_body: Any = None
+        self.services_status = 200
         self.templates = [_catalog_template()]
         self.readback_line_price = None
         self.readback_taxable = None
@@ -620,6 +623,10 @@ class FakeTransport:
                     return 200, {"service_appointment_template": row}
             return 404, None
         if method == "GET" and path == "/services":
+            if query and any(key in query for key in ("page", "per_page")):
+                return 400, {"error": "pagination_not_in_services_spec"}
+            if self.services_body is not None:
+                return self.services_status, self.services_body
             return 200, list(self.services)
         if method == "GET" and path == "/location_types":
             return 200, [{"id": 8736, "name": "Residential"}]
@@ -1017,6 +1024,60 @@ def service_active_eligibility(row: dict[str, Any]) -> str:
     if "active" in seen:
         return "explicit_true_not_proven_selectable"
     return "unverified"
+
+
+_SERVICE_TRUNCATION_KEYS = (
+    "truncated",
+    "next_page",
+    "repeated_page",
+    "partial_error",
+    "pagination",
+    "page",
+    "per_page",
+    "pages",
+)
+
+
+def parse_services_index(body: Any) -> dict[str, Any]:
+    """One documented GET /v3.1/services body. Completeness is that response.
+
+    The saved spec says “Fetches all Services” and documents no page, per_page,
+    or GET-by-id. A bare array of service objects is the shape this connector
+    reads. Object envelopes are not unwrapped. A truncation marker fails closed.
+    Non-object rows are not dropped. Duplicate ids are a conflict. Row count is
+    not the completeness rule.
+    """
+    if isinstance(body, dict) and any(key in body for key in _SERVICE_TRUNCATION_KEYS):
+        raise GateError(GATE_CATALOG, reason="service_list_incomplete", explicit_truncation=True)
+    if not isinstance(body, list):
+        raise GateError("read_shape_unverified")
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in body:
+        if not isinstance(item, dict):
+            raise GateError("read_shape_unverified", reason="service_row_not_object")
+        service_id = _positive_id(item.get("id"))
+        if service_id is None:
+            raise GateError("read_shape_unverified", reason="service_id_invalid")
+        if service_id in seen:
+            raise GateError(GATE_CATALOG, reason="service_id_conflict", payable_id=item.get("id"))
+        seen.add(service_id)
+        rows.append(item)
+    return {
+        "items": rows,
+        "complete": True,
+        "truncated": False,
+        "repeated_page": False,
+        "partial_error": None,
+        "pages_read": 1,
+        "per_page": None,
+        "next_page": None,
+        "pagination_parameters": "not_in_spec",
+        "pagination_query_sent": False,
+        "completeness": "documented_get_services_all_services_response",
+        "count_is_not_the_completeness_rule": True,
+        "source": "GET /v3.1/services",
+    }
 
 
 def service_catalog_record(row: dict[str, Any], listed: dict[str, Any]) -> dict[str, Any]:
@@ -1723,7 +1784,11 @@ class TypedFieldworkClient:
         return body["service_appointment_template"]
 
     def list_services(self) -> dict[str, Any]:
-        return self._pages("/services")
+        """GET /services once. No page or per_page query. Not the shared pager."""
+        status, body = self.transport.request("GET", "/services")
+        if status != 200:
+            raise GateError("read_rejected", status=status, path="/services")
+        return parse_services_index(body)
 
     def search_services(self, text: str = "") -> dict[str, Any]:
         listed = self.list_services()
