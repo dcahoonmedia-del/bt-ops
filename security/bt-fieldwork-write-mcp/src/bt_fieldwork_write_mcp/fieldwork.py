@@ -953,10 +953,29 @@ _SERVICE_KEYS = (
 )
 
 
+_ELIGIBILITY_KEYS = ("active", "enabled", "inactive", "disabled", "deleted", "archived", "archive")
+
+
 def _eligibility_evidence(key: str, value: Any) -> str | None:
-    """One flag's evidence. None means the value is absent, not false."""
-    if value is None or key not in {"active", "enabled", "inactive", "disabled"}:
+    """One flag's evidence. None means the value is absent, not false.
+
+    deleted/archived false is not proof the service is selectable.
+    """
+    if value is None or key not in _ELIGIBILITY_KEYS:
         return None
+    if key in {"deleted", "archived", "archive"}:
+        if value is True:
+            return "inactive"
+        if value is False:
+            return None
+        if not isinstance(value, str):
+            return "unrecognized"
+        text = value.strip().lower()
+        if not text or text in {"false", "0", "no"}:
+            return None
+        if text in {"true", "1", "yes", "deleted", "archived", "archive"}:
+            return "inactive"
+        return "unrecognized"
     positive_key = key in {"active", "enabled"}
     if value is True:
         return "active" if positive_key else "inactive"
@@ -971,7 +990,7 @@ def _eligibility_evidence(key: str, value: Any) -> str | None:
         return "inactive" if positive_key else "active"
     if text in {"true", "1", "yes"}:
         return "active" if positive_key else "inactive"
-    if text in {"inactive", "disabled"}:
+    if text in {"inactive", "disabled", "deleted", "archived"}:
         return "inactive"
     if text in {"active", "enabled"}:
         return "active"
@@ -985,7 +1004,7 @@ def service_active_eligibility(row: dict[str, Any]) -> str:
     A true flag is not proof the service is currently selectable.
     """
     seen: set[str] = set()
-    for key in ("active", "enabled", "inactive", "disabled"):
+    for key in _ELIGIBILITY_KEYS:
         if key not in row:
             continue
         evidence = _eligibility_evidence(key, row.get(key))

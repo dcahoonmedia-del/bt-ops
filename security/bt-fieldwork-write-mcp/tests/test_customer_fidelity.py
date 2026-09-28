@@ -39,7 +39,10 @@ class CustomerFidelityTests(unittest.TestCase):
         omitted = self.h.service.propose("create_customer", _home(last_name="Plain", billing_phone="9105550101"), IDENTITY)
         self.assertTrue(omitted["ok"], omitted)
         self.assertFalse(omitted["after"]["phone_kind_supplied"])
-        self.assertNotIn("billing_phone_kind", omitted["after"]["documented_request"]["customer"])
+        self.assertEqual(omitted["after"]["billing_phone_kind"], "Mobile")
+        self.assertEqual(omitted["after"]["billing_phone_kind_source"], "default_mobile")
+        self.assertEqual(omitted["after"]["documented_request"]["customer"]["billing_phone_kind"], "Mobile")
+        self.assertEqual(proposed["after"]["billing_phone_kind_source"], "explicit")
 
     def test_residential_uses_configured_type_and_commercial_is_explicit(self) -> None:
         proposed = self.h.service.propose("create_customer", _home(), IDENTITY)
@@ -216,6 +219,11 @@ class CustomerFidelityTests(unittest.TestCase):
         done = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=self.h.approve(proposed["proposal_id"]))
         self.assertTrue(done["ok"], done)
         self.assertEqual(done["readback"]["reminders_type"]["status"], "unverified")
+        self.assertEqual(done["readback"]["reminders_type"]["persistence"], "write_sent_readback_unverified")
+        self.assertFalse(done["readback"]["reminders_type"]["http_success_proves_persistence"])
+        self.assertEqual(done["readback"]["reminders_type"]["intended_office_state"], "inactive")
+        self.assertIsNone(done["readback"]["reminders_type"]["value"])
+        self.assertEqual(proposed["after"]["billing_phone_kind_source"], "explicit")
         self.assertEqual(done["readback"]["location_type_id"]["status"], "verified")
         self.assertEqual(done["readback"]["location_type_id"]["value"], 8736)
         self.assertEqual(done["readback"]["primary_email"]["status"], "not_sent")
@@ -282,6 +290,8 @@ class CustomerFidelityTests(unittest.TestCase):
         self.assertEqual(done["readback"]["location_email"]["value"], "reports@example.test")
         self.assertEqual(done["readback"]["location_type_id"]["status"], "verified")
         self.assertEqual(done["readback"]["reminders_type"]["status"], "unverified")
+        self.assertEqual(done["readback"]["reminders_type"]["persistence"], "write_sent_readback_unverified")
+        self.assertFalse(done["readback"]["reminders_type"]["http_success_proves_persistence"])
         patches = [call for call in self.h.transport.calls if call["method"] == "PATCH" and "service_locations" in call["path"]]
         self.assertEqual(len(patches), 1)
 
@@ -301,3 +311,160 @@ class CustomerFidelityTests(unittest.TestCase):
         self.assertTrue(reconciled["ok"], reconciled)
         self.assertEqual(reconciled["readback"]["location_email"]["value"], "other@example.test")
         self.assertEqual(len([call for call in self.h.transport.calls if call["method"] == "PATCH" and "service_locations" in call["path"]]), 2)
+
+    def test_new_customer_phone_kind_defaults_to_mobile_and_rejects_invalid_types(self) -> None:
+        for kind in ("Home", "Office", "Mobile", "Fax", "Other"):
+            proposed = self.h.service.propose(
+                "create_customer",
+                _home(last_name=kind, billing_phone=f"9105550{len(kind)}00", billing_phone_kind=kind),
+                IDENTITY,
+            )
+            self.assertTrue(proposed["ok"], proposed)
+            self.assertEqual(proposed["after"]["billing_phone_kind"], kind)
+            self.assertEqual(proposed["after"]["billing_phone_kind_source"], "explicit")
+            self.assertTrue(proposed["after"]["phone_kind_supplied"])
+        invalid = self.h.service.propose("create_customer", _home(last_name="Cell", billing_phone="9105550198", billing_phone_kind="Cell"), IDENTITY)
+        self.assertEqual(invalid["gate"], "unknown_field")
+        self.assertEqual(invalid["fields"], ["billing_phone_kind"])
+        blank = customer_request(_home(billing_phone="   "))
+        self.assertEqual(blank["customer"]["billing_phone"], "   ")
+        self.assertNotIn("billing_phone_kind", blank["customer"])
+        self.assertEqual(blank["billing_phone_kind_source"], "omitted_no_phone")
+        bare = self.h.service.propose("create_customer", _home(last_name="Nophone"), IDENTITY)
+        self.assertTrue(bare["ok"], bare)
+        self.assertNotIn("billing_phone_kind", bare["after"]["documented_request"]["customer"])
+        self.assertEqual(bare["after"]["billing_phone_kind_source"], "omitted_no_phone")
+        existing = customer_request(_home(billing_phone="9105550108", existing_customer_id=41))
+        self.assertNotIn("billing_phone_kind", existing["customer"])
+        self.assertEqual(existing["billing_phone_kind_source"], "omitted_existing_customer")
+        contact = customer_request(_home(contact={"first_name": "Ada", "last_name": "Ng", "email": "ada@example.test", "phone": "9105550103"}))
+        self.assertNotIn("phone_kind", contact["contact"])
+        plan = customer_request(_home(last_name="Serial", billing_phone="9105550101"))
+        opener = _Opener(b'{"id": 41}')
+        client = TypedFieldworkClient(HttpTransport(InMemoryApiKey("hidden-key"), opener=opener))
+        client.create_customer({"customer": plan["customer"]})
+        values = dict(parse_qsl(opener.requests[0].data.decode()))
+        self.assertEqual(values["customer[billing_phone]"], "9105550101")
+        self.assertEqual(values["customer[billing_phone_kind]"], "Mobile")
+        saved = self.h.service.propose("create_customer", _home(last_name="Saved", billing_phone="9105550101"), IDENTITY)
+        done = self.h.service.execute(saved["proposal_id"], IDENTITY, operator_approval=self.h.approve(saved["proposal_id"]))
+        self.assertTrue(done["ok"], done)
+        self.assertEqual(done["readback"]["billing_phone_kind"]["status"], "verified")
+        self.assertEqual(done["readback"]["billing_phone_kind"]["value"], "Mobile")
+        posts = [call for call in self.h.transport.calls if call["method"] == "POST" and call["path"] == "/customers"]
+        self.assertEqual(posts[-1]["body"]["customer"]["billing_phone_kind"], "Mobile")
+        mismatched = self.h.service.propose("create_customer", _home(last_name="Mismatch", billing_phone="9105550119"), IDENTITY)
+        original = self.h.transport.request
+
+        def rewrite(method, path, body=None, query=None):
+            status, payload_body = original(method, path, body, query)
+            if method == "POST" and path == "/customers":
+                for row in self.h.transport.customers.values():
+                    if row.get("last_name") == "Mismatch":
+                        row["billing_phone_kind"] = "Home"
+            return status, payload_body
+
+        self.h.transport.request = rewrite
+        missed = self.h.service.execute(mismatched["proposal_id"], IDENTITY, operator_approval=self.h.approve(mismatched["proposal_id"]))
+        self.h.transport.request = original
+        self.assertFalse(missed["ok"])
+        self.assertEqual(missed["reason"], "field_mismatch")
+        self.assertEqual(missed["partial"]["field"], "billing_phone_kind")
+        before = len([call for call in self.h.transport.calls if call["method"] == "POST" and call["path"] == "/customers"])
+        replay = self.h.service.execute(mismatched["proposal_id"], IDENTITY, operator_approval="unused")
+        self.assertEqual(replay["gate"], "ambiguous_remote_write_no_retry")
+        self.assertEqual(len([call for call in self.h.transport.calls if call["method"] == "POST" and call["path"] == "/customers"]), before)
+
+    def test_reminder_step_order_and_readable_integer_are_distinct_from_http_success(self) -> None:
+        payload = _home(
+            last_name="Order",
+            billing_phone="9105550110",
+            primary_email="ada@example.test",
+            location_email="reports@example.test",
+            acknowledge_duplicate_coverage=["email"],
+        )
+        proposed = self.h.service.propose("create_customer", payload, IDENTITY)
+        self.assertTrue(proposed["ok"], proposed)
+        steps = proposed["after"]["documented_request"]["api_steps"]
+        self.assertEqual(
+            [(step["method"], step["path"]) for step in steps],
+            [
+                ("POST", "/customers"),
+                ("PATCH", "/customers/{customer_id}/service_locations/{location_id}"),
+                ("PATCH", "/customers/{customer_id}"),
+                ("PATCH", "/customers/{customer_id}/service_locations/{location_id}"),
+            ],
+        )
+        self.assertEqual(steps[1]["body"]["service_location"]["reminders_type"], 0)
+        self.assertNotIn("reminders_type", steps[2]["body"]["customer"])
+        self.assertEqual(steps[3]["body"]["service_location"], {"email": "reports@example.test"})
+        effects = proposed["after"]["notification_effects"]
+        self.assertEqual(effects["reorder"], "not_supported_no_reset_evidence")
+        self.assertFalse(effects["later_invoice_email_patch_includes_reminders_type"])
+        self.assertFalse(effects["later_location_email_patch_includes_reminders_type"])
+        self.assertEqual(effects["send_report_email"], "not_sent")
+        done = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=self.h.approve(proposed["proposal_id"]))
+        self.assertTrue(done["ok"], done)
+        self.assertEqual(done["readback"]["reminders_type"]["status"], "unverified")
+        journal = {row["step"] for row in self.h.service.store.creation_journal(proposed["proposal_id"]) if row["outcome"] == "succeeded"}
+        self.assertTrue({"customer_post", "location_patch", "invoice_email_patch", "location_email_patch"} <= journal)
+        calls = [call for call in self.h.transport.calls if call["method"] in {"POST", "PATCH"}]
+        executed = []
+        for call in calls:
+            body = call.get("body") or {}
+            if call["method"] == "POST" and call["path"] == "/customers":
+                executed.append("customer_post")
+            elif call["method"] == "PATCH" and body.get("service_location", {}).get("reminders_type") == 0:
+                executed.append("location_patch")
+            elif body == {"customer": {"invoice_email": "ada@example.test"}}:
+                executed.append("invoice_email_patch")
+            elif body == {"service_location": {"email": "reports@example.test"}}:
+                executed.append("location_email_patch")
+        self.assertEqual(executed, ["customer_post", "location_patch", "invoice_email_patch", "location_email_patch"])
+
+        def plant(value: object):
+            original = self.h.transport.request
+
+            def request(method, path, body=None, query=None):
+                status, payload_body = original(method, path, body, query)
+                if method == "PATCH" and "/service_locations/" in path and isinstance(body, dict) and "reminders_type" in (body.get("service_location") or {}):
+                    parts = path.split("/")
+                    self.h.transport.locations[f"{parts[2]}:{parts[4]}"]["reminders_type"] = value
+                return status, payload_body
+
+            return original, request
+
+        present = self.h.service.propose("create_customer", _home(last_name="Present"), IDENTITY)
+        original, request = plant(0)
+        self.h.transport.request = request
+        verified = self.h.service.execute(present["proposal_id"], IDENTITY, operator_approval=self.h.approve(present["proposal_id"]))
+        self.h.transport.request = original
+        self.assertTrue(verified["ok"], verified)
+        self.assertEqual(verified["readback"]["reminders_type"]["status"], "verified")
+        self.assertEqual(verified["readback"]["reminders_type"]["value"], 0)
+        self.assertEqual(verified["readback"]["reminders_type"]["persistence"], "present_integer_matches_sent")
+        self.assertEqual(verified["readback"]["reminders_type"]["appointment_reminders"], "inactive")
+        self.assertEqual(verified["readback"]["reminders_type"]["inactive_label"], "ui_mapping_not_api_label")
+        self.assertFalse(verified["readback"]["reminders_type"]["http_success_proves_persistence"])
+
+        active = self.h.service.propose("create_customer", _home(last_name="Active"), IDENTITY)
+        original, request = plant(2)
+        self.h.transport.request = request
+        mismatched = self.h.service.execute(active["proposal_id"], IDENTITY, operator_approval=self.h.approve(active["proposal_id"]))
+        self.h.transport.request = original
+        self.assertEqual(mismatched["gate"], "creation_partial")
+        self.assertEqual(mismatched["reason"], "field_mismatch")
+        self.assertEqual(mismatched["partial"]["field"], "reminders_type")
+        before = len([call for call in self.h.transport.calls if call["method"] == "PATCH" and "service_locations" in call["path"]])
+        replay = self.h.service.execute(active["proposal_id"], IDENTITY, operator_approval="unused")
+        self.assertEqual(replay["gate"], "ambiguous_remote_write_no_retry")
+        self.assertEqual(len([call for call in self.h.transport.calls if call["method"] == "PATCH" and "service_locations" in call["path"]]), before)
+
+        for label, value in (("Bool", False), ("Text", "0")):
+            flagged = self.h.service.propose("create_customer", _home(last_name=label), IDENTITY)
+            original, request = plant(value)
+            self.h.transport.request = request
+            failed = self.h.service.execute(flagged["proposal_id"], IDENTITY, operator_approval=self.h.approve(flagged["proposal_id"]))
+            self.h.transport.request = original
+            self.assertEqual(failed["reason"], "reminders_type_not_integer", label)
+            self.assertEqual(failed["partial"]["field"], "reminders_type")

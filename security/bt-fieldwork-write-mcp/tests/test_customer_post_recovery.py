@@ -131,6 +131,7 @@ def _customer_row() -> dict:
         "name": "Case Evidence",
         "status": "active",
         "billing_phone": "9103330000",
+        "billing_phone_kind": "Mobile",
         "billing_street": "105 Thorn Tree Ct",
         "billing_city": "Jacksonville",
         "billing_state": "NC",

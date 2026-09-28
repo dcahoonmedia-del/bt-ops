@@ -136,11 +136,21 @@ def customer_request(payload: dict[str, Any]) -> dict[str, Any]:
         _optional_str(payload, field, customer)
     if "billing_term_id" in payload:
         customer["billing_term_id"] = _int(payload["billing_term_id"], "billing_term_id")
+    phone_kind_source = "omitted_no_phone"
     if "billing_phone_kind" in payload:
         kind = payload["billing_phone_kind"]
         if kind not in PHONE_KINDS:
             _unknown("billing_phone_kind")
         customer["billing_phone_kind"] = kind
+        phone_kind_source = "explicit"
+    else:
+        phone = customer.get("billing_phone")
+        if isinstance(phone, str) and phone.strip():
+            if "existing_customer_id" in payload:
+                phone_kind_source = "omitted_existing_customer"
+            else:
+                customer["billing_phone_kind"] = "Mobile"
+                phone_kind_source = "default_mobile"
     for field in _BILLING_LISTS:
         if field not in payload:
             continue
@@ -206,6 +216,7 @@ def customer_request(payload: dict[str, Any]) -> dict[str, Any]:
         plan["location_type_id"] = _int(payload.get("location_type_id"), "location_type_id", positive=True)
     plan["billing_phone_kind"] = customer.get("billing_phone_kind")
     plan["phone_kind_supplied"] = "billing_phone_kind" in payload
+    plan["billing_phone_kind_source"] = phone_kind_source
     plan["contact_count"] = 1 if plan.get("contact") else 0
     if "confirmed_new" in payload and payload["confirmed_new"] is not True:
         _unknown("confirmed_new")
