@@ -134,6 +134,9 @@ class OneTimeGeneralTests(unittest.TestCase):
         self.assertEqual(sent_occurrence["production_value"], 35)
         self.assertIs(sent_occurrence["callback"], False)
         self.assertEqual(posts[0]["body"]["service_appointment"]["line_items_attributes"][0]["price"], 0)
+        service_gets = [call for call in self.h.transport.calls if call["method"] == "GET" and call["path"] == "/services"]
+        self.assertTrue(service_gets)
+        self.assertTrue(all(call["query"] is None for call in service_gets))
 
     def test_omitted_production_is_not_manufactured_and_generic_defaults_are_required(self) -> None:
         omitted = self._propose(_order(starts_at="2026-11-06", line_items=[_line(TERMITE, 38853, 900)]))
@@ -483,6 +486,9 @@ class OneTimeGeneralTests(unittest.TestCase):
         self.assertEqual(sent["name"], invaders)
         self.assertEqual(sent["price"], 225)
         self.assertEqual(sent["payable_type"], "Service")
+        service_gets = [call for call in self.h.transport.calls if call["method"] == "GET" and call["path"] == "/services"]
+        self.assertTrue(service_gets)
+        self.assertTrue(all(call["query"] is None for call in service_gets))
 
     def test_name_mismatch_wrong_type_and_catalog_change_do_not_post(self) -> None:
         mismatch = self._propose(_order(starts_at="2026-11-23", line_items=[_line("Wrong Name", 38853, 900)]))

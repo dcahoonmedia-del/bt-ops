@@ -132,6 +132,9 @@ class CatalogPriceTests(unittest.TestCase):
         self.assertEqual(len(posts), 1)
         self.assertEqual(posts[0]["body"]["service_appointment"]["line_items_attributes"][0]["price"], 225)
         self.assertEqual(self.h.transport.work_orders["49965490"]["line_items"][0]["price"], "350.0")
+        service_gets = [call for call in self.h.transport.calls if call["method"] == "GET" and call["path"] == "/services"]
+        self.assertGreaterEqual(len(service_gets), 1)
+        self.assertTrue(all(call["query"] is None for call in service_gets))
 
     def test_caller_price_above_catalog_stays_an_explicit_override(self) -> None:
         proposed = self.h.service.propose("create_work_order", _order(line_items=[_german(200)], starts_at="2026-09-30"), IDENTITY)
