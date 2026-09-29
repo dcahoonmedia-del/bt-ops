@@ -7,6 +7,7 @@ from typing import Any
 OP_LOCATION_NOTES = "update_service_location_notes"
 OP_WORK_ORDER_NOTES = "update_work_order_notes"
 OP_WORK_ORDER_SCHEDULE = "update_work_order_schedule"
+OP_WORK_POOL_SCHEDULE = "schedule_work_pool_occurrence"
 OP_CREATE_WORK_ORDER = "create_work_order"
 OP_CREATE_CUSTOMER = "create_customer"
 OP_UPDATE_CUSTOMER_PRIMARY_EMAIL = "update_customer_primary_email"
@@ -18,6 +19,7 @@ ALLOWED_OPS = frozenset(
         OP_LOCATION_NOTES,
         OP_WORK_ORDER_NOTES,
         OP_WORK_ORDER_SCHEDULE,
+        OP_WORK_POOL_SCHEDULE,
         OP_CREATE_WORK_ORDER,
         OP_CREATE_CUSTOMER,
         OP_UPDATE_CUSTOMER_PRIMARY_EMAIL,
@@ -29,6 +31,16 @@ ALLOWED_OPS = frozenset(
 LOCATION_NOTE_FIELDS = frozenset({"customer_id", "location_id", "notes"})
 WORK_ORDER_NOTE_FIELDS = frozenset({"work_order_id", "service_appointment_id", "instructions", "private_notes"})
 WORK_ORDER_SCHEDULE_FIELDS = frozenset({"work_order_id", "service_appointment_id", "starts_at", "duration", "service_route_ids"})
+WORK_POOL_SCHEDULE_FIELDS = WORK_ORDER_SCHEDULE_FIELDS
+WORK_POOL_PATCH_KEYS = ("id", "starts_at", "duration", "service_route_ids", "specific")
+WORK_POOL_PUBLIC_API_VERIFIED = False
+WORK_POOL_REMAINING_CHECK = (
+    "One separately approved public PATCH /v3.1/work_orders/{service_appointment_id} "
+    "on a disposable Work Pool occurrence, not occurrence 50268730, sending only the nested "
+    "occurrence id, starts_at, duration, service_route_ids, and specific true, then one GET of "
+    "that same occurrence. Compare specific, start, duration, route, status, arrival window, "
+    "instructions, private_notes, production_value, and price. Do not call the browser scheduler."
+)
 CUSTOMER_EMAIL_FIELDS = frozenset({"customer_id", "primary_email"})
 WORK_ORDER_STATUS_FIELDS = frozenset({"work_order_id", "service_appointment_id", "status"})
 CUSTOMER_CONTACT_FIELDS = frozenset({"customer_id", "contact"})
@@ -161,6 +173,8 @@ GATE_ADDRESS = "address_id_unverified"
 GATE_DISTINCT_IDS = "occurrence_appointment_not_distinct"
 GATE_STATUS_UNVERIFIED = "work_order_status_catalog_unverified"
 GATE_STATUS_FAILED = "status_write_failed"
+GATE_WORK_POOL_API = "work_pool_public_api_unverified"
+GATE_WORK_POOL_PRECONDITION = "work_pool_precondition"
 
 # Public Swagger 1.2 (api.fieldworkhq.com/apidocs, base https://api3.fieldworkhq.com):
 # PATCH /v3.1/work_orders/{id} path id is "Service Appointment ID".
@@ -171,6 +185,7 @@ GATE_STATUS_FAILED = "status_write_failed"
 # that carry value, status, name, or label. It does not send acts_as or a numeric id.
 # No transition list is documented. create_work_order still rejects caller status.
 # patch_work_order_fields stays limited to instructions, private_notes, starts_at, duration, and service_route_ids.
+# schedule_work_pool_occurrence prepares specific=true in its own body. That field is not a general occurrence passthrough.
 
 LEAD_STATUSES = frozenset({"lead", "leads"})
 
@@ -262,7 +277,23 @@ def current_gates(
         "operations": {
             "update_service_location_notes": {"propose": True, "execute_blocked_by": list(write_blocks)},
             "update_work_order_notes": {"propose": bool(mapping_verified), "execute_role": "client.get_api_role", "execute_blocked_by": list(work_order_blocks), "fields": ["instructions", "private_notes"]},
-            "update_work_order_schedule": {"propose": bool(mapping_verified), "single_occurrence": True, "execute_role": "client.get_api_role", "execute_blocked_by": list(work_order_blocks), "fields": ["starts_at", "duration", "service_route_ids"], "arrival_window_preserved": False, "arrival_coupling": "fixed_window_selected_by_start_when_occurrence_evidence_is_fresh", "explicit_arrival_window_edit": False},
+            "update_work_order_schedule": {"propose": bool(mapping_verified), "single_occurrence": True, "execute_role": "client.get_api_role", "execute_blocked_by": list(work_order_blocks), "fields": ["starts_at", "duration", "service_route_ids"], "arrival_window_preserved": False, "arrival_coupling": "fixed_window_selected_by_start_when_occurrence_evidence_is_fresh", "explicit_arrival_window_edit": False, "specific_sent": False},
+            "schedule_work_pool_occurrence": {
+                "propose": bool(mapping_verified),
+                "execute": False,
+                "live_tested": False,
+                "live_execution_available": WORK_POOL_PUBLIC_API_VERIFIED,
+                "execute_blocked_by": [*work_order_blocks, GATE_WORK_POOL_API],
+                "caller_fields": ["work_order_id", "service_appointment_id", "starts_at", "duration", "service_route_ids"],
+                "caller_cannot_pass_specific": True,
+                "patch_fields": ["id", "starts_at", "duration", "service_route_ids", "specific"],
+                "specific": "true_only_for_an_explicit_work_pool_transition",
+                "status_sent": False,
+                "browser_endpoint": False,
+                "arrival_mode_inferred": False,
+                "public_api_contract": "unverified",
+                "remaining_check": WORK_POOL_REMAINING_CHECK,
+            },
             "create_customer": {"propose": True, "schema_ready": True, "live_tested": False, "execute_blocked_by": list(write_blocks), "caller_location_key": "service_locations", "caller_location_shape": "one_object_or_one_item_list", "fieldwork_location_key": "service_locations_attributes", "nested_location_fields": ["name", "same_as_billing_address"], "missing_location_gate": "nested_location_required", "address_patch_when_distinct": True, "response_schema_verified": False, "post_response_body_retained": False, "ambiguous_customer_post": "authoritative_get_no_retry", "billing_phone_kind_default": "Mobile_when_new_customer_phone_omits_kind", "appointment_reminders_write": "service_location[reminders_type]=0", "appointment_reminders_persistence": "unresolved_api_get_omits_field", "appointment_reminders_web_form_option_0": "Inactive", "creation_time_reminders_experiment": "opt_in_integer_0_on_nested_main_location", "creation_time_reminders_customer_post_documented": False, "creation_time_reminders_persistence": "unverified"},
             "create_work_order": {"propose": True, "schema_ready": True, "live_tested": False, "execute_blocked_by": list(write_blocks), "repeat_type": "none", "recurrence_authoritative_get": "not_in_documented_get", "occurrence_get_repeat_type": "omitted_on_inspected_live_get", "caller_schedule_keys": ["starts_at", "duration", "service_route_ids", "instructions"], "missing_schedule_gate": "missing_field", "starts_at_date_only": "YYYY-MM-DD", "offset_starts_at": "date_post_plus_one_schedule_patch", "timed_create_ready": False, "starts_at_post_clock_live_tested": False, "starts_at_datetime_format_unverified": True, "price": "catalog_default_or_explicit_approved_override", "production": "explicit_or_template_default_only", "callback": "explicit_boolean_only", "generic_service_template": "not_consulted", "generic_service_execution": "bt_current_catalog_membership", "generic_selectability": "current_complete_catalog_member", "services_fetch": "one_get_without_page_or_per_page", "services_completeness": "documented_all_services_response", "services_count_is_not_completeness": True, "catalog_equivalence": "bt_account_180_ids_not_universal_api_guarantee", "universal_api_guarantee": False, "list_membership_proves_active": False, "use_time_window_sent": False, "promised_window_enforced": False, "initial_treatment_only": True, "response_schema_verified": False, "first_live_creation_approval_required": True, "readback_reconciliation": "immediate_plus_two_reads_no_replay"},
             "add_customer_contact": {"propose": True, "live_tested": False, "execute_blocked_by": list(write_blocks), "method": "POST", "path": "/v3.1/customers/{customer_id}/contacts", "edits": False, "duplicate_preflight": "normalized_email_and_name", "shared_email": "not_merged", "customer_reread_before_post": True, "portal_access": "not_sent", "notification_changes": "not_sent"},
@@ -297,5 +328,5 @@ def current_gates(
             "list_schedule_filtered": {"read": True, "server_side_filtering": False, "local_filter": ["date", "status", "service_route_ids", "customer_id", "service_location_id"], "query_sent": ["start_date", "end_date", "current_technician", "sort_direction", "work_pool", "filter[status]", "filter[service_routes_ids][]"]},
         },
         "rollout_safeguard": "readonly_api_role" if readonly else "writer",
-        "closed_contracts": [GATE_ARRIVAL_WINDOW],
+        "closed_contracts": [GATE_ARRIVAL_WINDOW, GATE_WORK_POOL_API],
     }

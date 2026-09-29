@@ -13,9 +13,12 @@ from typing import Any, Protocol
 from urllib.request import Request
 
 from .allowlist import (
+    ARRIVAL_FIELDS,
     GATE_AUTH_UNRESOLVED,
     GATE_CATALOG,
     GATE_LIVE_PATCH_UNTESTED,
+    GATE_WORK_POOL_PRECONDITION,
+    WORK_POOL_PATCH_KEYS,
     is_lead_status,
 )
 from .config import API_BASE
@@ -1683,6 +1686,7 @@ class TypedFieldworkClient:
         return payload if isinstance(payload, dict) else {}
 
     def patch_work_order_fields(self, before: dict[str, Any], after: dict[str, Any], fields: Any) -> dict[str, Any]:
+        # specific stays off this allowlist. Work Pool scheduling uses work_pool_schedule_body.
         allowed = {"instructions", "private_notes", "starts_at", "duration", "service_route_ids"}
         if not fields or set(fields) - allowed:
             raise GateError("unknown_field")
@@ -1730,6 +1734,7 @@ class TypedFieldworkClient:
     def patch_work_order_notes(self, before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
         fields = [key for key in ("instructions", "private_notes") if after.get(key) != before.get(key)]
         return self.patch_work_order_fields(before, after, fields)
+
 
     def list_contacts(self, customer_id: str) -> dict[str, Any]:
         customer_id = _required_id(customer_id)
@@ -1857,3 +1862,108 @@ class TypedFieldworkClient:
         if not isinstance(payload, dict):
             return {}
         return payload
+
+def work_pool_schedule_body(
+    service_appointment_id: Any,
+    work_order_id: Any,
+    starts_at: str,
+    duration: int,
+    service_route_ids: list[int],
+    *,
+    specific: bool,
+) -> dict[str, Any]:
+    """Prepared public PATCH for one Work Pool occurrence. This function does not send it.
+
+    specific must be the explicit transition to a timed occurrence. The body is not
+    the browser scheduler form and does not carry status or arrival-mode fields.
+    """
+    if specific is not True:
+        raise GateError(GATE_WORK_POOL_PRECONDITION, reason="specific_true_required")
+    if not isinstance(starts_at, str) or "T" not in starts_at:
+        raise GateError("unknown_field", fields=["starts_at"])
+    if isinstance(duration, bool) or not isinstance(duration, int) or duration <= 0:
+        raise GateError("unknown_field", fields=["duration"])
+    if (
+        not isinstance(service_route_ids, list)
+        or not service_route_ids
+        or any(isinstance(item, bool) or not isinstance(item, int) or item <= 0 for item in service_route_ids)
+    ):
+        raise GateError("unknown_field", fields=["service_route_ids"])
+    appointment = _required_id(service_appointment_id)
+    occurrence = _required_id(work_order_id)
+    if appointment == occurrence:
+        raise GateError("identity_mismatch")
+    entry = {
+        "id": occurrence,
+        "starts_at": starts_at,
+        "duration": duration,
+        "service_route_ids": list(service_route_ids),
+        "specific": True,
+    }
+    if tuple(entry) != WORK_POOL_PATCH_KEYS:
+        raise GateError("unknown_field")
+    return {
+        "method": "PATCH",
+        "path": f"/work_orders/{appointment}",
+        "body": {"service_appointment": {"appointment_occurrences_attributes": [entry]}},
+    }
+
+
+def work_pool_readback_mismatches(before: dict[str, Any], approved: dict[str, Any], live: dict[str, Any]) -> list[dict[str, Any]]:
+    """Compare one GET with the sealed Work Pool transition. Does not send a write."""
+    from .schedule import same_id, same_instant, same_routes
+
+    mismatches: list[dict[str, Any]] = []
+
+    def check(field: str, ok: bool, wanted: Any, seen: Any) -> None:
+        if not ok:
+            mismatches.append({"field": field, "expected": wanted, "actual": seen})
+
+    live_occurrence = live.get("work_order_id", live.get("id"))
+    check("work_order_id", same_id(before.get("work_order_id"), live_occurrence), before.get("work_order_id"), live_occurrence)
+    check(
+        "service_appointment_id",
+        same_id(before.get("service_appointment_id"), live.get("service_appointment_id")),
+        before.get("service_appointment_id"),
+        live.get("service_appointment_id"),
+    )
+    check("specific", live.get("specific") is True, True, live.get("specific"))
+    check("starts_at", same_instant(approved.get("starts_at"), live.get("starts_at")), approved.get("starts_at"), live.get("starts_at"))
+    check("duration", approved.get("duration") == live.get("duration"), approved.get("duration"), live.get("duration"))
+    check(
+        "service_route_ids",
+        same_routes(approved.get("service_route_ids"), live.get("service_route_ids")),
+        approved.get("service_route_ids"),
+        live.get("service_route_ids"),
+    )
+    for field in ("customer_id", "location_id"):
+        check(field, same_id(before.get(field), live.get(field)), before.get(field), live.get(field))
+    for field in ("instructions", "private_notes", "production_value", "confirmed", "line_items"):
+        check(field, before.get(field) == live.get(field), before.get(field), live.get(field))
+    return mismatches
+
+
+def work_pool_readback_decision(before: dict[str, Any], approved: dict[str, Any], live: dict[str, Any] | None) -> dict[str, Any]:
+    """A missing or mismatched GET is unresolved. It is not a reason to PATCH again."""
+    if not isinstance(live, dict):
+        return {"ok": False, "gate": "readback_unresolved", "retry": False, "write_again": False, "arrival_mode_proof": False}
+    mismatches = work_pool_readback_mismatches(before, approved, live)
+    if mismatches:
+        return {
+            "ok": False,
+            "gate": "readback_unresolved",
+            "retry": False,
+            "write_again": False,
+            "mismatches": mismatches,
+            "arrival_mode_proof": False,
+        }
+    return {
+        "ok": True,
+        "retry": False,
+        "write_again": False,
+        "status_observed": live.get("status"),
+        "status_coupling": "unverified",
+        "arrival_mode_proof": False,
+        "arrival_observed": {key: live.get(key) for key in ARRIVAL_FIELDS},
+    }
+

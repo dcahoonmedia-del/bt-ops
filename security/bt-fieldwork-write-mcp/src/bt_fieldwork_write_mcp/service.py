@@ -30,6 +30,8 @@ from .allowlist import (
     NOTE_TEXT_FIELDS,
     CUSTOMER_EMAIL_FIELDS,
     GATE_STATUS_FAILED,
+    GATE_WORK_POOL_API,
+    GATE_WORK_POOL_PRECONDITION,
     OP_ADD_CUSTOMER_CONTACT,
     OP_CREATE_CUSTOMER,
     OP_CREATE_WORK_ORDER,
@@ -38,7 +40,11 @@ from .allowlist import (
     OP_UPDATE_WORK_ORDER_STATUS,
     OP_WORK_ORDER_NOTES,
     OP_WORK_ORDER_SCHEDULE,
+    OP_WORK_POOL_SCHEDULE,
     SCHEDULE_WRITE_FIELDS,
+    WORK_POOL_PUBLIC_API_VERIFIED,
+    WORK_POOL_REMAINING_CHECK,
+    WORK_POOL_SCHEDULE_FIELDS,
     CUSTOMER_CONTACT_FIELDS,
     WORK_ORDER_NOTE_FIELDS,
     WORK_ORDER_SCHEDULE_FIELDS,
@@ -52,7 +58,7 @@ from .approval import mint_operator_token, token_fingerprint, verify_operator_to
 from .config import Settings
 from .digest import canonical, proposal_digest, sha256_hex
 from .errors import AmbiguousWriteError, GateError
-from .fieldwork import TypedFieldworkClient, location_snapshot, resolve_work_order_status, snapshot_hash
+from .fieldwork import TypedFieldworkClient, location_snapshot, resolve_work_order_status, snapshot_hash, work_pool_schedule_body
 
 
 def _offset_iso(value: Any) -> bool:
@@ -228,6 +234,10 @@ class WriteService:
                 if not self.settings.mapping_verified:
                     return self._fail(GATE_MAPPING_UNVERIFIED, operation=operation)
                 return self._propose_work_order_schedule(payload, identity)
+            if operation == OP_WORK_POOL_SCHEDULE:
+                if not self.settings.mapping_verified:
+                    return self._fail(GATE_MAPPING_UNVERIFIED, operation=operation)
+                return self._propose_work_pool_schedule(payload, identity)
             if operation == OP_CREATE_WORK_ORDER:
                 return self._propose_create(payload, identity)
             if operation == OP_CREATE_CUSTOMER:
@@ -367,6 +377,7 @@ class WriteService:
         result["schedule_model"] = SCHEDULE_MODEL
         result["arrival_coupling"] = "fixed_window_selected_by_start"
         result["explicit_arrival_window_edit"] = False
+        result["specific_sent"] = False
         result["fixed_window_id"] = after["fixed_window_id"]
         result["window_evidence_source"] = after["window_evidence_source"]
         result["occurrence_evidence_field"] = after["occurrence_evidence_field"]
@@ -379,6 +390,107 @@ class WriteService:
             "arrival_time_window_end": after["arrival_time_window_end"],
             "fixed_window_id": after["fixed_window_id"],
         }
+        return result
+
+    def _work_pool_snapshot(self, row: dict[str, Any]) -> dict[str, Any]:
+        identity = self._require_active_location(row)
+        lines = row.get("line_items")
+        projected = None
+        if isinstance(lines, list):
+            projected = [
+                {key: item.get(key) for key in ("name", "quantity", "price", "payable_id", "payable_type")}
+                for item in lines
+                if isinstance(item, dict)
+            ]
+        snap = {
+            "work_order_id": str(row.get("id")),
+            "service_appointment_id": str(row.get("service_appointment_id")),
+            "customer_id": str(identity["customer_id"]),
+            "location_id": str(identity["location_id"]),
+            "instructions": row.get("instructions"),
+            "private_notes": row.get("private_notes"),
+            "production_value": row.get("production_value"),
+            "confirmed": row.get("confirmed"),
+            "specific": row.get("specific"),
+            "status": row.get("status"),
+            "starts_at": _normalized_start(row.get("starts_at")) if row.get("starts_at") else row.get("starts_at"),
+            "duration": row.get("duration"),
+            "service_route_ids": [item for item in (row.get("service_route_ids") or [])],
+            "line_items": projected,
+            "repeat_type_present": "repeat_type" in row,
+            "repeat_type": row.get("repeat_type") if "repeat_type" in row else None,
+            "time_window_kind_present": "time_window_kind" in row,
+        }
+        for key in ARRIVAL_FIELDS:
+            snap[key] = row.get(key)
+        return snap
+
+    def _propose_work_pool_schedule(self, payload: dict[str, Any], identity: dict[str, str]) -> dict[str, Any]:
+        assert_only(payload, WORK_POOL_SCHEDULE_FIELDS, label="work_pool_schedule")
+        starts_at = payload.get("starts_at")
+        duration = payload.get("duration")
+        routes = payload.get("service_route_ids")
+        if not _offset_iso(starts_at) or isinstance(duration, bool) or not isinstance(duration, int) or duration <= 0:
+            return self._fail("unknown_field", fields=["starts_at", "duration", "service_route_ids"])
+        if not isinstance(routes, list) or not routes or any(isinstance(item, bool) or not isinstance(item, int) or item <= 0 for item in routes):
+            return self._fail("unknown_field", fields=["service_route_ids"])
+        work_order_id = str(payload.get("work_order_id") or "")
+        appointment_id = str(payload.get("service_appointment_id") or "")
+        if not work_order_id.isdigit() or not appointment_id.isdigit() or work_order_id == appointment_id:
+            return self._fail(GATE_IDENTITY)
+        row = self.client.get_work_order(work_order_id)
+        if str(row.get("id")) != work_order_id or str(row.get("service_appointment_id")) != appointment_id:
+            return self._fail(GATE_IDENTITY)
+        self._reject_series(row)
+        if row.get("specific") is not False:
+            return self._fail(GATE_WORK_POOL_PRECONDITION, reason="specific_not_false")
+        if row.get("status") != "Work Pool":
+            return self._fail(GATE_WORK_POOL_PRECONDITION, reason="status_not_work_pool")
+        if row.get("confirmed") is not False:
+            return self._fail(GATE_WORK_POOL_PRECONDITION, reason="confirmed_not_false")
+        before = self._work_pool_snapshot(row)
+        normalized = _normalized_start(starts_at)
+        prepared = work_pool_schedule_body(
+            appointment_id,
+            work_order_id,
+            normalized,
+            duration,
+            list(routes),
+            specific=True,
+        )
+        after = {
+            "intent": "work_pool_to_scheduled_time",
+            "work_order_id": work_order_id,
+            "service_appointment_id": appointment_id,
+            "specific_before": False,
+            "specific": True,
+            "status_before": "Work Pool",
+            "status_sent": False,
+            "browser_observed_status_after": "Scheduled",
+            "public_api_status_equivalence": "unverified",
+            "arrival_mode": "not_inferred",
+            "live_execution_available": False,
+            "starts_at": normalized,
+            "duration": duration,
+            "service_route_ids": list(routes),
+            "confirmed_sent": False,
+            "notes_sent": False,
+            "price_sent": False,
+            "production_sent": False,
+            "recurrence_sent": False,
+            "series_update_sent": False,
+            "communications_sent": False,
+            "patch": prepared,
+        }
+        result = self._persist_proposal(OP_WORK_POOL_SCHEDULE, payload, identity, f"work_order:{work_order_id}", before, after)
+        if result.get("ok"):
+            result["intent"] = after["intent"]
+            result["status_sent"] = False
+            result["arrival_mode"] = "not_inferred"
+            result["live_execution_available"] = False
+            result["public_api_status_equivalence"] = "unverified"
+            result["public_api_verified"] = WORK_POOL_PUBLIC_API_VERIFIED
+            result["repeat_type_verified"] = before["repeat_type_present"]
         return result
 
     def _propose_create(self, payload: dict[str, Any], identity: dict[str, str]) -> dict[str, Any]:
@@ -1082,10 +1194,12 @@ class WriteService:
             return self._fail(GATE_REPLAY, proposal_id=proposal_id)
         if self.store.has_ambiguous(proposal["subject_key"]):
             return self._fail("ambiguous_remote_write_no_retry", proposal_id=proposal_id)
-        if proposal["operation"] in {OP_WORK_ORDER_NOTES, OP_WORK_ORDER_SCHEDULE, OP_UPDATE_WORK_ORDER_STATUS} and not self.settings.mapping_verified:
+        if proposal["operation"] in {OP_WORK_ORDER_NOTES, OP_WORK_ORDER_SCHEDULE, OP_UPDATE_WORK_ORDER_STATUS, OP_WORK_POOL_SCHEDULE} and not self.settings.mapping_verified:
             return self._fail(GATE_MAPPING_UNVERIFIED, proposal_id=proposal_id)
         if proposal["operation"] in {OP_WORK_ORDER_NOTES, OP_WORK_ORDER_SCHEDULE}:
             stale = self._work_order_stale(proposal)
+        elif proposal["operation"] == OP_WORK_POOL_SCHEDULE:
+            stale = self._work_pool_stale(proposal)
         elif proposal["operation"] == OP_UPDATE_WORK_ORDER_STATUS:
             stale = self._work_order_status_stale(proposal)
         elif proposal["operation"] == OP_LOCATION_NOTES:
@@ -1111,6 +1225,8 @@ class WriteService:
             return self._execute_work_order(proposal, clock, [key for key in NOTE_TEXT_FIELDS if key in proposal["payload"]])
         if proposal["operation"] == OP_WORK_ORDER_SCHEDULE:
             return self._execute_work_order(proposal, clock, list(SCHEDULE_WRITE_FIELDS))
+        if proposal["operation"] == OP_WORK_POOL_SCHEDULE:
+            return self._refuse_work_pool_live_execution(proposal)
         if proposal["operation"] == OP_UPDATE_CUSTOMER_PRIMARY_EMAIL:
             return self._execute_customer_email(proposal, clock)
         if proposal["operation"] == OP_UPDATE_WORK_ORDER_STATUS:
@@ -1297,6 +1413,38 @@ class WriteService:
             body["ambiguity_reconciled"] = True
             body["retry"] = False
         return body
+
+    def _work_pool_stale(self, proposal: dict[str, Any]) -> dict[str, Any] | None:
+        before = proposal["before"]
+        try:
+            row = self.client.get_work_order(str(before["work_order_id"]))
+            if str(row.get("id")) != str(before["work_order_id"]) or str(row.get("service_appointment_id")) != str(before["service_appointment_id"]):
+                return self._fail(GATE_IDENTITY, proposal_id=proposal["proposal_id"], write_sent=False)
+            if str(row.get("customer_id")) != str(before["customer_id"]) or str(row.get("service_location_id") or row.get("location_id")) != str(before["location_id"]):
+                return self._fail(GATE_IDENTITY, proposal_id=proposal["proposal_id"], write_sent=False)
+            self._reject_series(row)
+            current = self._work_pool_snapshot(row)
+        except GateError as exc:
+            return self._fail(exc.gate, proposal_id=proposal["proposal_id"], write_sent=False, **exc.detail)
+        if snapshot_hash(current) != snapshot_hash(before):
+            self.store.release_open_guard(proposal["subject_key"], proposal["proposal_id"])
+            self.store.set_status(proposal["proposal_id"], "stale")
+            changed = [key for key in before if current.get(key) != before.get(key)]
+            return self._fail(GATE_STALE, proposal_id=proposal["proposal_id"], write_sent=False, changed_fields=changed)
+        return None
+
+    def _refuse_work_pool_live_execution(self, proposal: dict[str, Any]) -> dict[str, Any]:
+        """Approval is already consumed. The public PATCH contract is still unverified, so nothing is sent."""
+        if WORK_POOL_PUBLIC_API_VERIFIED or proposal["after"].get("live_execution_available") is True:
+            return self._fail(GATE_WORK_POOL_API, proposal_id=proposal["proposal_id"], retry=False, write_sent=False, reason="verified_flag_without_send_path")
+        return self._fail(
+            GATE_WORK_POOL_API,
+            proposal_id=proposal["proposal_id"],
+            retry=False,
+            write_sent=False,
+            live_execution_available=False,
+            remaining_check=WORK_POOL_REMAINING_CHECK,
+        )
 
     def _work_order_stale(self, proposal: dict[str, Any]) -> dict[str, Any] | None:
         before = proposal["before"]
