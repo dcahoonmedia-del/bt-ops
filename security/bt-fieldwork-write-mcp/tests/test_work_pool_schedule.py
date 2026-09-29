@@ -1,7 +1,8 @@
-"""Work Pool scheduling is a sealed public-API preview. It does not write."""
+"""Work Pool scheduling sends one sealed public PATCH and reads it back."""
 
 from __future__ import annotations
 
+import json
 import unittest
 from copy import deepcopy
 from dataclasses import replace
@@ -11,16 +12,16 @@ from bt_fieldwork_write_mcp.allowlist import (
     GATE_IDENTITY,
     GATE_OPERATOR,
     GATE_RECURRING,
+    GATE_REPLAY,
     GATE_STALE,
-    GATE_WORK_POOL_API,
     GATE_WORK_POOL_PRECONDITION,
     OP_WORK_ORDER_SCHEDULE,
     OP_WORK_POOL_SCHEDULE,
     WORK_POOL_PATCH_KEYS,
     WORK_POOL_PUBLIC_API_VERIFIED,
-    WORK_POOL_REMAINING_CHECK,
 )
 from bt_fieldwork_write_mcp.create_contract import _bind_new_residential_name
+from bt_fieldwork_write_mcp.digest import proposal_digest
 from bt_fieldwork_write_mcp.errors import GateError
 from bt_fieldwork_write_mcp.fieldwork import work_pool_readback_decision, work_pool_schedule_body
 from bt_fieldwork_write_mcp.schedule import predict_fixed_shift, same_instant
@@ -35,8 +36,8 @@ def _pool(**overrides):
     row = {
         "id": 50268730,
         "service_appointment_id": 8961994,
-        "customer_id": 41,
-        "service_location_id": 77,
+        "customer_id": 3675473,
+        "service_location_id": 4491834,
         "starts_at": "2026-09-29T12:00:00-04:00",
         "duration": 60,
         "service_route_ids": [2557],
@@ -46,7 +47,7 @@ def _pool(**overrides):
         "instructions": "test account",
         "private_notes": "",
         "production_value": 0.0,
-        "line_items": [{"name": "Extra Service / Follow-up", "quantity": 1, "price": 0, "payable_id": 1, "payable_type": "Service"}],
+        "line_items": [{"name": "Extra Service / Follow-up", "quantity": 1, "price": 0, "payable_id": 38804, "payable_type": "Service"}],
     }
     row.update(overrides)
     return row
@@ -55,6 +56,10 @@ def _pool(**overrides):
 class WorkPoolScheduleTests(unittest.TestCase):
     def setUp(self) -> None:
         self.h = Harness(writes_enabled=True, api_role="writer", mapping_verified=True)
+        self.h.transport.add_customer(
+            {"id": 3675473, "customer_status": "Active", "name": "Jim Doe"},
+            {"id": 4491834, "name": "House", "tax_rate_id": 3, "address": {"id": 1, "notes": "n"}},
+        )
         self.h.transport.work_orders["50268730"] = _pool()
 
     def tearDown(self) -> None:
@@ -121,9 +126,13 @@ class WorkPoolScheduleTests(unittest.TestCase):
         self.assertEqual(proposed["after"]["specific"], True)
         self.assertFalse(proposed["after"]["status_sent"])
         self.assertEqual(proposed["after"]["browser_observed_status_after"], "Scheduled")
-        self.assertEqual(proposed["after"]["public_api_status_equivalence"], "unverified")
-        self.assertEqual(proposed["after"]["arrival_mode"], "not_inferred")
-        self.assertFalse(proposed["after"]["live_execution_available"])
+        self.assertEqual(proposed["after"]["public_api_status_equivalence"], "server_computed_not_sent")
+        self.assertEqual(proposed["after"]["status_after"], "Scheduled")
+        self.assertEqual(proposed["after"]["arrival_window"], "server_computed")
+        self.assertEqual(proposed["after"]["arrival_mode"], "unknown")
+        self.assertFalse(proposed["after"]["arrival_mode_known"])
+        self.assertFalse(proposed["after"]["arrival_window_promised"])
+        self.assertTrue(proposed["after"]["live_execution_available"])
         self.assertNotIn("schedule_model", proposed["after"])
         self.assertNotIn("fixed_window_id", proposed["after"])
         entry = proposed["after"]["patch"]["body"]["service_appointment"]["appointment_occurrences_attributes"][0]
@@ -214,7 +223,7 @@ class WorkPoolScheduleTests(unittest.TestCase):
         self.assertEqual(called["n"], 0)
         self.assertFalse(proposed["before"]["time_window_kind_present"])
         self.assertIsNone(proposed["before"]["arrival_time_window"])
-        self.assertEqual(proposed["arrival_mode"], "not_inferred")
+        self.assertEqual(proposed["arrival_mode"], "unknown")
         self.h.transport.work_orders["50268730"]["instructions"] = "changed"
         token = self.h.approve(proposed["proposal_id"])
         stale = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=token)
@@ -238,7 +247,7 @@ class WorkPoolScheduleTests(unittest.TestCase):
             IDENTITY,
         )
         self.assertTrue(matched["ok"], matched)
-        self.assertEqual(matched["after"]["arrival_mode"], "not_inferred")
+        self.assertEqual(matched["after"]["arrival_mode"], "unknown")
         self.assertNotIn("schedule_model", matched["after"])
         ordinary = self.h.service.propose(
             OP_WORK_ORDER_SCHEDULE,
@@ -251,7 +260,8 @@ class WorkPoolScheduleTests(unittest.TestCase):
         live = dict(priced["before"])
         live["specific"] = True
         live["starts_at"] = priced["after"]["starts_at"]
-        live["line_items"] = [{"name": "Extra Service / Follow-up", "quantity": 1, "price": 12, "payable_id": 1, "payable_type": "Service"}]
+        live["status"] = "Scheduled"
+        live["line_items"] = [{"name": "Extra Service / Follow-up", "quantity": 1, "price": 12, "payable_id": 38804, "payable_type": "Service"}]
         decision = work_pool_readback_decision(priced["before"], priced["after"], live)
         self.assertFalse(decision["ok"])
         self.assertFalse(decision["write_again"])
@@ -260,23 +270,21 @@ class WorkPoolScheduleTests(unittest.TestCase):
         self.assertFalse(decision["arrival_mode_proof"])
 
     def test_ambiguous_or_repeated_execution_never_patches(self) -> None:
-        self.assertFalse(WORK_POOL_PUBLIC_API_VERIFIED)
+        self.assertTrue(WORK_POOL_PUBLIC_API_VERIFIED)
         proposed = self._propose()
         token = self.h.approve(proposed["proposal_id"])
         stranger = self.h.service.execute(proposed["proposal_id"], OTHER, operator_approval=token)
         self.assertEqual(stranger["gate"], GATE_IDENTITY)
         self.h.transport.write_mode = "ambiguous"
         blocked = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=token)
-        self.assertEqual(blocked["gate"], GATE_WORK_POOL_API)
-        self.assertFalse(blocked["write_sent"])
+        self.assertEqual(blocked["gate"], "readback_unresolved")
         self.assertFalse(blocked["retry"])
-        self.assertFalse(blocked["live_execution_available"])
-        self.assertEqual(blocked["remaining_check"], WORK_POOL_REMAINING_CHECK)
-        self.assertEqual(self._patches(), [])
+        self.assertFalse(blocked["write_again"])
+        self.assertEqual(len(self._patches()), 1)
         again = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=token)
-        self.assertEqual(again["gate"], GATE_WORK_POOL_API)
-        self.assertEqual(self._patches(), [])
-        self.assertEqual(self.h.store.get_proposal(proposed["proposal_id"])["status"], "rejected")
+        self.assertEqual(again["gate"], "ambiguous_remote_write_no_retry")
+        self.assertEqual(len(self._patches()), 1)
+        self.assertEqual(self.h.store.get_proposal(proposed["proposal_id"])["status"], "ambiguous")
         missing = work_pool_readback_decision(proposed["before"], proposed["after"], None)
         self.assertFalse(missing["write_again"])
         self.assertFalse(missing["retry"])
@@ -288,7 +296,9 @@ class WorkPoolScheduleTests(unittest.TestCase):
         observed["arrival_time_window"] = ["2026-09-29T16:00:00-04:00", "2026-09-29T17:00:00-04:00"]
         accepted = work_pool_readback_decision(proposed["before"], proposed["after"], observed)
         self.assertTrue(accepted["ok"], accepted)
-        self.assertEqual(accepted["status_coupling"], "unverified")
+        self.assertEqual(accepted["status_coupling"], "server_computed_not_sent")
+        self.assertEqual(accepted["arrival_mode"], "unknown")
+        self.assertFalse(accepted["arrival_window_promised"])
         self.assertFalse(accepted["arrival_mode_proof"])
         self.assertFalse(accepted["write_again"])
         self.assertFalse(accepted["recurrence_verified"])
@@ -310,6 +320,7 @@ class WorkPoolScheduleTests(unittest.TestCase):
         observed = dict(proposed["before"])
         observed["specific"] = True
         observed["starts_at"] = proposed["after"]["starts_at"]
+        observed["status"] = "Scheduled"
         missing = work_pool_readback_decision(proposed["before"], proposed["after"], observed)
         self.assertTrue(missing["ok"], missing)
         self.assertFalse(missing["recurrence_verified"])
@@ -396,15 +407,13 @@ class WorkPoolScheduleTests(unittest.TestCase):
         self.assertEqual(self._approval_count(proposed["proposal_id"]), 0)
         self.assertEqual(self._patches(), [])
 
-        blocked = self.h.service.execute(proposed["proposal_id"], IDENTITY, approved=True, expected_digest=digest)
-        self.assertEqual(blocked["gate"], GATE_WORK_POOL_API)
-        self.assertFalse(blocked["write_sent"])
-        self.assertFalse(blocked["retry"])
-        self.assertTrue(blocked["blocked"])
-        self.assertEqual(blocked["proposal_status"], "rejected")
+        done = self.h.service.execute(proposed["proposal_id"], IDENTITY, approved=True, expected_digest=digest)
+        self.assertTrue(done["ok"], done)
+        self.assertEqual(len(self._patches()), 1)
         stored = self.h.store.get_proposal(proposed["proposal_id"])
-        self.assertEqual(stored["status"], "rejected")
+        self.assertEqual(stored["status"], "executed")
         self.assertEqual(stored["digest"], digest)
+        self.assertEqual(stored["after"], proposed["after"])
         released = self.h.store._conn.execute(
             "SELECT state FROM subject_guards WHERE subject_key = ?",
             ("work_order:50268730",),
@@ -413,15 +422,15 @@ class WorkPoolScheduleTests(unittest.TestCase):
         self.assertEqual(self._approval_count(proposed["proposal_id"]), 1)
         used_at = self._approval_used_at(proposed["proposal_id"])
         self.assertIsNotNone(used_at)
-        self.assertEqual(self._patches(), [])
 
         again = self.h.service.execute(proposed["proposal_id"], IDENTITY, approved=True, expected_digest=digest)
-        self.assertEqual(again["gate"], GATE_WORK_POOL_API)
-        self.assertFalse(again["write_sent"])
-        self.assertEqual(self.h.store.get_proposal(proposed["proposal_id"])["status"], "rejected")
+        self.assertEqual(again["gate"], GATE_REPLAY)
+        self.assertEqual(self.h.store.get_proposal(proposed["proposal_id"])["status"], "executed")
+        self.assertEqual(self.h.store.get_proposal(proposed["proposal_id"])["digest"], digest)
         self.assertEqual(self._approval_count(proposed["proposal_id"]), 1)
         self.assertEqual(self._approval_used_at(proposed["proposal_id"]), used_at)
-        self.assertEqual(self._patches(), [])
+        self.assertEqual(len(self._patches()), 1)
+        self.h.transport.work_orders["50268730"] = _pool()
         replacement = self._propose()
         self.assertTrue(replacement["ok"], replacement)
         self.assertNotEqual(replacement.get("gate"), "duplicate_in_flight")
@@ -433,6 +442,207 @@ class WorkPoolScheduleTests(unittest.TestCase):
     def _approval_used_at(self, proposal_id: str):
         row = self.h.store._conn.execute("SELECT used_at FROM approvals WHERE proposal_id = ?", (proposal_id,)).fetchone()
         return None if row is None else row["used_at"]
+
+    def _execute(self, proposed: dict):
+        token = self.h.approve(proposed["proposal_id"])
+        return self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=token)
+
+    def test_verified_fixture_sends_one_patch_and_reads_it_back(self) -> None:
+        proposed = self._propose()
+        self.assertTrue(proposed["ok"], proposed)
+        digest = proposed["digest"]
+        done = self._execute(proposed)
+        self.assertTrue(done["ok"], done)
+        patches = self._patches()
+        self.assertEqual(len(patches), 1)
+        sent = patches[0]
+        self.assertEqual(sent["path"], "/work_orders/8961994")
+        self.assertEqual(sent["body"], proposed["after"]["patch"]["body"])
+        entry = sent["body"]["service_appointment"]["appointment_occurrences_attributes"][0]
+        self.assertEqual(tuple(entry), WORK_POOL_PATCH_KEYS)
+        self.assertNotIn("status", entry)
+        self.assertNotIn("confirmed", entry)
+        self.assertNotIn("arrival_time_window", entry)
+        readback = done["readback"]
+        self.assertEqual(readback["work_order_id"], "50268730")
+        self.assertEqual(readback["service_appointment_id"], "8961994")
+        self.assertEqual(readback["customer_id"], "3675473")
+        self.assertEqual(readback["location_id"], "4491834")
+        self.assertNotIn("service_location_id", readback)
+        self.assertTrue(readback["specific"])
+        self.assertTrue(same_instant(readback["starts_at"], EASTERN))
+        self.assertEqual(readback["duration"], 60)
+        self.assertEqual(readback["service_route_ids"], [2557])
+        self.assertEqual(readback["status"], "Scheduled")
+        self.assertEqual(readback["instructions"], "test account")
+        self.assertEqual(readback["private_notes"], "")
+        self.assertEqual(readback["production_value"], 0.0)
+        self.assertIs(readback["confirmed"], False)
+        self.assertEqual(readback["line_items"][0]["payable_id"], 38804)
+        self.assertEqual(readback["line_items"][0]["price"], 0)
+        self.assertEqual(done["status_observed"], "Scheduled")
+        self.assertFalse(done["status_sent"])
+        self.assertEqual(done["status_coupling"], "server_computed_not_sent")
+        self.assertEqual(done["arrival_window"], "server_computed")
+        self.assertEqual(done["arrival_mode"], "unknown")
+        self.assertFalse(done["arrival_mode_known"])
+        self.assertFalse(done["arrival_window_promised"])
+        self.assertNotIn("schedule_model", done)
+        self.assertNotIn("fixed_window_id", done)
+        self.assertIn("arrival_time_window", done["arrival_observed"])
+        self.assertFalse(done["recurrence_verified"])
+        self.assertEqual(done["recurrence_reason"], "occurrence_get_omits_repeat_type")
+        stored = self.h.store.get_proposal(proposed["proposal_id"])
+        self.assertEqual(stored["status"], "executed")
+        self.assertEqual(stored["digest"], digest)
+        self.assertEqual(stored["after"], proposed["after"])
+        guard = self.h.store._conn.execute(
+            "SELECT state FROM subject_guards WHERE subject_key = ?",
+            ("work_order:50268730",),
+        ).fetchone()
+        self.assertIsNone(guard)
+        again = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval="unused")
+        self.assertEqual(again["gate"], GATE_REPLAY)
+        self.assertEqual(len(self._patches()), 1)
+        self.assertEqual(self.h.store.get_proposal(proposed["proposal_id"])["digest"], digest)
+
+    def test_raw_location_and_occurrence_ids_normalize_before_compare(self) -> None:
+        snap = self.h.service._work_pool_snapshot(_pool())
+        self.assertEqual(snap["location_id"], "4491834")
+        self.assertEqual(snap["work_order_id"], "50268730")
+        self.assertNotIn("service_location_id", snap)
+        proposed = self._propose()
+        live = dict(proposed["before"])
+        live.pop("location_id")
+        live.pop("work_order_id")
+        live["service_location_id"] = 4491834
+        live["id"] = 50268730
+        live["specific"] = True
+        live["starts_at"] = proposed["after"]["starts_at"]
+        live["status"] = "Scheduled"
+        decision = work_pool_readback_decision(proposed["before"], proposed["after"], live)
+        self.assertTrue(decision["ok"], decision)
+        self.assertEqual(decision["arrival_mode"], "unknown")
+        self.assertFalse(decision["arrival_window_promised"])
+
+    def test_omitted_finished_at_uses_start_plus_duration(self) -> None:
+        self.h.transport.omit_finished_at_on_work_order_get = True
+        proposed = self._propose()
+        done = self._execute(proposed)
+        self.assertTrue(done["ok"], done)
+        self.assertIsNone(done["finished_at"])
+        self.assertEqual(done["finished_at_on_occurrence_get"], "omitted")
+        self.assertEqual(done["scheduled_end"], "2026-09-29T17:00:00-04:00")
+        self.assertEqual(len(self._patches()), 1)
+
+    def test_http_204_is_one_patch_then_authoritative_get(self) -> None:
+        self.h.transport.write_mode = "http_204"
+        proposed = self._propose()
+        done = self._execute(proposed)
+        self.assertTrue(done["ok"], done)
+        self.assertEqual(len(self._patches()), 1)
+        self.assertEqual(done["readback"]["status"], "Scheduled")
+        self.assertTrue(done["readback"]["specific"])
+        self.assertTrue(same_instant(done["readback"]["starts_at"], EASTERN))
+        gets = [call for call in self.h.transport.calls if call["method"] == "GET" and call["path"] == "/work_orders/50268730"]
+        self.assertGreaterEqual(len(gets), 1)
+
+    def test_readback_mismatch_stays_unresolved_without_another_patch(self) -> None:
+        original = self.h.transport.request
+
+        def diverge_after_patch(method, path, body=None, query=None):
+            if method == "GET" and any(call["method"] == "PATCH" for call in self.h.transport.calls):
+                self.h.transport.readback_line_price = 12
+            return original(method, path, body, query)
+
+        self.h.transport.request = diverge_after_patch
+        proposed = self._propose()
+        digest = proposed["digest"]
+        done = self._execute(proposed)
+        self.assertFalse(done["ok"])
+        self.assertEqual(done["gate"], "readback_unresolved")
+        self.assertFalse(done["retry"])
+        self.assertFalse(done["write_again"])
+        self.assertEqual(done["mismatches"][0]["field"], "line_items")
+        self.assertEqual(len(self._patches()), 1)
+        self.assertEqual(self.h.store.get_proposal(proposed["proposal_id"])["status"], "ambiguous")
+        self.assertEqual(self.h.store.get_proposal(proposed["proposal_id"])["digest"], digest)
+        again = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval="unused")
+        self.assertEqual(again["gate"], "ambiguous_remote_write_no_retry")
+        self.assertEqual(len(self._patches()), 1)
+
+    def test_explicit_recurrence_conflict_after_patch_is_not_replayed(self) -> None:
+        original = self.h.transport.request
+
+        def reveal_monthly(method, path, body=None, query=None):
+            result = original(method, path, body, query)
+            if method == "PATCH":
+                self.h.transport.work_orders["50268730"]["repeat_type"] = "monthly"
+            return result
+
+        self.h.transport.request = reveal_monthly
+        proposed = self._propose()
+        done = self._execute(proposed)
+        self.assertEqual(done["gate"], GATE_RECURRING)
+        self.assertFalse(done["write_again"])
+        self.assertFalse(done["retry"])
+        self.assertFalse(done["recurrence_verified"])
+        self.assertEqual(len(self._patches()), 1)
+        self.assertEqual(self.h.store.get_proposal(proposed["proposal_id"])["status"], "ambiguous")
+        again = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval="unused")
+        self.assertEqual(again["gate"], "ambiguous_remote_write_no_retry")
+        self.assertEqual(len(self._patches()), 1)
+
+    def test_already_rejected_and_pre_verification_seals_do_not_write(self) -> None:
+        rejected = self._propose()
+        digest = rejected["digest"]
+        after = deepcopy(rejected["after"])
+        token = self.h.approve(rejected["proposal_id"])
+        self.h.store.set_status(rejected["proposal_id"], "rejected")
+        blocked = self.h.service.execute(rejected["proposal_id"], IDENTITY, operator_approval=token)
+        self.assertEqual(blocked["gate"], GATE_REPLAY)
+        self.assertEqual(blocked["proposal_status"], "rejected")
+        self.assertFalse(blocked["write_sent"])
+        stored = self.h.store.get_proposal(rejected["proposal_id"])
+        self.assertEqual(stored["status"], "rejected")
+        self.assertEqual(stored["digest"], digest)
+        self.assertEqual(stored["after"], after)
+        self.assertEqual(self._patches(), [])
+
+        self.h.store.release_open_guard("work_order:50268730", rejected["proposal_id"])
+        historical = self._propose()
+        row = self.h.store.get_proposal(historical["proposal_id"])
+        old_after = deepcopy(row["after"])
+        old_after["live_execution_available"] = False
+        old_digest = proposal_digest(
+            proposal_id=row["proposal_id"],
+            operation=row["operation"],
+            identity=row["identity"],
+            target=row["subject_key"],
+            before=row["before"],
+            after=old_after,
+            payload=row["payload"],
+            created_at=row["created_at"],
+            expires_at=row["expires_at"],
+        )
+        self.h.store._conn.execute(
+            "UPDATE proposals SET after_json = ?, digest = ? WHERE proposal_id = ?",
+            (json.dumps(old_after), old_digest, historical["proposal_id"]),
+        )
+        historical_token = self.h.approve(historical["proposal_id"])
+        predates = self.h.service.execute(historical["proposal_id"], IDENTITY, operator_approval=historical_token)
+        self.assertEqual(predates["gate"], GATE_REPLAY)
+        self.assertEqual(predates["reason"], "sealed_proposal_predates_verified_execution")
+        self.assertFalse(predates["write_sent"])
+        sealed = self.h.store.get_proposal(historical["proposal_id"])
+        self.assertEqual(sealed["status"], "rejected")
+        self.assertEqual(sealed["digest"], old_digest)
+        self.assertFalse(sealed["after"]["live_execution_available"])
+        self.assertEqual(self._patches(), [])
+        repeated = self.h.service.execute(historical["proposal_id"], IDENTITY, operator_approval=historical_token)
+        self.assertEqual(repeated["gate"], GATE_REPLAY)
+        self.assertEqual(self.h.store.get_proposal(historical["proposal_id"])["digest"], old_digest)
+        self.assertEqual(self._patches(), [])
 
     def test_existing_schedule_status_and_customer_paths_stay_unchanged(self) -> None:
         self.h.service._now = lambda: datetime(2026, 9, 25, 12, tzinfo=timezone.utc)
@@ -509,7 +719,10 @@ class WorkPoolScheduleTests(unittest.TestCase):
         self.assertEqual(conflict.exception.gate, "residential_name_conflict")
         self.assertFalse(conflict.exception.detail["write_sent"])
         gates = self.h.service.gates()["operations"]["schedule_work_pool_occurrence"]
-        self.assertFalse(gates["live_execution_available"])
-        self.assertIn(GATE_WORK_POOL_API, gates["execute_blocked_by"])
+        self.assertTrue(gates["live_execution_available"])
+        self.assertTrue(gates["execute"])
+        self.assertNotIn("work_pool_public_api_unverified", gates["execute_blocked_by"])
         self.assertFalse(gates["status_sent"])
-        self.assertFalse(gates["arrival_mode_inferred"])
+        self.assertFalse(gates["arrival_mode_known"])
+        self.assertFalse(gates["arrival_window_promised"])
+        self.assertEqual(gates["arrival_window"], "server_computed")
