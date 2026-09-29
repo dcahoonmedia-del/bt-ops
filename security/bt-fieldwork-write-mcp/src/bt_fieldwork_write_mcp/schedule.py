@@ -4,6 +4,9 @@ Docs: https://intercom.help/fieldwork/en/articles/3472212-settings-arrival-time-
 A fixed window follows the start time and does not depend on duration.
 Manual windows do not move with the start. Typed GET and profile do not
 return time_window_kind, so missing occurrence evidence stays unsupported.
+A browser scheduler drag that omits time_window_kind proves server-computed
+arrival only for that record and that browser endpoint. It is not public-API
+fixed, manual, or relative proof, and it does not refresh this evidence.
 """
 
 from __future__ import annotations

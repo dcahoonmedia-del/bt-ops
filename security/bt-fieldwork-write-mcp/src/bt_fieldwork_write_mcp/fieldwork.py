@@ -13,9 +13,13 @@ from typing import Any, Protocol
 from urllib.request import Request
 
 from .allowlist import (
+    ARRIVAL_FIELDS,
     GATE_AUTH_UNRESOLVED,
     GATE_CATALOG,
     GATE_LIVE_PATCH_UNTESTED,
+    GATE_RECURRING,
+    GATE_WORK_POOL_PRECONDITION,
+    WORK_POOL_PATCH_KEYS,
     is_lead_status,
 )
 from .config import API_BASE
@@ -563,6 +567,7 @@ class FakeTransport:
         # Live occurrence GETs omit repeat_type. Tests that need a successful
         # readback of other fields opt in. That opt-in is not the live shape.
         self.include_repeat_type_on_occurrence = False
+        self.omit_finished_at_on_work_order_get = False
         self.i18n_statuses: Any = {
             "scheduled": "Scheduled",
             "complete": "Complete",
@@ -730,6 +735,8 @@ class FakeTransport:
                     view["line_items"][0]["price"] = self.readback_line_price
                 if self.readback_taxable is not None:
                     view["line_items"][0]["taxable"] = self.readback_taxable
+            if self.omit_finished_at_on_work_order_get:
+                view.pop("finished_at", None)
             return 200, {"appointment_occurrence": view}
         if method == "PATCH" and _WORK_ORDER.match(path):
             appointment_id = path.split("/")[2]
@@ -755,6 +762,12 @@ class FakeTransport:
                 if not isinstance(occ.get("status"), str) or not str(occ.get("status")).strip():
                     return 422, {"error": "invalid_status"}
                 match["status"] = occ["status"]
+            if "specific" in occ:
+                if occ.get("specific") is not True and occ.get("specific") is not False:
+                    return 422, {"error": "invalid_specific"}
+                match["specific"] = occ["specific"]
+                if occ.get("specific") is True and "status" not in occ:
+                    match["status"] = "Scheduled"
             if "starts_at" in occ or "duration" in occ:
                 from .schedule import apply_fixed_window_double
 
@@ -764,6 +777,8 @@ class FakeTransport:
             if self.write_mode == "timeout_after_apply":
                 self.write_mode = "ok"
                 raise AmbiguousWriteError("timeout_after_apply")
+            if self.write_mode == "http_204":
+                return 204, None
             return 200, {"appointment_occurrence": match}
         if method == "GET" and _CONTACT_LIST.match(path):
             cid = path.split("/")[2]
@@ -1683,6 +1698,7 @@ class TypedFieldworkClient:
         return payload if isinstance(payload, dict) else {}
 
     def patch_work_order_fields(self, before: dict[str, Any], after: dict[str, Any], fields: Any) -> dict[str, Any]:
+        # specific stays off this allowlist. Work Pool scheduling uses work_pool_schedule_body.
         allowed = {"instructions", "private_notes", "starts_at", "duration", "service_route_ids"}
         if not fields or set(fields) - allowed:
             raise GateError("unknown_field")
@@ -1730,6 +1746,43 @@ class TypedFieldworkClient:
     def patch_work_order_notes(self, before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
         fields = [key for key in ("instructions", "private_notes") if after.get(key) != before.get(key)]
         return self.patch_work_order_fields(before, after, fields)
+
+    def patch_sealed_work_pool(self, prepared: dict[str, Any], before: dict[str, Any]) -> dict[str, Any]:
+        """Send the sealed Work Pool fields once. Stored JSON may reorder keys; the wire entry uses the verified order and adds nothing."""
+        if not isinstance(prepared, dict) or prepared.get("method") != "PATCH":
+            raise GateError("unknown_field")
+        appointment = _required_id(before["service_appointment_id"])
+        occurrence = _required_id(before["work_order_id"])
+        if prepared.get("path") != f"/work_orders/{appointment}":
+            raise GateError("identity_mismatch")
+        body = prepared.get("body")
+        service = body.get("service_appointment") if isinstance(body, dict) else None
+        entries = service.get("appointment_occurrences_attributes") if isinstance(service, dict) else None
+        if not isinstance(body, dict) or set(body) != {"service_appointment"}:
+            raise GateError("unknown_field")
+        if not isinstance(service, dict) or set(service) != {"appointment_occurrences_attributes"}:
+            raise GateError("unknown_field")
+        if not isinstance(entries, list) or len(entries) != 1 or not isinstance(entries[0], dict):
+            raise GateError("identity_mismatch")
+        entry = entries[0]
+        if set(entry) != set(WORK_POOL_PATCH_KEYS):
+            raise GateError("unknown_field")
+        # Persistence sorts JSON keys. The wire body is those sealed values in the verified order.
+        ordered = {key: entry[key] for key in WORK_POOL_PATCH_KEYS}
+        if ordered.get("specific") is not True or str(ordered.get("id")) != occurrence:
+            raise GateError("identity_mismatch")
+        path = str(prepared["path"])
+        _assert_typed_path("PATCH", path)
+        wire = {"service_appointment": {"appointment_occurrences_attributes": [ordered]}}
+        status, payload = self.transport.request("PATCH", path, wire)
+        if status >= 500:
+            raise AmbiguousWriteError(f"remote_{status}")
+        if status == 204:
+            return {}
+        if status != 200:
+            raise GateError("work_order_patch_rejected", status=status)
+        return payload if isinstance(payload, dict) else {}
+
 
     def list_contacts(self, customer_id: str) -> dict[str, Any]:
         customer_id = _required_id(customer_id)
@@ -1857,3 +1910,149 @@ class TypedFieldworkClient:
         if not isinstance(payload, dict):
             return {}
         return payload
+
+def work_pool_schedule_body(
+    service_appointment_id: Any,
+    work_order_id: Any,
+    starts_at: str,
+    duration: int,
+    service_route_ids: list[int],
+    *,
+    specific: bool,
+) -> dict[str, Any]:
+    """Prepared public PATCH for one Work Pool occurrence. This function does not send it.
+
+    specific must be the explicit transition to a timed occurrence. The body is not
+    the browser scheduler form and does not carry status or arrival-mode fields.
+    """
+    if specific is not True:
+        raise GateError(GATE_WORK_POOL_PRECONDITION, reason="specific_true_required")
+    if not isinstance(starts_at, str) or "T" not in starts_at:
+        raise GateError("unknown_field", fields=["starts_at"])
+    if isinstance(duration, bool) or not isinstance(duration, int) or duration <= 0:
+        raise GateError("unknown_field", fields=["duration"])
+    if (
+        not isinstance(service_route_ids, list)
+        or not service_route_ids
+        or any(isinstance(item, bool) or not isinstance(item, int) or item <= 0 for item in service_route_ids)
+    ):
+        raise GateError("unknown_field", fields=["service_route_ids"])
+    appointment = _required_id(service_appointment_id)
+    occurrence = _required_id(work_order_id)
+    if appointment == occurrence:
+        raise GateError("identity_mismatch")
+    entry = {
+        "id": occurrence,
+        "starts_at": starts_at,
+        "duration": duration,
+        "service_route_ids": list(service_route_ids),
+        "specific": True,
+    }
+    if tuple(entry) != WORK_POOL_PATCH_KEYS:
+        raise GateError("unknown_field")
+    return {
+        "method": "PATCH",
+        "path": f"/work_orders/{appointment}",
+        "body": {"service_appointment": {"appointment_occurrences_attributes": [entry]}},
+    }
+
+
+def work_pool_readback_mismatches(before: dict[str, Any], approved: dict[str, Any], live: dict[str, Any]) -> list[dict[str, Any]]:
+    """Compare one GET with the sealed Work Pool transition. Does not send a write."""
+    from .schedule import same_id, same_instant, same_routes
+
+    mismatches: list[dict[str, Any]] = []
+
+    def check(field: str, ok: bool, wanted: Any, seen: Any) -> None:
+        if not ok:
+            mismatches.append({"field": field, "expected": wanted, "actual": seen})
+
+    live_occurrence = live.get("work_order_id", live.get("id"))
+    check("work_order_id", same_id(before.get("work_order_id"), live_occurrence), before.get("work_order_id"), live_occurrence)
+    check(
+        "service_appointment_id",
+        same_id(before.get("service_appointment_id"), live.get("service_appointment_id")),
+        before.get("service_appointment_id"),
+        live.get("service_appointment_id"),
+    )
+    check("specific", live.get("specific") is True, True, live.get("specific"))
+    check("starts_at", same_instant(approved.get("starts_at"), live.get("starts_at")), approved.get("starts_at"), live.get("starts_at"))
+    check("duration", approved.get("duration") == live.get("duration"), approved.get("duration"), live.get("duration"))
+    check(
+        "service_route_ids",
+        same_routes(approved.get("service_route_ids"), live.get("service_route_ids")),
+        approved.get("service_route_ids"),
+        live.get("service_route_ids"),
+    )
+    check("customer_id", same_id(before.get("customer_id"), live.get("customer_id")), before.get("customer_id"), live.get("customer_id"))
+    live_location = _work_pool_location_id(live)
+    check("location_id", same_id(before.get("location_id"), live_location), before.get("location_id"), live_location)
+    for field in ("instructions", "private_notes", "production_value", "confirmed", "line_items"):
+        check(field, before.get(field) == live.get(field), before.get(field), live.get(field))
+    expected_status = approved.get("status_after")
+    if isinstance(expected_status, str) and expected_status:
+        check("status", live.get("status") == expected_status, expected_status, live.get("status"))
+    for field in ("repeat_type", "recurring", "series_id", "recurrence"):
+        check(field, before.get(field) == live.get(field), before.get(field), live.get(field))
+    before_count = _work_pool_series_count(before)
+    live_count = _work_pool_series_count(live)
+    check("appointment_occurrence_count", before_count == live_count, before_count, live_count)
+    return mismatches
+
+
+def _work_pool_location_id(record: dict[str, Any]) -> Any:
+    """A raw occurrence GET carries service_location_id. Snapshots store location_id."""
+    if record.get("location_id") not in (None, ""):
+        return record.get("location_id")
+    return record.get("service_location_id")
+
+
+def _work_pool_series_count(record: dict[str, Any]) -> int | None:
+    series = record.get("appointment_occurrences")
+    if isinstance(series, list):
+        return len(series)
+    count = record.get("appointment_occurrence_count")
+    return count if isinstance(count, int) and not isinstance(count, bool) else None
+
+
+def work_pool_readback_decision(before: dict[str, Any], approved: dict[str, Any], live: dict[str, Any] | None) -> dict[str, Any]:
+    """A missing or mismatched GET is unresolved. It is not a reason to PATCH again."""
+    if not isinstance(live, dict):
+        return {"ok": False, "gate": "readback_unresolved", "retry": False, "write_again": False, "arrival_mode_proof": False}
+    mismatches = work_pool_readback_mismatches(before, approved, live)
+    recurrence = before.get("recurrence") if isinstance(before.get("recurrence"), dict) else {}
+    recurrence_changed = any(
+        item["field"] in {"repeat_type", "recurring", "series_id", "appointment_occurrence_count", "recurrence"}
+        for item in mismatches
+    )
+    verified = recurrence.get("verified") is True and not recurrence_changed
+    if mismatches:
+        return {
+            "ok": False,
+            "gate": GATE_RECURRING if recurrence_changed else "readback_unresolved",
+            "retry": False,
+            "write_again": False,
+            "mismatches": mismatches,
+            "arrival_mode_proof": False,
+            "recurrence_verified": verified,
+            "repeat_type_verified": verified,
+            "recurrence_reason": recurrence.get("reason"),
+        }
+    return {
+        "ok": True,
+        "retry": False,
+        "write_again": False,
+        "status_observed": live.get("status"),
+        "status_coupling": "server_computed_not_sent" if approved.get("status_after") else "unverified",
+        "status_sent": False,
+        "arrival_mode_proof": False,
+        "arrival_window": "server_computed",
+        "arrival_mode": "unknown",
+        "arrival_mode_known": False,
+        "arrival_window_promised": False,
+        "arrival_observed": {key: live.get(key) for key in ARRIVAL_FIELDS},
+        "recurrence_verified": verified,
+        "repeat_type_verified": verified,
+        "recurrence_reason": recurrence.get("reason"),
+    }
+

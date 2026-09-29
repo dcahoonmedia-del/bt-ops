@@ -30,6 +30,7 @@ from .allowlist import (
     NOTE_TEXT_FIELDS,
     CUSTOMER_EMAIL_FIELDS,
     GATE_STATUS_FAILED,
+    GATE_WORK_POOL_PRECONDITION,
     OP_ADD_CUSTOMER_CONTACT,
     OP_CREATE_CUSTOMER,
     OP_CREATE_WORK_ORDER,
@@ -38,7 +39,11 @@ from .allowlist import (
     OP_UPDATE_WORK_ORDER_STATUS,
     OP_WORK_ORDER_NOTES,
     OP_WORK_ORDER_SCHEDULE,
+    OP_WORK_POOL_SCHEDULE,
     SCHEDULE_WRITE_FIELDS,
+    WORK_POOL_PUBLIC_API_VERIFIED,
+    WORK_POOL_SCHEDULE_FIELDS,
+    WORK_POOL_STATUS_AFTER,
     CUSTOMER_CONTACT_FIELDS,
     WORK_ORDER_NOTE_FIELDS,
     WORK_ORDER_SCHEDULE_FIELDS,
@@ -52,7 +57,24 @@ from .approval import mint_operator_token, token_fingerprint, verify_operator_to
 from .config import Settings
 from .digest import canonical, proposal_digest, sha256_hex
 from .errors import AmbiguousWriteError, GateError
-from .fieldwork import TypedFieldworkClient, location_snapshot, resolve_work_order_status, snapshot_hash
+from .fieldwork import (
+    TypedFieldworkClient,
+    location_snapshot,
+    recurrence_provenance,
+    resolve_work_order_status,
+    snapshot_hash,
+    work_pool_readback_decision,
+    work_pool_schedule_body,
+)
+
+
+def _scheduled_end(starts_at: Any, duration: Any) -> str | None:
+    from .schedule import NY, instant
+
+    start = instant(starts_at)
+    if start is None or isinstance(duration, bool) or not isinstance(duration, int):
+        return None
+    return (start + timedelta(minutes=duration)).astimezone(NY).replace(microsecond=0).isoformat()
 
 
 def _offset_iso(value: Any) -> bool:
@@ -228,6 +250,10 @@ class WriteService:
                 if not self.settings.mapping_verified:
                     return self._fail(GATE_MAPPING_UNVERIFIED, operation=operation)
                 return self._propose_work_order_schedule(payload, identity)
+            if operation == OP_WORK_POOL_SCHEDULE:
+                if not self.settings.mapping_verified:
+                    return self._fail(GATE_MAPPING_UNVERIFIED, operation=operation)
+                return self._propose_work_pool_schedule(payload, identity)
             if operation == OP_CREATE_WORK_ORDER:
                 return self._propose_create(payload, identity)
             if operation == OP_CREATE_CUSTOMER:
@@ -367,6 +393,7 @@ class WriteService:
         result["schedule_model"] = SCHEDULE_MODEL
         result["arrival_coupling"] = "fixed_window_selected_by_start"
         result["explicit_arrival_window_edit"] = False
+        result["specific_sent"] = False
         result["fixed_window_id"] = after["fixed_window_id"]
         result["window_evidence_source"] = after["window_evidence_source"]
         result["occurrence_evidence_field"] = after["occurrence_evidence_field"]
@@ -379,6 +406,138 @@ class WriteService:
             "arrival_time_window_end": after["arrival_time_window_end"],
             "fixed_window_id": after["fixed_window_id"],
         }
+        return result
+
+    def _work_pool_snapshot(self, row: dict[str, Any]) -> dict[str, Any]:
+        identity = self._require_active_location(row)
+        lines = row.get("line_items")
+        projected = None
+        if isinstance(lines, list):
+            projected = [
+                {key: item.get(key) for key in ("name", "quantity", "price", "payable_id", "payable_type")}
+                for item in lines
+                if isinstance(item, dict)
+            ]
+        series = row.get("appointment_occurrences")
+        provenance = recurrence_provenance(row)
+        snap = {
+            "work_order_id": str(row.get("id")),
+            "service_appointment_id": str(row.get("service_appointment_id")),
+            "customer_id": str(identity["customer_id"]),
+            "location_id": str(identity["location_id"]),
+            "instructions": row.get("instructions"),
+            "private_notes": row.get("private_notes"),
+            "production_value": row.get("production_value"),
+            "confirmed": row.get("confirmed"),
+            "specific": row.get("specific"),
+            "status": row.get("status"),
+            "starts_at": _normalized_start(row.get("starts_at")) if row.get("starts_at") else row.get("starts_at"),
+            "duration": row.get("duration"),
+            "service_route_ids": [item for item in (row.get("service_route_ids") or [])],
+            "line_items": projected,
+            "repeat_type_present": "repeat_type" in row and str(row.get("repeat_type") or "").strip() != "",
+            "repeat_type": row.get("repeat_type") if "repeat_type" in row else None,
+            "recurring": row.get("recurring") if "recurring" in row else None,
+            "series_id": row.get("series_id") if "series_id" in row else None,
+            "appointment_occurrence_count": len(series) if isinstance(series, list) else None,
+            "recurrence": {
+                "verified": provenance["verified"] is True,
+                "repeat_type": provenance["repeat_type"],
+                "repeat_period": provenance["repeat_period"],
+                "reason": provenance["reason"],
+                "authoritative_source": provenance["authoritative_source"],
+                "recurring_present": "recurring" in row,
+                "recurring": row.get("recurring") if "recurring" in row else None,
+                "series_id_present": "series_id" in row,
+                "series_id": row.get("series_id") if "series_id" in row else None,
+                "appointment_occurrences_present": isinstance(series, list),
+                "appointment_occurrence_count": len(series) if isinstance(series, list) else None,
+            },
+            "time_window_kind_present": "time_window_kind" in row,
+        }
+        for key in ARRIVAL_FIELDS:
+            snap[key] = row.get(key)
+        return snap
+
+    def _propose_work_pool_schedule(self, payload: dict[str, Any], identity: dict[str, str]) -> dict[str, Any]:
+        assert_only(payload, WORK_POOL_SCHEDULE_FIELDS, label="work_pool_schedule")
+        starts_at = payload.get("starts_at")
+        duration = payload.get("duration")
+        routes = payload.get("service_route_ids")
+        if not _offset_iso(starts_at) or isinstance(duration, bool) or not isinstance(duration, int) or duration <= 0:
+            return self._fail("unknown_field", fields=["starts_at", "duration", "service_route_ids"])
+        if not isinstance(routes, list) or not routes or any(isinstance(item, bool) or not isinstance(item, int) or item <= 0 for item in routes):
+            return self._fail("unknown_field", fields=["service_route_ids"])
+        work_order_id = str(payload.get("work_order_id") or "")
+        appointment_id = str(payload.get("service_appointment_id") or "")
+        if not work_order_id.isdigit() or not appointment_id.isdigit() or work_order_id == appointment_id:
+            return self._fail(GATE_IDENTITY)
+        row = self.client.get_work_order(work_order_id)
+        if str(row.get("id")) != work_order_id or str(row.get("service_appointment_id")) != appointment_id:
+            return self._fail(GATE_IDENTITY)
+        self._reject_series(row)
+        if row.get("specific") is not False:
+            return self._fail(GATE_WORK_POOL_PRECONDITION, reason="specific_not_false")
+        if row.get("status") != "Work Pool":
+            return self._fail(GATE_WORK_POOL_PRECONDITION, reason="status_not_work_pool")
+        if row.get("confirmed") is not False:
+            return self._fail(GATE_WORK_POOL_PRECONDITION, reason="confirmed_not_false")
+        before = self._work_pool_snapshot(row)
+        normalized = _normalized_start(starts_at)
+        prepared = work_pool_schedule_body(
+            appointment_id,
+            work_order_id,
+            normalized,
+            duration,
+            list(routes),
+            specific=True,
+        )
+        after = {
+            "intent": "work_pool_to_scheduled_time",
+            "work_order_id": work_order_id,
+            "service_appointment_id": appointment_id,
+            "specific_before": False,
+            "specific": True,
+            "status_before": "Work Pool",
+            "status_sent": False,
+            "browser_observed_status_after": "Scheduled",
+            "public_api_status_equivalence": "server_computed_not_sent",
+            "arrival_mode": "unknown",
+            "arrival_window": "server_computed",
+            "arrival_mode_known": False,
+            "arrival_window_promised": False,
+            "arrival_window_sent": False,
+            "live_execution_available": True,
+            "status_after": WORK_POOL_STATUS_AFTER,
+            "status_coupling": "server_computed_not_sent",
+            "finished_at_on_occurrence_get": "not_required",
+            "public_patch_scope": "one_account_work_pool_specific_transition",
+            "starts_at": normalized,
+            "duration": duration,
+            "service_route_ids": list(routes),
+            "confirmed_sent": False,
+            "notes_sent": False,
+            "price_sent": False,
+            "production_sent": False,
+            "recurrence_sent": False,
+            "series_update_sent": False,
+            "communications_sent": False,
+            "patch": prepared,
+        }
+        result = self._persist_proposal(OP_WORK_POOL_SCHEDULE, payload, identity, f"work_order:{work_order_id}", before, after)
+        if result.get("ok"):
+            result["intent"] = after["intent"]
+            result["status_sent"] = False
+            result["arrival_mode"] = "unknown"
+            result["arrival_window"] = "server_computed"
+            result["arrival_mode_known"] = False
+            result["arrival_window_promised"] = False
+            result["live_execution_available"] = True
+            result["status_after"] = WORK_POOL_STATUS_AFTER
+            result["status_coupling"] = "server_computed_not_sent"
+            result["public_api_status_equivalence"] = "server_computed_not_sent"
+            result["public_api_verified"] = WORK_POOL_PUBLIC_API_VERIFIED
+            result["repeat_type_verified"] = before["recurrence"]["verified"] is True
         return result
 
     def _propose_create(self, payload: dict[str, Any], identity: dict[str, str]) -> dict[str, Any]:
@@ -1080,12 +1239,22 @@ class WriteService:
             return self._fail("ambiguous_remote_write_no_retry", proposal_id=proposal_id, retry=False, **extra)
         if proposal["status"] == "executed":
             return self._fail(GATE_REPLAY, proposal_id=proposal_id)
+        if proposal["operation"] == OP_WORK_POOL_SCHEDULE and proposal["status"] == "rejected":
+            return self._fail(
+                GATE_REPLAY,
+                proposal_id=proposal_id,
+                retry=False,
+                write_sent=False,
+                proposal_status="rejected",
+            )
         if self.store.has_ambiguous(proposal["subject_key"]):
             return self._fail("ambiguous_remote_write_no_retry", proposal_id=proposal_id)
-        if proposal["operation"] in {OP_WORK_ORDER_NOTES, OP_WORK_ORDER_SCHEDULE, OP_UPDATE_WORK_ORDER_STATUS} and not self.settings.mapping_verified:
+        if proposal["operation"] in {OP_WORK_ORDER_NOTES, OP_WORK_ORDER_SCHEDULE, OP_UPDATE_WORK_ORDER_STATUS, OP_WORK_POOL_SCHEDULE} and not self.settings.mapping_verified:
             return self._fail(GATE_MAPPING_UNVERIFIED, proposal_id=proposal_id)
         if proposal["operation"] in {OP_WORK_ORDER_NOTES, OP_WORK_ORDER_SCHEDULE}:
             stale = self._work_order_stale(proposal)
+        elif proposal["operation"] == OP_WORK_POOL_SCHEDULE:
+            stale = self._work_pool_stale(proposal)
         elif proposal["operation"] == OP_UPDATE_WORK_ORDER_STATUS:
             stale = self._work_order_status_stale(proposal)
         elif proposal["operation"] == OP_LOCATION_NOTES:
@@ -1111,6 +1280,8 @@ class WriteService:
             return self._execute_work_order(proposal, clock, [key for key in NOTE_TEXT_FIELDS if key in proposal["payload"]])
         if proposal["operation"] == OP_WORK_ORDER_SCHEDULE:
             return self._execute_work_order(proposal, clock, list(SCHEDULE_WRITE_FIELDS))
+        if proposal["operation"] == OP_WORK_POOL_SCHEDULE:
+            return self._execute_work_pool(proposal, clock)
         if proposal["operation"] == OP_UPDATE_CUSTOMER_PRIMARY_EMAIL:
             return self._execute_customer_email(proposal, clock)
         if proposal["operation"] == OP_UPDATE_WORK_ORDER_STATUS:
@@ -1294,6 +1465,112 @@ class WriteService:
             "gates": self.gates(),
         }
         if ambiguous:
+            body["ambiguity_reconciled"] = True
+            body["retry"] = False
+        return body
+
+    def _work_pool_stale(self, proposal: dict[str, Any]) -> dict[str, Any] | None:
+        before = proposal["before"]
+        try:
+            row = self.client.get_work_order(str(before["work_order_id"]))
+            if str(row.get("id")) != str(before["work_order_id"]) or str(row.get("service_appointment_id")) != str(before["service_appointment_id"]):
+                return self._fail(GATE_IDENTITY, proposal_id=proposal["proposal_id"], write_sent=False)
+            if str(row.get("customer_id")) != str(before["customer_id"]) or str(row.get("service_location_id") or row.get("location_id")) != str(before["location_id"]):
+                return self._fail(GATE_IDENTITY, proposal_id=proposal["proposal_id"], write_sent=False)
+            self._reject_series(row)
+            current = self._work_pool_snapshot(row)
+        except GateError as exc:
+            return self._fail(exc.gate, proposal_id=proposal["proposal_id"], write_sent=False, **exc.detail)
+        if snapshot_hash(current) != snapshot_hash(before):
+            self.store.release_open_guard(proposal["subject_key"], proposal["proposal_id"])
+            self.store.set_status(proposal["proposal_id"], "stale")
+            changed = [key for key in before if current.get(key) != before.get(key)]
+            return self._fail(GATE_STALE, proposal_id=proposal["proposal_id"], write_sent=False, changed_fields=changed)
+        return None
+
+    def _execute_work_pool(self, proposal: dict[str, Any], clock: datetime) -> dict[str, Any]:
+        """One sealed PATCH, then one normalized GET. A sealed preview from before verification does not send."""
+        if proposal["after"].get("live_execution_available") is not True:
+            stored_digest = proposal["digest"]
+            stored_after = proposal["after"]
+            self.store.release_open_guard(proposal["subject_key"], proposal["proposal_id"])
+            self.store.set_status(proposal["proposal_id"], "rejected")
+            current = self.store.get_proposal(proposal["proposal_id"])
+            if current["digest"] != stored_digest or current["after"] != stored_after:
+                return self._fail("immutable_proposal_changed", proposal_id=proposal["proposal_id"], write_sent=False)
+            return self._fail(
+                GATE_REPLAY,
+                proposal_id=proposal["proposal_id"],
+                retry=False,
+                write_sent=False,
+                proposal_status="rejected",
+                reason="sealed_proposal_predates_verified_execution",
+            )
+        try:
+            attempt_id = self.store.begin_attempt(proposal["proposal_id"], proposal["subject_key"], _iso(clock))
+        except GateError as exc:
+            return self._fail(exc.gate, proposal_id=proposal["proposal_id"], write_sent=False, **exc.detail)
+        stale = self._work_pool_stale(proposal)
+        if stale is not None:
+            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "failed_no_write")
+            return stale
+        ambiguous_response = False
+        try:
+            self.client.patch_sealed_work_pool(proposal["after"]["patch"], proposal["before"])
+        except AmbiguousWriteError:
+            ambiguous_response = True
+        except GateError as exc:
+            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "failed_no_write")
+            return self._fail(exc.gate, proposal_id=proposal["proposal_id"], retry=False, write_sent=False, **exc.detail)
+        except Exception:
+            ambiguous_response = True
+        return self._finish_work_pool_readback(proposal, attempt_id, ambiguous_response=ambiguous_response)
+
+    def _finish_work_pool_readback(self, proposal: dict[str, Any], attempt_id: str, *, ambiguous_response: bool) -> dict[str, Any]:
+        try:
+            row = self.client.get_work_order(str(proposal["before"]["work_order_id"]))
+            live = self._work_pool_snapshot(row)
+        except Exception:
+            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
+            return self._fail("readback_unresolved", proposal_id=proposal["proposal_id"], retry=False, write_again=False, readback=None)
+        decision = work_pool_readback_decision(proposal["before"], proposal["after"], live)
+        if not decision.get("ok"):
+            self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "ambiguous")
+            return self._fail(
+                decision.get("gate") or "readback_unresolved",
+                proposal_id=proposal["proposal_id"],
+                retry=False,
+                write_again=False,
+                mismatches=decision.get("mismatches"),
+                recurrence_verified=decision.get("recurrence_verified"),
+                recurrence_reason=decision.get("recurrence_reason"),
+                arrival_mode="unknown",
+                arrival_window_promised=False,
+            )
+        self.store.finish_attempt(attempt_id, proposal["proposal_id"], proposal["subject_key"], "success")
+        finished_at = row.get("finished_at")
+        body = {
+            "ok": True,
+            "proposal_id": proposal["proposal_id"],
+            "operation": OP_WORK_POOL_SCHEDULE,
+            "readback": live,
+            "status_observed": live.get("status"),
+            "status_sent": False,
+            "status_coupling": "server_computed_not_sent",
+            "arrival_window": "server_computed",
+            "arrival_mode": "unknown",
+            "arrival_mode_known": False,
+            "arrival_window_promised": False,
+            "arrival_observed": {key: live.get(key) for key in ARRIVAL_FIELDS},
+            "finished_at": finished_at,
+            "finished_at_on_occurrence_get": "present" if finished_at else "omitted",
+            "scheduled_end": _scheduled_end(proposal["after"].get("starts_at"), proposal["after"].get("duration")),
+            "recurrence_verified": decision.get("recurrence_verified"),
+            "repeat_type_verified": decision.get("repeat_type_verified"),
+            "recurrence_reason": decision.get("recurrence_reason"),
+            "gates": self.gates(),
+        }
+        if ambiguous_response:
             body["ambiguity_reconciled"] = True
             body["retry"] = False
         return body
