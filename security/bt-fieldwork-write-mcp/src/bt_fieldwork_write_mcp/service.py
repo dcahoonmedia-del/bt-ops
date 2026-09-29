@@ -58,7 +58,7 @@ from .approval import mint_operator_token, token_fingerprint, verify_operator_to
 from .config import Settings
 from .digest import canonical, proposal_digest, sha256_hex
 from .errors import AmbiguousWriteError, GateError
-from .fieldwork import TypedFieldworkClient, location_snapshot, resolve_work_order_status, snapshot_hash, work_pool_schedule_body
+from .fieldwork import TypedFieldworkClient, location_snapshot, recurrence_provenance, resolve_work_order_status, snapshot_hash, work_pool_schedule_body
 
 
 def _offset_iso(value: Any) -> bool:
@@ -402,6 +402,8 @@ class WriteService:
                 for item in lines
                 if isinstance(item, dict)
             ]
+        series = row.get("appointment_occurrences")
+        provenance = recurrence_provenance(row)
         snap = {
             "work_order_id": str(row.get("id")),
             "service_appointment_id": str(row.get("service_appointment_id")),
@@ -417,8 +419,24 @@ class WriteService:
             "duration": row.get("duration"),
             "service_route_ids": [item for item in (row.get("service_route_ids") or [])],
             "line_items": projected,
-            "repeat_type_present": "repeat_type" in row,
+            "repeat_type_present": "repeat_type" in row and str(row.get("repeat_type") or "").strip() != "",
             "repeat_type": row.get("repeat_type") if "repeat_type" in row else None,
+            "recurring": row.get("recurring") if "recurring" in row else None,
+            "series_id": row.get("series_id") if "series_id" in row else None,
+            "appointment_occurrence_count": len(series) if isinstance(series, list) else None,
+            "recurrence": {
+                "verified": provenance["verified"] is True,
+                "repeat_type": provenance["repeat_type"],
+                "repeat_period": provenance["repeat_period"],
+                "reason": provenance["reason"],
+                "authoritative_source": provenance["authoritative_source"],
+                "recurring_present": "recurring" in row,
+                "recurring": row.get("recurring") if "recurring" in row else None,
+                "series_id_present": "series_id" in row,
+                "series_id": row.get("series_id") if "series_id" in row else None,
+                "appointment_occurrences_present": isinstance(series, list),
+                "appointment_occurrence_count": len(series) if isinstance(series, list) else None,
+            },
             "time_window_kind_present": "time_window_kind" in row,
         }
         for key in ARRIVAL_FIELDS:
@@ -490,7 +508,7 @@ class WriteService:
             result["live_execution_available"] = False
             result["public_api_status_equivalence"] = "unverified"
             result["public_api_verified"] = WORK_POOL_PUBLIC_API_VERIFIED
-            result["repeat_type_verified"] = before["repeat_type_present"]
+            result["repeat_type_verified"] = before["recurrence"]["verified"] is True
         return result
 
     def _propose_create(self, payload: dict[str, Any], identity: dict[str, str]) -> dict[str, Any]:
@@ -1192,6 +1210,17 @@ class WriteService:
             return self._fail("ambiguous_remote_write_no_retry", proposal_id=proposal_id, retry=False, **extra)
         if proposal["status"] == "executed":
             return self._fail(GATE_REPLAY, proposal_id=proposal_id)
+        if proposal["operation"] == OP_WORK_POOL_SCHEDULE and proposal["status"] == "rejected":
+            return self._fail(
+                GATE_WORK_POOL_API,
+                proposal_id=proposal_id,
+                retry=False,
+                write_sent=False,
+                blocked=True,
+                proposal_status="rejected",
+                live_execution_available=False,
+                remaining_check=WORK_POOL_REMAINING_CHECK,
+            )
         if self.store.has_ambiguous(proposal["subject_key"]):
             return self._fail("ambiguous_remote_write_no_retry", proposal_id=proposal_id)
         if proposal["operation"] in {OP_WORK_ORDER_NOTES, OP_WORK_ORDER_SCHEDULE, OP_UPDATE_WORK_ORDER_STATUS, OP_WORK_POOL_SCHEDULE} and not self.settings.mapping_verified:
@@ -1434,17 +1463,21 @@ class WriteService:
         return None
 
     def _refuse_work_pool_live_execution(self, proposal: dict[str, Any]) -> dict[str, Any]:
-        """Approval is already consumed. The public PATCH contract is still unverified, so nothing is sent."""
+        """The public PATCH is unverified. Close this no-write proposal and release its subject guard."""
+        self.store.release_open_guard(proposal["subject_key"], proposal["proposal_id"])
+        self.store.set_status(proposal["proposal_id"], "rejected")
+        detail = {
+            "proposal_id": proposal["proposal_id"],
+            "retry": False,
+            "write_sent": False,
+            "blocked": True,
+            "proposal_status": "rejected",
+            "live_execution_available": False,
+            "remaining_check": WORK_POOL_REMAINING_CHECK,
+        }
         if WORK_POOL_PUBLIC_API_VERIFIED or proposal["after"].get("live_execution_available") is True:
-            return self._fail(GATE_WORK_POOL_API, proposal_id=proposal["proposal_id"], retry=False, write_sent=False, reason="verified_flag_without_send_path")
-        return self._fail(
-            GATE_WORK_POOL_API,
-            proposal_id=proposal["proposal_id"],
-            retry=False,
-            write_sent=False,
-            live_execution_available=False,
-            remaining_check=WORK_POOL_REMAINING_CHECK,
-        )
+            detail["reason"] = "verified_flag_without_send_path"
+        return self._fail(GATE_WORK_POOL_API, **detail)
 
     def _work_order_stale(self, proposal: dict[str, Any]) -> dict[str, Any] | None:
         before = proposal["before"]

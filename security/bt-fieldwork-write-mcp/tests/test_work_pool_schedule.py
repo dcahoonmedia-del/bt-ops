@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import unittest
+from copy import deepcopy
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from bt_fieldwork_write_mcp.allowlist import (
     GATE_IDENTITY,
     GATE_OPERATOR,
-    GATE_REPLAY,
+    GATE_RECURRING,
     GATE_STALE,
     GATE_WORK_POOL_API,
     GATE_WORK_POOL_PRECONDITION,
@@ -272,8 +274,9 @@ class WorkPoolScheduleTests(unittest.TestCase):
         self.assertEqual(blocked["remaining_check"], WORK_POOL_REMAINING_CHECK)
         self.assertEqual(self._patches(), [])
         again = self.h.service.execute(proposed["proposal_id"], IDENTITY, operator_approval=token)
-        self.assertEqual(again["gate"], GATE_REPLAY)
+        self.assertEqual(again["gate"], GATE_WORK_POOL_API)
         self.assertEqual(self._patches(), [])
+        self.assertEqual(self.h.store.get_proposal(proposed["proposal_id"])["status"], "rejected")
         missing = work_pool_readback_decision(proposed["before"], proposed["after"], None)
         self.assertFalse(missing["write_again"])
         self.assertFalse(missing["retry"])
@@ -288,6 +291,148 @@ class WorkPoolScheduleTests(unittest.TestCase):
         self.assertEqual(accepted["status_coupling"], "unverified")
         self.assertFalse(accepted["arrival_mode_proof"])
         self.assertFalse(accepted["write_again"])
+        self.assertFalse(accepted["recurrence_verified"])
+        self.assertFalse(accepted["repeat_type_verified"])
+        self.assertEqual(accepted["recurrence_reason"], "occurrence_get_omits_repeat_type")
+
+    def test_recurrence_evidence_is_preserved_and_explicit_changes_fail(self) -> None:
+        proposed = self._propose()
+        self.assertTrue(proposed["ok"], proposed)
+        evidence = proposed["before"]["recurrence"]
+        self.assertFalse(evidence["verified"])
+        self.assertIsNone(evidence["repeat_type"])
+        self.assertEqual(evidence["reason"], "occurrence_get_omits_repeat_type")
+        self.assertEqual(evidence["authoritative_source"], "not_in_documented_get")
+        self.assertFalse(proposed["repeat_type_verified"])
+        self.assertIsNone(proposed["before"]["recurring"])
+        self.assertIsNone(proposed["before"]["series_id"])
+        self.assertIsNone(proposed["before"]["appointment_occurrence_count"])
+        observed = dict(proposed["before"])
+        observed["specific"] = True
+        observed["starts_at"] = proposed["after"]["starts_at"]
+        missing = work_pool_readback_decision(proposed["before"], proposed["after"], observed)
+        self.assertTrue(missing["ok"], missing)
+        self.assertFalse(missing["recurrence_verified"])
+        self.assertFalse(missing["repeat_type_verified"])
+        self.assertEqual(missing["recurrence_reason"], "occurrence_get_omits_repeat_type")
+
+        monthly = dict(observed)
+        monthly["repeat_type"] = "monthly"
+        changed = work_pool_readback_decision(proposed["before"], proposed["after"], monthly)
+        self.assertFalse(changed["ok"])
+        self.assertEqual(changed["gate"], GATE_RECURRING)
+        self.assertFalse(changed["write_again"])
+        self.assertFalse(changed["retry"])
+        self.assertFalse(changed["recurrence_verified"])
+        self.assertIn("repeat_type", {item["field"] for item in changed["mismatches"]})
+
+        recurring = dict(observed)
+        recurring["recurring"] = True
+        recurring_decision = work_pool_readback_decision(proposed["before"], proposed["after"], recurring)
+        self.assertEqual(recurring_decision["gate"], GATE_RECURRING)
+        self.assertFalse(recurring_decision["write_again"])
+
+        series = dict(observed)
+        series["series_id"] = 44
+        series["appointment_occurrences"] = [{"id": 1}, {"id": 2}]
+        series_decision = work_pool_readback_decision(proposed["before"], proposed["after"], series)
+        self.assertEqual(series_decision["gate"], GATE_RECURRING)
+        self.assertFalse(series_decision["write_again"])
+        self.assertEqual(self._patches(), [])
+
+        self.h.store.release_open_guard("work_order:50268730", proposed["proposal_id"])
+        self.h.store.set_status(proposed["proposal_id"], "expired")
+        self.h.transport.work_orders["50268732"] = _pool(
+            id=50268732,
+            service_appointment_id=8961996,
+            repeat_type="none",
+            recurring=False,
+            series_id=None,
+            appointment_occurrences=[{"id": 50268732}],
+        )
+        known = self.h.service.propose(
+            OP_WORK_POOL_SCHEDULE,
+            {"work_order_id": 50268732, "service_appointment_id": 8961996, "starts_at": EASTERN, "duration": 60, "service_route_ids": [2557]},
+            IDENTITY,
+        )
+        self.assertTrue(known["ok"], known)
+        self.assertTrue(known["before"]["recurrence"]["verified"])
+        self.assertEqual(known["before"]["repeat_type"], "none")
+        self.assertEqual(known["before"]["recurring"], False)
+        self.assertIsNone(known["before"]["series_id"])
+        self.assertEqual(known["before"]["appointment_occurrence_count"], 1)
+        self.assertTrue(known["repeat_type_verified"])
+        known_live = deepcopy(known["before"])
+        known_live["specific"] = True
+        known_live["starts_at"] = known["after"]["starts_at"]
+        known_live["recurrence"] = dict(known_live["recurrence"])
+        known_live["recurrence"]["repeat_type"] = "monthly"
+        known_live["recurrence"]["verified"] = False
+        known_live["repeat_type"] = "monthly"
+        rejected = work_pool_readback_decision(known["before"], known["after"], known_live)
+        self.assertEqual(rejected["gate"], GATE_RECURRING)
+        self.assertFalse(rejected["recurrence_verified"])
+        self.assertFalse(rejected["write_again"])
+
+    def test_chatgpt_confirmation_blocks_once_without_another_write(self) -> None:
+        self.h.service.settings = replace(
+            self.h.settings,
+            writes_enabled=True,
+            mapping_verified=True,
+            approval_mode="chatgpt_confirmation",
+        )
+        proposed = self._propose()
+        self.assertTrue(proposed["ok"], proposed)
+        digest = proposed["digest"]
+        wrong = self.h.service.execute(proposed["proposal_id"], IDENTITY, approved=True, expected_digest="0" * 64)
+        self.assertEqual(wrong["gate"], GATE_OPERATOR)
+        self.assertEqual(wrong["reason"], "explicit_confirmation_and_exact_digest_required")
+        self.assertEqual(self.h.store.get_proposal(proposed["proposal_id"])["status"], "proposed")
+        guard = self.h.store._conn.execute(
+            "SELECT state FROM subject_guards WHERE proposal_id = ?",
+            (proposed["proposal_id"],),
+        ).fetchone()
+        self.assertEqual(guard["state"], "open")
+        self.assertEqual(self._approval_count(proposed["proposal_id"]), 0)
+        self.assertEqual(self._patches(), [])
+
+        blocked = self.h.service.execute(proposed["proposal_id"], IDENTITY, approved=True, expected_digest=digest)
+        self.assertEqual(blocked["gate"], GATE_WORK_POOL_API)
+        self.assertFalse(blocked["write_sent"])
+        self.assertFalse(blocked["retry"])
+        self.assertTrue(blocked["blocked"])
+        self.assertEqual(blocked["proposal_status"], "rejected")
+        stored = self.h.store.get_proposal(proposed["proposal_id"])
+        self.assertEqual(stored["status"], "rejected")
+        self.assertEqual(stored["digest"], digest)
+        released = self.h.store._conn.execute(
+            "SELECT state FROM subject_guards WHERE subject_key = ?",
+            ("work_order:50268730",),
+        ).fetchone()
+        self.assertIsNone(released)
+        self.assertEqual(self._approval_count(proposed["proposal_id"]), 1)
+        used_at = self._approval_used_at(proposed["proposal_id"])
+        self.assertIsNotNone(used_at)
+        self.assertEqual(self._patches(), [])
+
+        again = self.h.service.execute(proposed["proposal_id"], IDENTITY, approved=True, expected_digest=digest)
+        self.assertEqual(again["gate"], GATE_WORK_POOL_API)
+        self.assertFalse(again["write_sent"])
+        self.assertEqual(self.h.store.get_proposal(proposed["proposal_id"])["status"], "rejected")
+        self.assertEqual(self._approval_count(proposed["proposal_id"]), 1)
+        self.assertEqual(self._approval_used_at(proposed["proposal_id"]), used_at)
+        self.assertEqual(self._patches(), [])
+        replacement = self._propose()
+        self.assertTrue(replacement["ok"], replacement)
+        self.assertNotEqual(replacement.get("gate"), "duplicate_in_flight")
+
+    def _approval_count(self, proposal_id: str) -> int:
+        row = self.h.store._conn.execute("SELECT COUNT(*) AS n FROM approvals WHERE proposal_id = ?", (proposal_id,)).fetchone()
+        return int(row["n"])
+
+    def _approval_used_at(self, proposal_id: str):
+        row = self.h.store._conn.execute("SELECT used_at FROM approvals WHERE proposal_id = ?", (proposal_id,)).fetchone()
+        return None if row is None else row["used_at"]
 
     def test_existing_schedule_status_and_customer_paths_stay_unchanged(self) -> None:
         self.h.service._now = lambda: datetime(2026, 9, 25, 12, tzinfo=timezone.utc)

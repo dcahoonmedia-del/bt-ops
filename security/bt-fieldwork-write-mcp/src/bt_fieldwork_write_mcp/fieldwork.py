@@ -17,6 +17,7 @@ from .allowlist import (
     GATE_AUTH_UNRESOLVED,
     GATE_CATALOG,
     GATE_LIVE_PATCH_UNTESTED,
+    GATE_RECURRING,
     GATE_WORK_POOL_PRECONDITION,
     WORK_POOL_PATCH_KEYS,
     is_lead_status,
@@ -1940,7 +1941,20 @@ def work_pool_readback_mismatches(before: dict[str, Any], approved: dict[str, An
         check(field, same_id(before.get(field), live.get(field)), before.get(field), live.get(field))
     for field in ("instructions", "private_notes", "production_value", "confirmed", "line_items"):
         check(field, before.get(field) == live.get(field), before.get(field), live.get(field))
+    for field in ("repeat_type", "recurring", "series_id", "recurrence"):
+        check(field, before.get(field) == live.get(field), before.get(field), live.get(field))
+    before_count = _work_pool_series_count(before)
+    live_count = _work_pool_series_count(live)
+    check("appointment_occurrence_count", before_count == live_count, before_count, live_count)
     return mismatches
+
+
+def _work_pool_series_count(record: dict[str, Any]) -> int | None:
+    series = record.get("appointment_occurrences")
+    if isinstance(series, list):
+        return len(series)
+    count = record.get("appointment_occurrence_count")
+    return count if isinstance(count, int) and not isinstance(count, bool) else None
 
 
 def work_pool_readback_decision(before: dict[str, Any], approved: dict[str, Any], live: dict[str, Any] | None) -> dict[str, Any]:
@@ -1948,14 +1962,23 @@ def work_pool_readback_decision(before: dict[str, Any], approved: dict[str, Any]
     if not isinstance(live, dict):
         return {"ok": False, "gate": "readback_unresolved", "retry": False, "write_again": False, "arrival_mode_proof": False}
     mismatches = work_pool_readback_mismatches(before, approved, live)
+    recurrence = before.get("recurrence") if isinstance(before.get("recurrence"), dict) else {}
+    recurrence_changed = any(
+        item["field"] in {"repeat_type", "recurring", "series_id", "appointment_occurrence_count", "recurrence"}
+        for item in mismatches
+    )
+    verified = recurrence.get("verified") is True and not recurrence_changed
     if mismatches:
         return {
             "ok": False,
-            "gate": "readback_unresolved",
+            "gate": GATE_RECURRING if recurrence_changed else "readback_unresolved",
             "retry": False,
             "write_again": False,
             "mismatches": mismatches,
             "arrival_mode_proof": False,
+            "recurrence_verified": verified,
+            "repeat_type_verified": verified,
+            "recurrence_reason": recurrence.get("reason"),
         }
     return {
         "ok": True,
@@ -1965,5 +1988,8 @@ def work_pool_readback_decision(before: dict[str, Any], approved: dict[str, Any]
         "status_coupling": "unverified",
         "arrival_mode_proof": False,
         "arrival_observed": {key: live.get(key) for key in ARRIVAL_FIELDS},
+        "recurrence_verified": verified,
+        "repeat_type_verified": verified,
+        "recurrence_reason": recurrence.get("reason"),
     }
 
